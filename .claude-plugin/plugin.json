@@ -1,0 +1,12 @@
+{
+  "name": "shipline",
+  "description": "Opinionated development lifecycle with adversarial review, knowledge compounding, and follow-up tracking",
+  "version": "0.1.0",
+  "author": {
+    "name": "easelyte",
+    "email": "fantin@easelyte.ai"
+  },
+  "repository": "https://github.com/easelyte/shipline",
+  "license": "MIT",
+  "keywords": ["lifecycle", "review", "adversarial", "knowledge", "codex"]
+}

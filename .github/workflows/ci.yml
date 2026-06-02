@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install test deps
+        run: pip install pytest
+      - name: Run tests
+        run: cd scripts && python -m pytest -v
+      - name: Check for project-specific references
+        run: |
+          if grep -r "openclaw\|son-of-anton\|ANTON_SESSION\|anton/" --include="*.md" --include="*.py" --include="*.sh" . | grep -v '.github/'; then
+            echo "ERROR: Found project-specific references"
+            exit 1
+          fi
+      - name: Validate plugin structure
+        run: |
+          for skill in brainstorm spec-review plan plan-review execute ship codex-review triage snap-compact close branch prune-stale; do
+            if [ ! -f "skills/$skill/SKILL.md" ]; then
+              echo "ERROR: Missing skills/$skill/SKILL.md"
+              exit 1
+            fi
+          done
+          if [ ! -f ".claude-plugin/plugin.json" ]; then
+            echo "ERROR: Missing .claude-plugin/plugin.json"
+            exit 1
+          fi
+          python -c "import json; json.load(open('.claude-plugin/plugin.json'))"
+          echo "Plugin structure valid"
