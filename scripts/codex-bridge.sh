@@ -95,8 +95,7 @@ run_claude_fallback() {
   review_prompt=$(build_review_prompt)
   context=$(get_review_context)
 
-  local full_adversarial full_constructive
-  full_adversarial="You are an adversarial $KIND reviewer.
+  local full_prompt="You are an adversarial $KIND reviewer.
 
 $review_prompt
 
@@ -104,43 +103,18 @@ $(if [[ -n "$context" ]]; then echo "Here is the content to review:"; echo '```'
 
 Output: ## Verdict / ## Blockers / ## Major / ## Minor. Per-finding: cite section, explain issue, state fix."
 
-  full_constructive="You are a constructive $KIND reviewer.
-
-$review_prompt
-
-$(if [[ -n "$context" ]]; then echo "Here is the content to review:"; echo '```'; echo "$context"; echo '```'; fi)
-
-Output: ## Strengths / ## Gaps / ## Suggestions."
-
-  local fail_count=0
-
   {
-    echo "--- REVIEWER_1 (adversarial, model: $MODEL) ---"
+    echo "--- REVIEWER (single-model fallback, model: $MODEL) ---"
     if command -v claude &>/dev/null; then
-      echo "$full_adversarial" | timeout 300 claude --print --model "$MODEL" 2>/dev/null || { echo "(adversarial reviewer failed)"; fail_count=$((fail_count + 1)); }
+      echo "$full_prompt" | timeout 300 claude --print --model "$MODEL" 2>/dev/null || {
+        echo "ERROR: Claude fallback reviewer failed" >&2
+        exit 1
+      }
     else
-      echo "(claude CLI not available — adversarial prompt below)"
-      echo "$full_adversarial"
-      fail_count=$((fail_count + 1))
-    fi
-    echo ""
-    echo "--- REVIEWER_2 (constructive, model: $MODEL) ---"
-    if command -v claude &>/dev/null; then
-      echo "$full_constructive" | timeout 300 claude --print --model "$MODEL" 2>/dev/null || { echo "(constructive reviewer failed)"; fail_count=$((fail_count + 1)); }
-    else
-      echo "(claude CLI not available — constructive prompt below)"
-      echo "$full_constructive"
-      fail_count=$((fail_count + 1))
+      echo "ERROR: Neither Codex nor Claude CLI available" >&2
+      exit 1
     fi
   } > "$OUTFILE"
-
-  if [[ $fail_count -ge 2 ]]; then
-    echo "ERROR: Both Claude fallback reviewers failed" >&2
-    exit 1
-  fi
-  if [[ $fail_count -ge 1 ]]; then
-    echo "WARNING: One Claude fallback reviewer failed (partial review)" >&2
-  fi
 }
 
 if has_codex; then

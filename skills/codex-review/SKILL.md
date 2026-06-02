@@ -1,6 +1,6 @@
 ---
 name: codex-review
-description: Direct Codex adversarial review on the current diff, a specific file, or a commit. Falls back to dual-Claude when Codex is unavailable.
+description: Direct Codex adversarial review on the current diff, a specific file, or a commit. Falls back to single Claude reviewer when Codex is unavailable.
 ---
 
 Run a Codex adversarial review.

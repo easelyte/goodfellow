@@ -1,6 +1,6 @@
 ---
 name: spec-review
-description: Multi-round adversarial spec review with research injection, verifier pass, and knowledge-file principle checking. Dispatches two reviewers per round (Claude + Codex or dual-Claude fallback).
+description: Multi-round adversarial spec review with research injection, verifier pass, and knowledge-file principle checking. Dispatches two reviewers per round (Claude + Codex, or single Claude fallback).
 ---
 
 Run a multi-round adversarial review on the spec file the operator indicated.
@@ -33,7 +33,7 @@ Use the Agent tool with `model: "sonnet"` (or the value of GOODFELLOW_REVIEW_MOD
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/codex-bridge.sh" --kind spec --uncommitted
 ```
 
-If Codex is absent, the bridge falls back to dual-Claude automatically.
+If Codex is absent, the bridge falls back to a single Claude reviewer automatically.
 
 ## 1.5 Research injection (between round 1 and round 2 only)
 

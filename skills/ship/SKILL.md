@@ -27,7 +27,7 @@ If verification fails: surface errors, do not proceed to review.
 
 ### Standard mode (default)
 Multi-round adversarial review on the diff. Same convergence algorithm as spec-review/plan-review:
-- Two reviewers per round (Claude + Codex/dual-Claude fallback via bridge)
+- Two reviewers per round (Claude + Codex/single-Claude fallback via bridge)
 - Verifier pass at round 2+ (via `convergence_detector.py`)
 - Research injection between rounds 1 and 2 if factual claims in findings
 - Convergence when severity drops to polish-tier

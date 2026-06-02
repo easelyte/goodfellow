@@ -149,7 +149,7 @@ Decision log written to `.goodfellow/runs/<timestamp>.jsonl` for auditability.
 
 When loops accumulate, `/goodfellow:triage` helps separate real defects from noise:
 
-1. Two independent reviewers assess each loop (Claude + Codex or dual-Claude)
+1. Two independent reviewers assess each loop (Claude + Codex when available, single Claude otherwise)
 2. Reconciliation: both agree (high confidence), one opinion + one unclear (medium), disagree (low)
 3. Operator confirms/overrides in a batch table
 4. Decisions logged to `.goodfellow/triage-log.jsonl` for calibration
@@ -171,7 +171,7 @@ When loops accumulate, `/goodfellow:triage` helps separate real defects from noi
 
 | Skill | Invocation | Codex? |
 |---|---|---|
-| codex-review | `/goodfellow:codex-review` | Optional (dual-Claude fallback) |
+| codex-review | `/goodfellow:codex-review` | Optional (single-Claude fallback) |
 | triage | `/goodfellow:triage` | Optional |
 
 ### Session Lifecycle (4 skills)
@@ -185,9 +185,9 @@ When loops accumulate, `/goodfellow:triage` helps separate real defects from noi
 
 ## Codex Integration (Optional)
 
-The [Codex CLI](https://github.com/openai/codex) is optional. When present, review skills run cross-model adversarial review (Claude + Codex/GPT). When absent, they run two Claude reviewers with different prompts (adversarial + constructive).
+The [Codex CLI](https://github.com/openai/codex) is where the real adversarial value lives. When present, review skills run cross-model review (Claude + Codex/GPT) — two different model families catching different defect classes. Without Codex, reviews fall back to a single Claude reviewer. It still works, but you lose the cross-model diversity that makes adversarial review genuinely adversarial.
 
-**Recommended setup:** Opus as your main session, Codex + Sonnet as the two reviewers. Three distinct perspectives: Opus reconciles, Sonnet reviews adversarially, Codex catches what Claude misses. Without Codex, set `GOODFELLOW_REVIEW_MODEL=opus` — two Opus reviewers with different prompts is the strongest mono-model configuration. Sonnet is the budget fallback.
+**Recommended setup:** Opus as your main session, Codex + Sonnet as the reviewers. Three perspectives: Opus reconciles, Sonnet reviews, Codex catches what Claude misses. For the full benefit, [install the free Codex CLI](https://github.com/openai/codex).
 
 These are practical recommendations from daily use, not formal benchmarks.
 
@@ -195,9 +195,9 @@ These are practical recommendations from daily use, not formal benchmarks.
 # Force-disable Codex even when installed
 GOODFELLOW_CODEX=0
 
-# Set the Claude reviewer model (used for both reviewers when no Codex)
+# Set the Claude reviewer model
 GOODFELLOW_REVIEW_MODEL=sonnet  # Default — cost-effective with Codex
-GOODFELLOW_REVIEW_MODEL=opus    # Deeper review, higher cost
+GOODFELLOW_REVIEW_MODEL=opus    # Stronger single reviewer when no Codex
 GOODFELLOW_REVIEW_MODEL=haiku   # Quick passes on small diffs
 ```
 
@@ -207,12 +207,12 @@ GOODFELLOW_REVIEW_MODEL=haiku   # Quick passes on small diffs
 |---|---|---|---|
 | Present | sonnet (default) | Sonnet + Codex | Recommended: cross-model diversity |
 | Present | opus | Opus + Codex | Maximum review depth |
-| Absent | opus | Two Opus (different prompts) | Recommended no-Codex setup |
-| Absent | sonnet | Two Sonnet (different prompts) | Budget fallback |
+| Absent | opus | Single Opus reviewer | Best without Codex |
+| Absent | sonnet | Single Sonnet reviewer | Budget option |
 
 ## Philosophy
 
-- **Multi-model review catches what single-model misses** — different post-training lineages find different defect classes
+- **Cross-model review catches what single-model misses** — different training lineages find different defect classes; same-model duplication adds little
 - **Research injection grounds findings in verified facts** — factual claims are web-searched, not assumed
 - **Convergence-based, not round-count-based** — stop when severity drops, not at an arbitrary round number
 - **Verifier-before-fix prevents infinite loops** — don't burn fix cycles on stale findings
