@@ -6,9 +6,16 @@ An opinionated development lifecycle for Claude Code.
 Your system gets smarter every time you ship.
 
 ```
-Brainstorm --> Spec --> Plan --> Execute --> Ship
-     \          |        |         |        /
-      `---- knowledge compounds across runs ----'
+                    THE CHAIN
+  
+   Brainstorm -----> Spec -----> Plan -----> Execute -----> Ship
+       |               |          |            |              |
+       |          spec-review  plan-review  verify        review
+       |           (adversarial + research injection)     PR + merge
+       |                                                      |
+       +--- reads .goodfellow/knowledge.md ----<--- writes ---+
+                                                    
+              your system gets smarter every cycle
 ```
 
 Adversarial review at every stage. Knowledge that compounds. Nothing that slips.
@@ -171,9 +178,9 @@ When loops accumulate, `/goodfellow:triage` helps separate real defects from noi
 
 ## Codex Integration (Optional)
 
-The [Codex CLI](https://github.com/openai/codex) is optional. When present, review skills run dual-model adversarial review (Claude + Codex). When absent, they fall back to dual-Claude review with two independently-prompted subagents.
+The [Codex CLI](https://github.com/openai/codex) is optional. When present, review skills run cross-model adversarial review (Claude + Codex/GPT). When absent, they run two Claude reviewers with different prompts (adversarial + constructive).
 
-**Recommended setup:** Run your main Claude Code session on Opus, with Codex + Sonnet as the two reviewers. This gives you three distinct perspectives: Opus as the parent (reads the document, reconciles findings, makes judgment calls), Sonnet as the adversarial reviewer, and Codex (GPT-family) as the cross-model reviewer. We've found this combination works well in practice — Codex is strong at review, cost-effective, and catches things the Claude family misses. Sonnet adds a lighter-touch second pass at low cost. Without Codex, bumping the reviewer to Opus gives you meaningful capability-tier diversity.
+**Recommended setup:** Opus as your main session, Codex + Sonnet as the two reviewers. Three distinct perspectives: Opus reconciles, Sonnet reviews adversarially, Codex catches what Claude misses. Without Codex, two reviewers of the same model with different prompts — pick your budget tier.
 
 These are practical recommendations from daily use, not formal benchmarks.
 
@@ -181,9 +188,9 @@ These are practical recommendations from daily use, not formal benchmarks.
 # Force-disable Codex even when installed
 GOODFELLOW_CODEX=0
 
-# Set the Claude reviewer model tier (independent of Codex)
-GOODFELLOW_REVIEW_MODEL=sonnet  # Default — pairs well with Codex
-GOODFELLOW_REVIEW_MODEL=opus    # Recommended when no Codex
+# Set the Claude reviewer model (used for both reviewers when no Codex)
+GOODFELLOW_REVIEW_MODEL=sonnet  # Default — cost-effective with Codex
+GOODFELLOW_REVIEW_MODEL=opus    # Deeper review, higher cost
 GOODFELLOW_REVIEW_MODEL=haiku   # Quick passes on small diffs
 ```
 
@@ -191,10 +198,10 @@ GOODFELLOW_REVIEW_MODEL=haiku   # Quick passes on small diffs
 
 | Codex | GOODFELLOW_REVIEW_MODEL | What runs | Notes |
 |---|---|---|---|
-| Present | sonnet (default) | Sonnet + Codex | Recommended: three model families |
+| Present | sonnet (default) | Sonnet + Codex | Recommended: cross-model diversity |
 | Present | opus | Opus + Codex | Maximum review depth |
-| Absent | sonnet | Two Sonnet (different prompts) | Weakest diversity |
-| Absent | opus | Opus + Sonnet | Recommended no-Codex setup |
+| Absent | sonnet | Two Sonnet (different prompts) | Budget-friendly mono-model |
+| Absent | opus | Two Opus (different prompts) | Best mono-model review |
 
 ## Philosophy
 

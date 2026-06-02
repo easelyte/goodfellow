@@ -92,9 +92,9 @@ run_claude_fallback() {
       echo "$adversarial_prompt"
     fi
     echo ""
-    echo "--- REVIEWER_2 (constructive, model: sonnet) ---"
+    echo "--- REVIEWER_2 (constructive, model: $MODEL) ---"
     if command -v claude &>/dev/null; then
-      echo "$constructive_prompt" | timeout 300 claude --print --model sonnet 2>/dev/null || echo "(constructive reviewer failed)"
+      echo "$constructive_prompt" | timeout 300 claude --print --model "$MODEL" 2>/dev/null || echo "(constructive reviewer failed)"
     else
       echo "(claude CLI not available — constructive prompt below)"
       echo "$constructive_prompt"
