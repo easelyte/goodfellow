@@ -9,6 +9,17 @@ Run a multi-round adversarial review on the plan file the operator indicated.
 
 Read the plan file fully. Also read its spec (from plan frontmatter). Read `.goodfellow/knowledge.md` if it exists.
 
+## 0.5 Parent self-review (Opus pass)
+
+Before dispatching external reviewers, do your own review pass as the parent model. Look for:
+- Missing dependencies (task A needs B but the graph doesn't show it)
+- Wrong execution order (task references something built in a later phase)
+- Spec-coverage gaps (spec section with zero plan tasks)
+- Acceptance criteria that are untestable or contradict each other
+- Knowledge gotcha violations
+
+Fix obvious issues in the plan before burning reviewer tokens. This pass is free and catches structural problems that would otherwise dominate round 1 findings.
+
 ## 1. Research injection (before adversarial rounds)
 
 Extract factual, externally verifiable claims from the plan:

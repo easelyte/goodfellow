@@ -29,11 +29,19 @@ Your 50th feature ships with the wisdom of the first 49.
 
 ## Install
 
+**From git (recommended for now):**
+```bash
+git clone https://github.com/easelyte/goodfellow.git ~/.claude/plugins/goodfellow
+```
+
+Claude Code auto-discovers plugins in `~/.claude/plugins/`. Restart your session after cloning.
+
+**From marketplace** (when published):
 ```
 claude plugin install easelyte/goodfellow
 ```
 
-Or for development/testing:
+**Session-only** (for testing, no persistent install):
 ```
 claude --plugin-dir /path/to/goodfellow
 ```
@@ -163,17 +171,30 @@ When loops accumulate, `/goodfellow:triage` helps separate real defects from noi
 
 ## Codex Integration (Optional)
 
-The [Codex CLI](https://github.com/openai/codex) is optional. When present, review skills run dual-model adversarial review (Claude + Codex). When absent, they fall back to dual-Claude review with different system prompts.
+The [Codex CLI](https://github.com/openai/codex) is optional. When present, review skills run dual-model adversarial review (Claude + Codex). When absent, they fall back to dual-Claude review with two independently-prompted subagents.
+
+**Recommended setup:** Run your main Claude Code session on Opus, with Codex + Sonnet as the two reviewers. This gives you three distinct perspectives: Opus as the parent (reads the document, reconciles findings, makes judgment calls), Sonnet as the adversarial reviewer, and Codex (GPT-family) as the cross-model reviewer. We've found this combination works well in practice — Codex is strong at review, cost-effective, and catches things the Claude family misses. Sonnet adds a lighter-touch second pass at low cost. Without Codex, bumping the reviewer to Opus gives you meaningful capability-tier diversity.
+
+These are practical recommendations from daily use, not formal benchmarks.
 
 ```bash
 # Force-disable Codex even when installed
 GOODFELLOW_CODEX=0
 
-# Set the Claude reviewer model tier
-GOODFELLOW_REVIEW_MODEL=opus  # Recommended when no Codex — capability-tier diversity
-GOODFELLOW_REVIEW_MODEL=sonnet # Default — sufficient with Codex present
-GOODFELLOW_REVIEW_MODEL=haiku  # Quick passes on small diffs
+# Set the Claude reviewer model tier (independent of Codex)
+GOODFELLOW_REVIEW_MODEL=sonnet  # Default — pairs well with Codex
+GOODFELLOW_REVIEW_MODEL=opus    # Recommended when no Codex
+GOODFELLOW_REVIEW_MODEL=haiku   # Quick passes on small diffs
 ```
+
+**How the reviewers compose:**
+
+| Codex | GOODFELLOW_REVIEW_MODEL | What runs | Notes |
+|---|---|---|---|
+| Present | sonnet (default) | Sonnet + Codex | Recommended: three model families |
+| Present | opus | Opus + Codex | Maximum review depth |
+| Absent | sonnet | Two Sonnet (different prompts) | Weakest diversity |
+| Absent | opus | Opus + Sonnet | Recommended no-Codex setup |
 
 ## Philosophy
 

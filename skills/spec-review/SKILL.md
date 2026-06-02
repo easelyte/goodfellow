@@ -9,6 +9,16 @@ Run a multi-round adversarial review on the spec file the operator indicated.
 
 Read the spec file fully. Also read `.goodfellow/knowledge.md` (Principles + Gotchas sections) if it exists — these inform principle checking during review.
 
+## 0.5 Parent self-review (Opus pass)
+
+Before dispatching external reviewers, do your own review pass as the parent model. Look for:
+- Internal contradictions (section A says X, section B says not-X)
+- Undefined behavior at decision boundaries
+- Success criteria that can't be tested
+- Knowledge gotcha violations (if `.goodfellow/knowledge.md` exists)
+
+Surface any findings immediately — fix obvious issues in the spec before burning reviewer tokens on things you can catch yourself. This pass is cheap (no subagent cost) and catches the low-hanging fruit that would otherwise consume a full review round.
+
 ## 1. Each round, dispatch both reviewers in parallel
 
 **Reviewer 1 (Claude subagent, model from GOODFELLOW_REVIEW_MODEL or default sonnet):**
