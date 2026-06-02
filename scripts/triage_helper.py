@@ -37,7 +37,7 @@ def reconcile(reviewer_1, reviewer_2):
 
 def is_must_decide(loop):
     """Check if loop has hit the 3-cycle hard cap on unclear."""
-    return loop.get("triage_count", 0) >= 2
+    return loop.get("triage_count", 0) >= 3
 
 
 def log_decision(decision_record, project_root="."):

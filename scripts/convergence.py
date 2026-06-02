@@ -48,12 +48,12 @@ def check_round(round_findings, round_number, min_rounds=2, hard_cap=6):
         result.ship_blocking = _has_safety_critical(round_findings)
         return result
 
-    if not round_findings and round_number <= min_rounds:
+    if not round_findings and round_number < min_rounds:
         result.skepticism_triggered = True
         result.reason = f"zero findings at round {round_number} (below min_rounds={min_rounds}) — reviewer engagement check needed"
         return result
 
-    if not round_findings and round_number > min_rounds:
+    if not round_findings and round_number >= min_rounds:
         result.converged = True
         result.reason = "no new findings"
         return result

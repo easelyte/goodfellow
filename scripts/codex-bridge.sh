@@ -27,7 +27,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-OUTFILE="/tmp/shipline-review-$(date -u +%Y%m%dT%H%M%SZ).md"
+OUTFILE=$(mktemp /tmp/shipline-review-XXXXXX.md)
 
 has_codex() {
   [[ "${SHIPLINE_CODEX:-1}" != "0" ]] && command -v codex &>/dev/null
@@ -40,7 +40,9 @@ check_version() {
     echo "WARNING: Could not detect Codex version" >&2
     return
   fi
-  if printf '%s\n%s\n' "$MIN_VERSION" "$ver" | sort -V | head -1 | grep -qv "^${ver}$" 2>/dev/null; then
+  local lowest
+  lowest=$(printf '%s\n%s\n' "$MIN_VERSION" "$ver" | sort -V | head -1)
+  if [[ "$lowest" == "$ver" && "$ver" != "$MIN_VERSION" ]]; then
     echo "WARNING: Codex $ver < minimum $MIN_VERSION — output may be degraded" >&2
   fi
 }
@@ -57,10 +59,12 @@ run_codex() {
   [[ -n "$INCLUDE_AESTHETIC" ]] && review_prompt="$review_prompt Include aesthetic/style findings."
   [[ -n "$PROMPT" ]] && review_prompt="$PROMPT"
 
-  timeout 300 "${args[@]}" "$review_prompt" > "$OUTFILE" 2>&1 || {
-    echo "ERROR: Codex review timed out or failed (exit $?)" >&2
+  local rc=0
+  timeout 300 "${args[@]}" "$review_prompt" > "$OUTFILE" 2>&1 || rc=$?
+  if [[ $rc -ne 0 ]]; then
+    echo "ERROR: Codex review timed out or failed (exit $rc)" >&2
     exit 1
-  }
+  fi
 }
 
 run_claude_fallback() {

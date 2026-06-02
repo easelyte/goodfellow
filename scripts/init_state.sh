@@ -8,7 +8,11 @@ mkdir -p "$PROJECT_ROOT/.shipline"
 
 GITIGNORE="$PROJECT_ROOT/.gitignore"
 if [ -f "$GITIGNORE" ]; then
-  grep -qxF '.shipline/' "$GITIGNORE" || echo '.shipline/' >> "$GITIGNORE"
+  if ! grep -qxF '.shipline/' "$GITIGNORE"; then
+    # Ensure trailing newline before appending
+    [[ -s "$GITIGNORE" && "$(tail -c1 "$GITIGNORE")" != "" ]] && echo "" >> "$GITIGNORE"
+    echo '.shipline/' >> "$GITIGNORE"
+  fi
 else
   echo '.shipline/' > "$GITIGNORE"
 fi

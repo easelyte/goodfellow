@@ -14,7 +14,8 @@ With adversarial review, knowledge that compounds, and nothing that slips.
 ## Why Shipline?
 
 Every chain run extracts what you learned and feeds it into the next one.
-Every deferred finding becomes a tracked loop — triaged, not forgotten.
+Safety-critical deferred findings become tracked loops — triaged, not forgotten.
+Polish-tier findings go to your knowledge file as gotchas.
 Your 50th feature ships with the wisdom of the first 49.
 
 **What's different:**
@@ -22,7 +23,7 @@ Your 50th feature ships with the wisdom of the first 49.
 - **Research injection** — factual claims in review findings are verified via web search before acting on them
 - **Verifier pass** — before fixing a round 2+ finding, checks if it's still real. Prevents infinite fix-find-fix loops
 - **Knowledge compounding** — `.shipline/knowledge.md` accumulates principles, patterns, and gotchas across chain runs
-- **Follow-up tracking** — deferred findings become loops in `.shipline/loops.json`, triaged with a two-reviewer system
+- **Follow-up tracking** — safety-critical deferred findings become loops in `.shipline/loops.json`, triaged with a two-reviewer system; polish-tier goes to knowledge gotchas
 
 ## Install
 
@@ -108,7 +109,8 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/loop_store.py" list
 # Full auto — chain runs hands-off with strategic halts
 SHIPLINE_AUTOPILOT=1
 
-# Dry run first — see what it would do without mutating
+# Dry run first — logs decisions without mutating project code
+# (the decision log itself IS written to .shipline/runs/ — that's the audit trail)
 SHIPLINE_AUTOPILOT=dry-run
 ```
 
@@ -190,6 +192,10 @@ SHIPLINE_REVIEW_MODEL=haiku  # Quick passes on small diffs
 | `SHIPLINE_REVIEW_MODEL` | `sonnet` | Claude reviewer model: `sonnet`, `opus`, `haiku` |
 | `SHIPLINE_TRIAGE_RETENTION_DAYS` | `90` | Days to keep closed-loop triage entries |
 | `SHIPLINE_RUNS_RETENTION_DAYS` | `90` | Days to keep autopilot run logs |
+
+## Platform Support
+
+Shipline works on **macOS and Linux**. The loop store and triage helper use `fcntl` file locking which is Unix-only. On Windows, concurrent session locking is unavailable — single-session use works fine, but running `/shipline:ship` and `/shipline:triage` simultaneously may produce duplicate loop IDs.
 
 ## Contributing
 

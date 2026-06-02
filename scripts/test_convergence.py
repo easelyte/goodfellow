@@ -10,6 +10,12 @@ def test_zero_findings_round1_triggers_skepticism():
     assert not result.converged
 
 
+def test_zero_findings_round2_converges():
+    result = convergence.check_round([], round_number=2)
+    assert result.converged
+    assert not result.skepticism_triggered
+
+
 def test_zero_findings_round3_converges():
     result = convergence.check_round([], round_number=3)
     assert result.converged
@@ -82,3 +88,23 @@ def test_empty_knowledge_noop():
     result = convergence_detector.elevate_severity(finding, [])
     assert result["severity"] == "minor"
     assert "knowledge_elevated" not in result
+
+
+def test_new_safety_class_blocks_severity_drop_convergence():
+    round1 = [{"severity": "blocker", "defect_class": "auth"}]
+    round2 = [{"severity": "major", "defect_class": "injection"}]
+    result = convergence_detector.check_convergence([round1, round2])
+    assert not result.is_converged
+
+
+def test_severity_drop_converges_when_new_class_not_safety():
+    round1 = [{"severity": "blocker", "defect_class": "auth"}]
+    round2 = [{"severity": "major", "defect_class": "style"}]
+    result = convergence_detector.check_convergence([round1, round2])
+    assert result.is_converged
+
+
+def test_single_round_needs_two():
+    result = convergence_detector.check_convergence([[{"severity": "minor"}]])
+    assert not result.is_converged
+    assert "at least 2" in result.reason

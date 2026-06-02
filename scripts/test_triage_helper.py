@@ -49,13 +49,13 @@ def test_invalid_input_treated_as_unclear():
     assert confidence == "medium"
 
 
-def test_must_decide_at_count_2():
-    loop = {"triage_count": 2}
+def test_must_decide_at_count_3():
+    loop = {"triage_count": 3}
     assert triage_helper.is_must_decide(loop)
 
 
-def test_not_must_decide_at_count_1():
-    loop = {"triage_count": 1}
+def test_not_must_decide_at_count_2():
+    loop = {"triage_count": 2}
     assert not triage_helper.is_must_decide(loop)
 
 

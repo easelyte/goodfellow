@@ -46,8 +46,11 @@ def _write_atomic(path, data):
             f.flush()
             os.fsync(f.fileno())
         os.rename(tmp, str(path))
-    except:
-        os.unlink(tmp)
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
         raise
 
 

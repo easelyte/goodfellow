@@ -59,13 +59,22 @@ def check_convergence(rounds_history):
         result.reason = "no findings in latest round"
         return result
 
-    if _severity_rank(curr_max) < _severity_rank(prev_max):
-        result.is_converged = True
-        result.severity_trend = f"{prev_max} -> {curr_max}"
-        result.reason = f"severity dropped from {prev_max} to {curr_max}"
-        return result
-
     new_classes = set(curr_classes.keys()) - set(prev_classes.keys())
+
+    if _severity_rank(curr_max) < _severity_rank(prev_max):
+        new_safety = [
+            c
+            for c in new_classes
+            if any(
+                s in c
+                for s in ("security", "data-loss", "correctness", "auth", "injection")
+            )
+        ]
+        if not new_safety:
+            result.is_converged = True
+            result.severity_trend = f"{prev_max} -> {curr_max}"
+            result.reason = f"severity dropped from {prev_max} to {curr_max}"
+            return result
     if not new_classes and len(curr_classes) <= len(prev_classes):
         result.is_converged = True
         result.severity_trend = "stable"
@@ -84,7 +93,7 @@ def elevate_severity(finding, gotchas):
     Capped at blocker (safety-critical).
     """
     if not gotchas:
-        return finding
+        return {**finding}
 
     area = finding.get("area", "")
     text = finding.get("normalized_text", "")
@@ -125,7 +134,7 @@ def run_verifier(findings, model="sonnet"):
             f"code moved, check surrounding files for the same pattern before classifying "
             f"as stale.\n\n"
             f"Respond with EXACTLY one JSON object:\n"
-            f'{{"finding_id": "{finding_id}", "verdict": "real"|"stale"|"noise", '
+            f'{{"finding_id": {json.dumps(finding_id)}, "verdict": "real"|"stale"|"noise", '
             f'"reason": "<1-2 sentences>", "cited_line": "<file:line or null>"}}'
         )
         prompts.append({"finding_id": finding_id, "prompt": prompt, "model": model})
