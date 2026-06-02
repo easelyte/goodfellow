@@ -1,6 +1,6 @@
 ---
 name: ship
-description: "Verify, review, create PR, extract learnings to knowledge file, file follow-up loops. --quick: single-round review for small diffs. Safety-critical findings block PR creation (V9)."
+description: "Verify, review, create PR, extract learnings to knowledge file, file follow-up loops. --quick: single-round review for small diffs. Safety-critical findings block PR creation."
 ---
 
 Ship the current work. Runs verify → review → PR → extract learnings → file loops.
@@ -32,7 +32,7 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/codex-bridge.sh" --kind diff --uncommitted
 ```
 
 ### Quick mode (`--quick`)
-Single-round review for diffs <50 net changed lines. Safety-critical findings in quick mode still block PR and get filed as loops (V9).
+Single-round review for diffs <50 net changed lines. Safety-critical findings in quick mode still block PR and get filed as loops.
 
 ## 3. Ship-blocking check
 
@@ -48,7 +48,7 @@ After the final review pass, scan the diff and review findings for new knowledge
 - **Patterns:** solutions that worked ("convergence-based termination")
 - **Gotchas:** footguns discovered ("API returns null not undefined on empty")
 
-Append candidates to `.shipline/knowledge.md` with `[pending]` tag and date:
+Append candidates to `.goodfellow/knowledge.md` with `[pending]` tag and date:
 ```
 - [pending] 2026-06-02: <learning text>
 ```
@@ -57,14 +57,14 @@ Append candidates to `.shipline/knowledge.md` with `[pending]` tag and date:
 
 Deferred findings from the convergence exit:
 
-- **Safety-critical** → file to `.shipline/loops.json` via loop store. Priority from finding severity. Round 4+ findings at p4 unless safety-critical (V9 exemption).
+- **Safety-critical** → file to `.goodfellow/loops.json` via loop store. Priority from finding severity. Round 4+ findings at p4 unless safety-critical.
 - **Polish-tier** → append to knowledge file as gotchas instead of filing loops
 
 ```bash
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/loop_store.py" --root . add "<title>" --priority <p> --source "ship-review-r<N>" --description "<text>"
 ```
 
-Soft cap check: if >15 active loops, warn "loop backlog growing — consider /shipline:triage".
+Soft cap check: if >15 active loops, warn "loop backlog growing — consider /goodfellow:triage".
 
 ## 6. Create PR
 

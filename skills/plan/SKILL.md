@@ -7,7 +7,7 @@ Write a plan for: $ARGUMENTS
 
 ## 1. Read the spec
 
-Read the spec file fully. Also read `.shipline/knowledge.md` (Principles section) if it exists.
+Read the spec file fully. Also read `.goodfellow/knowledge.md` (Principles section) if it exists.
 
 ## 2. Clarifying questions (max 3, asked once)
 
@@ -31,7 +31,7 @@ Write the complete plan in one pass at `docs/plans/<slug>-plan.md`.
 
 **Scope bias: exhaustive.** Enumerate every task the spec implies. Don't truncate to look simpler.
 
-**Principles pass:** for each task, check: does the proposed implementation introduce a principle violation per `.shipline/knowledge.md`? Fix in-spec or note as deliberate exception.
+**Principles pass:** for each task, check: does the proposed implementation introduce a principle violation per `.goodfellow/knowledge.md`? Fix in-spec or note as deliberate exception.
 
 ## 4. Self-review
 
@@ -43,9 +43,9 @@ Write the complete plan in one pass at `docs/plans/<slug>-plan.md`.
 
 After writing + self-review, in the same turn:
 1. Emit summary (file path, task count, integration risks)
-2. Dispatch `/shipline:plan-review <plan-path>`
+2. Dispatch `/goodfellow:plan-review <plan-path>`
 
 No gate. The operator reviews through plan-review, not by approving the plan directly.
 
 **Execution footer:**
-> Use `/shipline:execute <plan-path>` to implement this plan.
+> Use `/goodfellow:execute <plan-path>` to implement this plan.

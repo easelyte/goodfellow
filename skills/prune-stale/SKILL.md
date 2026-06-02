@@ -1,6 +1,6 @@
 ---
 name: prune-stale
-description: Sweep merged/stale branches, orphan worktrees, and old JSONL logs. Configurable retention via SHIPLINE_TRIAGE_RETENTION_DAYS and SHIPLINE_RUNS_RETENTION_DAYS.
+description: Sweep merged/stale branches, orphan worktrees, and old JSONL logs. Configurable retention via GOODFELLOW_TRIAGE_RETENTION_DAYS and GOODFELLOW_RUNS_RETENTION_DAYS.
 ---
 
 Clean up stale branches, worktrees, and logs.
@@ -30,20 +30,20 @@ git worktree prune
 ## 3. JSONL log retention
 
 ### Triage log
-Sweep `.shipline/triage-log.jsonl` — remove entries for closed loops older than retention period.
+Sweep `.goodfellow/triage-log.jsonl` — remove entries for closed loops older than retention period.
 
-Default: 90 days. Override: `SHIPLINE_TRIAGE_RETENTION_DAYS` env var.
+Default: 90 days. Override: `GOODFELLOW_TRIAGE_RETENTION_DAYS` env var.
 
 Entries for active loops are never pruned.
 
 ### Autopilot run logs
-Sweep `.shipline/runs/` — delete JSONL files older than retention period.
+Sweep `.goodfellow/runs/` — delete JSONL files older than retention period.
 
-Default: 90 days. Override: `SHIPLINE_RUNS_RETENTION_DAYS` env var.
+Default: 90 days. Override: `GOODFELLOW_RUNS_RETENTION_DAYS` env var.
 
 ## 4. Knowledge file size check
 
-If `.shipline/knowledge.md` exceeds 50KB:
+If `.goodfellow/knowledge.md` exceeds 50KB:
 "Knowledge file is large (NKB). Consider curating — remove outdated entries or consolidate related principles."
 
 ## 5. Summary

@@ -1,12 +1,12 @@
 {
-  "name": "shipline",
-  "description": "Opinionated development lifecycle with adversarial review, knowledge compounding, and follow-up tracking",
+  "name": "goodfellow",
+  "description": "Named after the inventor of adversarial networks. Your good fellow for shipping code — adversarial review, knowledge compounding, follow-up tracking.",
   "version": "0.1.0",
   "author": {
     "name": "easelyte",
     "email": "fantin@easelyte.ai"
   },
-  "repository": "https://github.com/easelyte/shipline",
+  "repository": "https://github.com/easelyte/goodfellow",
   "license": "MIT",
-  "keywords": ["lifecycle", "review", "adversarial", "knowledge", "codex"]
+  "keywords": ["lifecycle", "review", "adversarial", "knowledge", "codex", "goodfellow"]
 }

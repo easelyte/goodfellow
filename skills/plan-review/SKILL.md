@@ -7,7 +7,7 @@ Run a multi-round adversarial review on the plan file the operator indicated.
 
 ## 0. Read the plan
 
-Read the plan file fully. Also read its spec (from plan frontmatter). Read `.shipline/knowledge.md` if it exists.
+Read the plan file fully. Also read its spec (from plan frontmatter). Read `.goodfellow/knowledge.md` if it exists.
 
 ## 1. Research injection (before adversarial rounds)
 
@@ -37,7 +37,7 @@ If any refuted: surface to operator. Otherwise proceed to adversarial.
 
 Each round, dispatch both reviewers in parallel:
 
-**Reviewer 1 (Claude subagent, model: sonnet or SHIPLINE_REVIEW_MODEL):**
+**Reviewer 1 (Claude subagent, model: sonnet or GOODFELLOW_REVIEW_MODEL):**
 
 > "You are an adversarial plan reviewer. Read <path>. Find: missing prerequisites, wrong execution order, unaddressed dependencies, steps that will fail, missing tests, missing rollback paths, risky API assumptions. Challenge '?' claims in the Verified Claims appendix. Output: ## Verdict / ## Blockers / ## Major / ## Minor."
 
@@ -63,4 +63,4 @@ Same rules as spec-review. Hard cap 6. Deferred findings: discard (plan-review d
 
 Summarize: "Plan converged at round N. Research verified X/Y claims, refuted Z."
 
-Auto-dispatch `/shipline:execute <plan-path>`.
+Auto-dispatch `/goodfellow:execute <plan-path>`.

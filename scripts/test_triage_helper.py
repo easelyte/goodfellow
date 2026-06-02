@@ -72,7 +72,7 @@ def test_log_decision():
 
 def test_log_survives_corrupt_line():
     with tempfile.TemporaryDirectory() as d:
-        path = Path(d) / ".shipline" / "triage-log.jsonl"
+        path = Path(d) / ".goodfellow" / "triage-log.jsonl"
         path.parent.mkdir(parents=True)
         path.write_text('{"good": true}\n{corrupt\n{"also": "good"}\n')
         log = triage_helper.read_triage_log(project_root=d)

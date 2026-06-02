@@ -12,10 +12,10 @@ Run `git status`. If uncommitted changes exist, warn and offer to commit.
 ## 2. Knowledge persistence
 
 ### 2a. Extract remaining session learnings
-Scan the session's recent work for principles, patterns, or gotchas not yet captured. Append to `.shipline/knowledge.md` with `[pending]` tag and date.
+Scan the session's recent work for principles, patterns, or gotchas not yet captured. Append to `.goodfellow/knowledge.md` with `[pending]` tag and date.
 
 ### 2b. Promote pending entries
-Read `.shipline/knowledge.md`. For each `[pending]` entry:
+Read `.goodfellow/knowledge.md`. For each `[pending]` entry:
 - If the learning survived the chain (the code it references is still present and working), promote: remove `[pending]` tag
 - If the learning was reverted or invalidated, remove the entry
 
@@ -32,12 +32,12 @@ Flag open loops older than 30 days. Present the list.
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/loop_store.py" --root . count
 ```
 
-If >15 active loops: "Loop backlog at N — consider running /shipline:triage before filing more."
+If >15 active loops: "Loop backlog at N — consider running /goodfellow:triage before filing more."
 
 ## 4. Branch cleanup
 
 If on a feature branch that's been merged, offer to delete it.
-Offer to run `/shipline:prune-stale` for a broader sweep.
+Offer to run `/goodfellow:prune-stale` for a broader sweep.
 
 ## 5. Summary
 

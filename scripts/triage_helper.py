@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Shipline triage helper — reconciliation logic and JSONL ground truth logging."""
+"""Goodfellow triage helper — reconciliation logic and JSONL ground truth logging."""
 
 import fcntl
 import json
@@ -7,7 +7,7 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
-TRIAGE_LOG = ".shipline/triage-log.jsonl"
+TRIAGE_LOG = ".goodfellow/triage-log.jsonl"
 
 
 def reconcile(reviewer_1, reviewer_2):

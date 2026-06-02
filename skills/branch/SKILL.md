@@ -8,11 +8,11 @@ Create a worktree for: $ARGUMENTS
 ## 1. Derive branch name
 
 From the topic argument, create a kebab-case branch name:
-- `shipline-<topic>` prefix
+- `goodfellow-<topic>` prefix
 - Max 50 characters
 - Strip special characters
 
-Example: `/shipline:branch auth-refactor` → branch `shipline-auth-refactor`
+Example: `/goodfellow:branch auth-refactor` → branch `goodfellow-auth-refactor`
 
 ## 2. Create worktree
 

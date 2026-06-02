@@ -1,4 +1,6 @@
-# Shipline
+# Goodfellow
+
+> Named after Ian Goodfellow, who invented adversarial networks. Your good fellow for shipping code.
 
 An opinionated development lifecycle for Claude Code.
 Your system gets smarter every time you ship.
@@ -9,9 +11,9 @@ Brainstorm --> Spec --> Plan --> Execute --> Ship
       `---- knowledge compounds across runs ----'
 ```
 
-With adversarial review, knowledge that compounds, and nothing that slips.
+Adversarial review at every stage. Knowledge that compounds. Nothing that slips.
 
-## Why Shipline?
+## Why Goodfellow?
 
 Every chain run extracts what you learned and feeds it into the next one.
 Safety-critical deferred findings become tracked loops — triaged, not forgotten.
@@ -22,35 +24,35 @@ Your 50th feature ships with the wisdom of the first 49.
 - **Multi-model adversarial review** — Claude + Codex/GPT reviewers catch what single-model review misses
 - **Research injection** — factual claims in review findings are verified via web search before acting on them
 - **Verifier pass** — before fixing a round 2+ finding, checks if it's still real. Prevents infinite fix-find-fix loops
-- **Knowledge compounding** — `.shipline/knowledge.md` accumulates principles, patterns, and gotchas across chain runs
-- **Follow-up tracking** — safety-critical deferred findings become loops in `.shipline/loops.json`, triaged with a two-reviewer system; polish-tier goes to knowledge gotchas
+- **Knowledge compounding** — `.goodfellow/knowledge.md` accumulates principles, patterns, and gotchas across chain runs
+- **Follow-up tracking** — safety-critical deferred findings become loops in `.goodfellow/loops.json`, triaged with a two-reviewer system; polish-tier goes to knowledge gotchas
 
 ## Install
 
 ```
-claude plugin install easelyte/shipline
+claude plugin install easelyte/goodfellow
 ```
 
 Or for development/testing:
 ```
-claude --plugin-dir /path/to/shipline
+claude --plugin-dir /path/to/goodfellow
 ```
 
 ## Quick Start
 
 ```bash
 # 1. Start a design
-/shipline:brainstorm "Add user authentication with OAuth"
+/goodfellow:brainstorm "Add user authentication with OAuth"
 
 # 2. The chain runs automatically:
 #    brainstorm -> spec-review -> plan -> plan-review -> execute -> ship
 #    Knowledge file created on first run, compounds on every subsequent run.
 
 # 3. Check what accumulated
-cat .shipline/knowledge.md
+cat .goodfellow/knowledge.md
 
 # 4. Close the session cleanly
-/shipline:close
+/goodfellow:close
 ```
 
 ## The Knowledge Loop
@@ -66,7 +68,7 @@ Every skill in the chain participates in a read-extract-persist cycle:
 | snap-compact | — | Extracts learnings before context loss |
 | close | — | Promotes `[pending]` to confirmed |
 
-The knowledge file (`.shipline/knowledge.md`) is append-only by default, human-curated, and intentionally unbounded. Entries follow a lightweight convention:
+The knowledge file (`.goodfellow/knowledge.md`) is append-only by default, human-curated, and intentionally unbounded. Entries follow a lightweight convention:
 
 ```markdown
 ## Principles
@@ -81,25 +83,25 @@ The knowledge file (`.shipline/knowledge.md`) is append-only by default, human-c
 
 ## Follow-Up Tracking
 
-Review findings that aren't fixed now become tracked loops in `.shipline/loops.json`:
+Review findings that aren't fixed now become tracked loops in `.goodfellow/loops.json`:
 
 ```bash
 # File a follow-up manually
-/shipline:ship  # (auto-files safety-critical deferred findings)
+/goodfellow:ship  # (auto-files safety-critical deferred findings)
 
 # List open loops
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/loop_store.py" list
 
 # Seed a brainstorm from a loop
-/shipline:brainstorm --from-loop 3
+/goodfellow:brainstorm --from-loop 3
 
 # Triage accumulated loops
-/shipline:triage
+/goodfellow:triage
 ```
 
-**Anti-whack-a-mole design** (lessons from production where 47% of filed loops never delivered value):
+**Anti-whack-a-mole design:**
 - Only safety-critical findings become loops; polish goes to knowledge gotchas
-- Round 4+ findings file at lowest priority (except safety-critical — V9)
+- Round 4+ findings file at lowest priority (except safety-critical)
 - Soft cap warning at 15 active loops
 - Triage has a 3-cycle hard cap on "still unclear" — forces a decision
 
@@ -107,11 +109,11 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/loop_store.py" list
 
 ```bash
 # Full auto — chain runs hands-off with strategic halts
-SHIPLINE_AUTOPILOT=1
+GOODFELLOW_AUTOPILOT=1
 
 # Dry run first — logs decisions without mutating project code
-# (the decision log itself IS written to .shipline/runs/ — that's the audit trail)
-SHIPLINE_AUTOPILOT=dry-run
+# (the decision log itself IS written to .goodfellow/runs/ — that's the audit trail)
+GOODFELLOW_AUTOPILOT=dry-run
 ```
 
 **Strategic halts** — the system stops itself when it should:
@@ -119,16 +121,16 @@ SHIPLINE_AUTOPILOT=dry-run
 - Verifier flags >50% of findings as stale/noise in a round
 - Unresolved questions that would change the architecture
 
-Decision log written to `.shipline/runs/<timestamp>.jsonl` for auditability.
+Decision log written to `.goodfellow/runs/<timestamp>.jsonl` for auditability.
 
 ## Triage
 
-When loops accumulate, `/shipline:triage` helps separate real defects from noise:
+When loops accumulate, `/goodfellow:triage` helps separate real defects from noise:
 
 1. Two independent reviewers assess each loop (Claude + Codex or dual-Claude)
 2. Reconciliation: both agree (high confidence), one opinion + one unclear (medium), disagree (low)
 3. Operator confirms/overrides in a batch table
-4. Decisions logged to `.shipline/triage-log.jsonl` for calibration
+4. Decisions logged to `.goodfellow/triage-log.jsonl` for calibration
 
 ## Skills Reference
 
@@ -136,28 +138,28 @@ When loops accumulate, `/shipline:triage` helps separate real defects from noise
 
 | Skill | Invocation | Codex? | Autopilot? |
 |---|---|---|---|
-| brainstorm | `/shipline:brainstorm [--from-loop N]` | No | Picks own approach |
-| spec-review | `/shipline:spec-review <path>` | Optional | Full loop |
-| plan | `/shipline:plan <spec-path>` | No | Auto-dispatches |
-| plan-review | `/shipline:plan-review <path>` | Optional | Full loop |
-| execute | `/shipline:execute <plan-path>` | Optional | All tasks |
-| ship | `/shipline:ship [--quick]` | Optional | Full auto |
+| brainstorm | `/goodfellow:brainstorm [--from-loop N]` | No | Picks own approach |
+| spec-review | `/goodfellow:spec-review <path>` | Optional | Full loop |
+| plan | `/goodfellow:plan <spec-path>` | No | Auto-dispatches |
+| plan-review | `/goodfellow:plan-review <path>` | Optional | Full loop |
+| execute | `/goodfellow:execute <plan-path>` | Optional | All tasks |
+| ship | `/goodfellow:ship [--quick]` | Optional | Full auto |
 
 ### Review and Triage (2 skills)
 
 | Skill | Invocation | Codex? |
 |---|---|---|
-| codex-review | `/shipline:codex-review` | Required |
-| triage | `/shipline:triage` | Optional |
+| codex-review | `/goodfellow:codex-review` | Required |
+| triage | `/goodfellow:triage` | Optional |
 
 ### Session Lifecycle (4 skills)
 
 | Skill | Invocation |
 |---|---|
-| snap-compact | `/shipline:snap-compact` |
-| close | `/shipline:close` |
-| branch | `/shipline:branch <topic>` |
-| prune-stale | `/shipline:prune-stale` |
+| snap-compact | `/goodfellow:snap-compact` |
+| close | `/goodfellow:close` |
+| branch | `/goodfellow:branch <topic>` |
+| prune-stale | `/goodfellow:prune-stale` |
 
 ## Codex Integration (Optional)
 
@@ -165,12 +167,12 @@ The [Codex CLI](https://github.com/openai/codex) is optional. When present, revi
 
 ```bash
 # Force-disable Codex even when installed
-SHIPLINE_CODEX=0
+GOODFELLOW_CODEX=0
 
 # Set the Claude reviewer model tier
-SHIPLINE_REVIEW_MODEL=opus  # Recommended when no Codex — capability-tier diversity
-SHIPLINE_REVIEW_MODEL=sonnet # Default — sufficient with Codex present
-SHIPLINE_REVIEW_MODEL=haiku  # Quick passes on small diffs
+GOODFELLOW_REVIEW_MODEL=opus  # Recommended when no Codex — capability-tier diversity
+GOODFELLOW_REVIEW_MODEL=sonnet # Default — sufficient with Codex present
+GOODFELLOW_REVIEW_MODEL=haiku  # Quick passes on small diffs
 ```
 
 ## Philosophy
@@ -187,15 +189,15 @@ SHIPLINE_REVIEW_MODEL=haiku  # Quick passes on small diffs
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `SHIPLINE_AUTOPILOT` | unset | `1` for full auto, `dry-run` for observe mode |
-| `SHIPLINE_CODEX` | `1` | `0` to force-disable Codex |
-| `SHIPLINE_REVIEW_MODEL` | `sonnet` | Claude reviewer model: `sonnet`, `opus`, `haiku` |
-| `SHIPLINE_TRIAGE_RETENTION_DAYS` | `90` | Days to keep closed-loop triage entries |
-| `SHIPLINE_RUNS_RETENTION_DAYS` | `90` | Days to keep autopilot run logs |
+| `GOODFELLOW_AUTOPILOT` | unset | `1` for full auto, `dry-run` for observe mode |
+| `GOODFELLOW_CODEX` | `1` | `0` to force-disable Codex |
+| `GOODFELLOW_REVIEW_MODEL` | `sonnet` | Claude reviewer model: `sonnet`, `opus`, `haiku` |
+| `GOODFELLOW_TRIAGE_RETENTION_DAYS` | `90` | Days to keep closed-loop triage entries |
+| `GOODFELLOW_RUNS_RETENTION_DAYS` | `90` | Days to keep autopilot run logs |
 
 ## Platform Support
 
-Shipline works on **macOS and Linux**. The loop store and triage helper use `fcntl` file locking which is Unix-only. On Windows, concurrent session locking is unavailable — single-session use works fine, but running `/shipline:ship` and `/shipline:triage` simultaneously may produce duplicate loop IDs.
+Goodfellow works on **macOS and Linux**. The loop store and triage helper use `fcntl` file locking which is Unix-only. On Windows, concurrent session locking is unavailable — single-session use works fine, but running `/goodfellow:ship` and `/goodfellow:triage` simultaneously may produce duplicate loop IDs.
 
 ## Contributing
 

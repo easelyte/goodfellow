@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Shipline loop store — tracks follow-up work in .shipline/loops.json.
+"""Goodfellow loop store — tracks follow-up work in .goodfellow/loops.json.
 
 File lock covers the entire read-modify-write critical section.
 Unix only (fcntl.flock). Windows raises ImportError — document in README.
@@ -13,7 +13,7 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-LOOPS_FILE = ".shipline/loops.json"
+LOOPS_FILE = ".goodfellow/loops.json"
 
 
 def _loops_path(project_root="."):
@@ -164,7 +164,7 @@ def count_open(project_root="."):
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="Shipline loop store CLI")
+    parser = argparse.ArgumentParser(description="Goodfellow loop store CLI")
     parser.add_argument("--root", default=".", help="Project root")
     sub = parser.add_subparsers(dest="cmd")
 

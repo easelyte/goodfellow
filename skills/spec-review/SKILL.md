@@ -7,15 +7,15 @@ Run a multi-round adversarial review on the spec file the operator indicated.
 
 ## 0. Read the spec
 
-Read the spec file fully. Also read `.shipline/knowledge.md` (Principles + Gotchas sections) if it exists — these inform principle checking during review.
+Read the spec file fully. Also read `.goodfellow/knowledge.md` (Principles + Gotchas sections) if it exists — these inform principle checking during review.
 
 ## 1. Each round, dispatch both reviewers in parallel
 
-**Reviewer 1 (Claude subagent, model from SHIPLINE_REVIEW_MODEL or default sonnet):**
+**Reviewer 1 (Claude subagent, model from GOODFELLOW_REVIEW_MODEL or default sonnet):**
 
-Use the Agent tool with `model: "sonnet"` (or the value of SHIPLINE_REVIEW_MODEL). Prompt:
+Use the Agent tool with `model: "sonnet"` (or the value of GOODFELLOW_REVIEW_MODEL). Prompt:
 
-> "You are an adversarial spec reviewer. Read <path>. Find weaknesses: contradictions, undefined behavior, missing requirements, ambiguous success criteria, hidden coupling. Check against .shipline/knowledge.md principles and gotchas if provided. Output: ## Verdict / ## Blockers / ## Major / ## Minor. Per-finding: cite section, explain issue, state fix. If a finding matches a knowledge gotcha, note 'knowledge-elevated' and bump severity one tier (cap at blocker)."
+> "You are an adversarial spec reviewer. Read <path>. Find weaknesses: contradictions, undefined behavior, missing requirements, ambiguous success criteria, hidden coupling. Check against .goodfellow/knowledge.md principles and gotchas if provided. Output: ## Verdict / ## Blockers / ## Major / ## Minor. Per-finding: cite section, explain issue, state fix. If a finding matches a knowledge gotcha, note 'knowledge-elevated' and bump severity one tier (cap at blocker)."
 
 **Reviewer 2 (Codex bridge):**
 
@@ -82,4 +82,4 @@ Summarize: "Spec converged at round N. Key changes: {bullets}."
 
 Deferred findings: discard (spec-review doesn't file loops — unresolved findings are addressed in the next chain stage).
 
-Auto-dispatch `/shipline:plan <spec-path>`.
+Auto-dispatch `/goodfellow:plan <spec-path>`.

@@ -24,7 +24,7 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/codex-bridge.sh" --kind diff --commit <sha>
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/codex-bridge.sh" --kind diff --base <branch>
 ```
 
-The bridge handles Codex detection and Claude fallback automatically. When SHIPLINE_REVIEW_MODEL is set, it's passed through to the Claude fallback reviewer.
+The bridge handles Codex detection and Claude fallback automatically. When GOODFELLOW_REVIEW_MODEL is set, it's passed through to the Claude fallback reviewer.
 
 ## 3. Present findings
 

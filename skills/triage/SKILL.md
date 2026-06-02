@@ -68,7 +68,7 @@ For each confirmed decision:
 
 ## 7. Log to ground truth
 
-Append each decision to `.shipline/triage-log.jsonl` (lock + flush + fsync, truncated-line tolerant):
+Append each decision to `.goodfellow/triage-log.jsonl` (lock + flush + fsync, truncated-line tolerant):
 
 ```json
 {"loop_id": 1, "title": "...", "decision": "real-defect", "confidence": "high", "reviewer_1": "real-defect", "reviewer_2": "real-defect", "date": "2026-06-02", "operator_override": false}

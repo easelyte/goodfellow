@@ -11,13 +11,13 @@ The operator wants a design brainstorm. Run a streamlined exploration that compo
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/init_state.sh"
 ```
 
-This ensures `.shipline/` exists and is gitignored.
+This ensures `.goodfellow/` exists and is gitignored.
 
 ## 2. Read accumulated knowledge
 
 Before proposing approaches, read the project's accumulated design knowledge:
 
-1. Read `.shipline/knowledge.md` — all sections (Principles, Patterns, Gotchas)
+1. Read `.goodfellow/knowledge.md` — all sections (Principles, Patterns, Gotchas)
 2. If the file doesn't exist, skip silently — first chain run starts empty
 
 Internalize silently. Don't list principles back to the operator. Let them shape the design.
@@ -38,7 +38,7 @@ Find loop N, use its title + description as the brainstorm seed. If not found, t
 - Skip questions answerable by reading the codebase
 - Bundle into one message
 
-**Autopilot mode (`SHIPLINE_AUTOPILOT=1` or `dry-run`):** skip questions entirely. Record unresolved questions in spec frontmatter as `unresolved_questions:`.
+**Autopilot mode (`GOODFELLOW_AUTOPILOT=1` or `dry-run`):** skip questions entirely. Record unresolved questions in spec frontmatter as `unresolved_questions:`.
 
 ## 5. Propose approaches
 
@@ -59,13 +59,13 @@ After the operator picks (or autopilot self-picks), write the full design docume
 - **Confidence field:** `high` if approach has precedent in knowledge file, `medium` if novel, `low` if any unresolved_questions affect architecture (system boundaries, data flow, source-of-truth)
 - Self-review pass: catch internal inconsistencies before showing the operator
 
-**Autopilot dry-run (`SHIPLINE_AUTOPILOT=dry-run`):** log `{"event": "approach_selected", "would_act": true, ...}` to `.shipline/runs/<timestamp>.jsonl`. Do NOT write the spec or dispatch spec-review. Log `would_act` for each mutation.
+**Autopilot dry-run (`GOODFELLOW_AUTOPILOT=dry-run`):** log `{"event": "approach_selected", "would_act": true, ...}` to `.goodfellow/runs/<timestamp>.jsonl`. Do NOT write the spec or dispatch spec-review. Log `would_act` for each mutation.
 
 ## 7. Auto-dispatch spec-review
 
 After writing the spec, in the same turn:
 1. Emit a brief summary (file path, what it commits to)
-2. Dispatch `/shipline:spec-review <spec-path>`
+2. Dispatch `/goodfellow:spec-review <spec-path>`
 
 No gate. No "Want me to proceed?" The operator can interrupt if the spec is obviously broken.
 

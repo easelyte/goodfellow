@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Shipline Codex bridge — wraps codex exec review or falls back to dual-Claude.
+# Goodfellow Codex bridge — wraps codex exec review or falls back to dual-Claude.
 # Usage: codex-bridge.sh --kind <spec|plan|diff> [--model <sonnet|opus|haiku>]
 #        [--include-aesthetic] [--commit <sha>] [--base <branch>] [--uncommitted]
 #        [-- <prompt>]
 set -euo pipefail
 
 KIND=""
-MODEL="${SHIPLINE_REVIEW_MODEL:-sonnet}"
+MODEL="${GOODFELLOW_REVIEW_MODEL:-sonnet}"
 INCLUDE_AESTHETIC=""
 COMMIT=""
 BASE=""
@@ -27,10 +27,10 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-OUTFILE=$(mktemp /tmp/shipline-review-XXXXXX.md)
+OUTFILE=$(mktemp /tmp/goodfellow-review-XXXXXX.md)
 
 has_codex() {
-  [[ "${SHIPLINE_CODEX:-1}" != "0" ]] && command -v codex &>/dev/null
+  [[ "${GOODFELLOW_CODEX:-1}" != "0" ]] && command -v codex &>/dev/null
 }
 
 check_version() {

@@ -9,7 +9,7 @@ Implement the plan at: $ARGUMENTS
 
 Read the plan file. Parse phases and tasks (headers: `## Phase N`, `### T-N.X`).
 
-Read `.shipline/knowledge.md` Gotchas section if it exists — these are known footguns to watch for during implementation.
+Read `.goodfellow/knowledge.md` Gotchas section if it exists — these are known footguns to watch for during implementation.
 
 ## 2. Per-task implementation loop
 
@@ -56,4 +56,4 @@ In interactive mode, pause briefly: "Phase N complete. M tasks done. Continuing 
 
 Summarize: "Execution complete. N tasks across M phases. Verification passed."
 
-Auto-dispatch `/shipline:ship`.
+Auto-dispatch `/goodfellow:ship`.

@@ -59,7 +59,7 @@ def test_auto_creates_missing_file():
 
 def test_corrupt_json_raises():
     with tempfile.TemporaryDirectory() as d:
-        path = Path(d) / ".shipline" / "loops.json"
+        path = Path(d) / ".goodfellow" / "loops.json"
         path.parent.mkdir(parents=True)
         path.write_text("{corrupt")
         try:
