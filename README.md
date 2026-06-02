@@ -182,7 +182,7 @@ When loops accumulate, `/goodfellow:triage` helps separate real defects from noi
 
 The [Codex CLI](https://github.com/openai/codex) is optional. When present, review skills run cross-model adversarial review (Claude + Codex/GPT). When absent, they run two Claude reviewers with different prompts (adversarial + constructive).
 
-**Recommended setup:** Opus as your main session, Codex + Sonnet as the two reviewers. Three distinct perspectives: Opus reconciles, Sonnet reviews adversarially, Codex catches what Claude misses. Without Codex, two reviewers of the same model with different prompts — pick your budget tier.
+**Recommended setup:** Opus as your main session, Codex + Sonnet as the two reviewers. Three distinct perspectives: Opus reconciles, Sonnet reviews adversarially, Codex catches what Claude misses. Without Codex, set `GOODFELLOW_REVIEW_MODEL=opus` — two Opus reviewers with different prompts is the strongest mono-model configuration. Sonnet is the budget fallback.
 
 These are practical recommendations from daily use, not formal benchmarks.
 
@@ -202,8 +202,8 @@ GOODFELLOW_REVIEW_MODEL=haiku   # Quick passes on small diffs
 |---|---|---|---|
 | Present | sonnet (default) | Sonnet + Codex | Recommended: cross-model diversity |
 | Present | opus | Opus + Codex | Maximum review depth |
-| Absent | sonnet | Two Sonnet (different prompts) | Budget-friendly mono-model |
-| Absent | opus | Two Opus (different prompts) | Best mono-model review |
+| Absent | opus | Two Opus (different prompts) | Recommended no-Codex setup |
+| Absent | sonnet | Two Sonnet (different prompts) | Budget fallback |
 
 ## Philosophy
 
