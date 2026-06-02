@@ -20,7 +20,7 @@ if [[ -z "$CLAIMS" ]]; then
   exit 1
 fi
 
-OUTFILE="$(mktemp /tmp/goodfellow-research-XXXXXX).md"
+OUTFILE=$(mktemp /tmp/goodfellow-research-XXXXXX)
 
 if [[ -n "${GOODFELLOW_TAVILY_KEY:-}" ]]; then
   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/research_tavily.py" \

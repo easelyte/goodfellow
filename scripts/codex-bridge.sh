@@ -27,7 +27,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-OUTFILE="$(mktemp /tmp/goodfellow-review-XXXXXX).md"
+OUTFILE=$(mktemp /tmp/goodfellow-review-XXXXXX)
 
 has_codex() {
   [[ "${GOODFELLOW_CODEX:-1}" != "0" ]] && command -v codex &>/dev/null

@@ -6,16 +6,16 @@ An opinionated development lifecycle for Claude Code.
 Your system gets smarter every time you ship.
 
 ```
-                    THE CHAIN
-  
-   Brainstorm -----> Spec -----> Plan -----> Execute -----> Ship
-       |               |          |            |              |
-       |          spec-review  plan-review  verify        review
-       |           (adversarial + research injection)     PR + merge
-       |                                                      |
-       +--- reads .goodfellow/knowledge.md ----<--- writes ---+
-                                                    
-              your system gets smarter every cycle
+    +-------------+     +------+     +------+     +---------+     +------+
+    |  Brainstorm  |---->| Spec |---->| Plan |---->| Execute |---->| Ship |
+    +-------------+     +------+     +------+     +---------+     +------+
+           |                |            |              |              |
+           |           spec-review  plan-review     verify        review
+           |            + research   + research                  PR + merge
+           |                                                          |
+           +--- reads knowledge ------------------------------ writes +
+    
+                   your system gets smarter every cycle
 ```
 
 Adversarial review at every stage. Knowledge that compounds. Nothing that slips.
@@ -98,7 +98,7 @@ The knowledge file (`.goodfellow/knowledge.md`) is append-only by default, human
 
 ## Follow-Up Tracking
 
-Deferred review findings are routed by severity: safety-critical findings at ship time **block the PR** (must be fixed or explicitly waived). Non-blocking safety-critical findings from earlier stages (spec-review, plan-review) become tracked loops in `.goodfellow/loops.json`. Polish-tier findings go to the knowledge file as gotchas:
+Deferred review findings are routed by severity at ship time: safety-critical findings **block the PR** (must be fixed or explicitly waived). Non-blocking deferred findings become tracked loops in `.goodfellow/loops.json`. Polish-tier findings go to the knowledge file as gotchas. Spec-review and plan-review don't file loops — their unresolved findings carry forward to the next chain stage:
 
 ```bash
 # File a follow-up manually

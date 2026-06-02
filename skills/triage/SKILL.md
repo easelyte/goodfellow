@@ -45,7 +45,7 @@ Both are independent — neither sees the other's output.
 
 ## 4. Hard cap check
 
-If this loop's `triage_count` is already 2 and the result is `still-unclear`:
+If this loop's `triage_count` has reached 3 (three prior unclear cycles):
 - Override to **MUST DECIDE** — present the loop with both reviewers' reasoning and force the operator to choose `real-defect` or `not-a-defect`. Won't accept `still-unclear`.
 
 ## 5. Batch table presentation
