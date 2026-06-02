@@ -42,11 +42,10 @@ Append to plan:
 ## Appendix: Verified Claims (research pass YYYY-MM-DD)
 
 ✓ Claim: <text>. Verified: <source URL>.
-✗ Claim: <text>. REFUTED: <correct fact + source>. Plan needs revision.
 ? Claim: <text>. No clear evidence — flagged for reviewers.
 ```
 
-If any refuted: surface to operator. Otherwise proceed to adversarial.
+Note: the Tavily adapter uses a word-overlap heuristic and cannot detect outright refutation — only confirmation (✓) or no-clear-evidence (?). If a ✓ claim contradicts your expectation, read the cited source manually. Proceed to adversarial after appending the appendix.
 
 **Graceful degradation:** if WebSearch unavailable, skip. Log reason. Proceed to adversarial.
 

@@ -98,11 +98,16 @@ The knowledge file (`.goodfellow/knowledge.md`) is append-only by default, human
 
 ## Follow-Up Tracking
 
-Deferred review findings are routed by severity at ship time: safety-critical findings **block the PR** (must be fixed or explicitly waived). Non-blocking deferred findings become tracked loops in `.goodfellow/loops.json`. Polish-tier findings go to the knowledge file as gotchas. Spec-review and plan-review don't file loops — their unresolved findings carry forward to the next chain stage:
+At ship time, deferred review findings are routed by severity:
+- **Safety-critical (blocker/security/data-loss):** blocks PR creation. Must be fixed or explicitly waived by the operator. Filing as a loop is not sufficient.
+- **Non-blocking deferred findings:** filed as loops in `.goodfellow/loops.json` for follow-up.
+- **Polish-tier:** added to the knowledge file as gotchas (not filed as loops).
+
+Spec-review and plan-review don't file loops — their unresolved findings carry forward to the next chain stage.
 
 ```bash
 # File a follow-up manually
-/goodfellow:ship  # (auto-files safety-critical deferred findings)
+/goodfellow:ship  # (blocks on safety-critical, files non-blocking as loops)
 
 # List open loops (inside Claude Code — CLAUDE_PLUGIN_ROOT is set automatically)
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/loop_store.py" list

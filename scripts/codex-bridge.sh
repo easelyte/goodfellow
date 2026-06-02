@@ -47,6 +47,24 @@ check_version() {
   fi
 }
 
+# Collect the diff/content that the review should cover
+get_review_context() {
+  if [[ -n "$COMMIT" ]]; then
+    git show "$COMMIT" 2>/dev/null || echo "(could not read commit $COMMIT)"
+  elif [[ -n "$BASE" ]]; then
+    git diff "$BASE"...HEAD 2>/dev/null || echo "(could not diff against $BASE)"
+  elif [[ -n "$UNCOMMITTED" ]]; then
+    git diff HEAD 2>/dev/null; git diff --cached 2>/dev/null
+  fi
+}
+
+build_review_prompt() {
+  local base_prompt="Review this $KIND. Focus on contradictions, undefined behavior, missing requirements, ambiguous criteria."
+  [[ -n "$INCLUDE_AESTHETIC" ]] && base_prompt="$base_prompt Include aesthetic/style findings."
+  [[ -n "$PROMPT" ]] && base_prompt="$PROMPT"
+  echo "$base_prompt"
+}
+
 run_codex() {
   check_version
 
@@ -54,14 +72,12 @@ run_codex() {
   [[ -n "$COMMIT" ]] && args+=(--commit "$COMMIT")
   [[ -n "$BASE" ]] && args+=(--base "$BASE")
   [[ -n "$UNCOMMITTED" ]] && args+=(--uncommitted)
+  [[ -n "$MODEL" ]] && args+=(--model "$MODEL")
 
-  local review_prompt="Review this $KIND. Focus on contradictions, undefined behavior, missing requirements, ambiguous criteria."
-  [[ -n "$INCLUDE_AESTHETIC" ]] && review_prompt="$review_prompt Include aesthetic/style findings."
-  [[ -n "$PROMPT" ]] && review_prompt="$PROMPT"
+  local review_prompt
+  review_prompt=$(build_review_prompt)
 
-  # codex exec review: --commit/--base/--uncommitted are mutually exclusive with positional PROMPT
-  # codex exec review: scope flags reject positional PROMPT.
-  # Pipe the review prompt via stdin instead.
+  # codex exec review: scope flags reject positional PROMPT — pipe via stdin
   local rc=0
   if [[ -n "$COMMIT" || -n "$BASE" || -n "$UNCOMMITTED" ]]; then
     echo "$review_prompt" | timeout 300 "${args[@]}" - > "$OUTFILE" 2>&1 || rc=$?
@@ -75,33 +91,56 @@ run_codex() {
 }
 
 run_claude_fallback() {
-  local adversarial_prompt constructive_prompt
+  local review_prompt context
+  review_prompt=$(build_review_prompt)
+  context=$(get_review_context)
 
-  adversarial_prompt="You are an adversarial $KIND reviewer. Find weaknesses: contradictions, undefined behavior, missing requirements, ambiguous success criteria, hidden coupling. Output: ## Verdict / ## Blockers / ## Major / ## Minor. Per-finding: cite section, explain issue, state fix."
-  constructive_prompt="You are a constructive $KIND reviewer. Verify the design works: check completeness, identify what's well-specified, flag gaps where implementation will need judgment calls. Output: ## Strengths / ## Gaps / ## Suggestions."
+  local full_adversarial full_constructive
+  full_adversarial="You are an adversarial $KIND reviewer.
 
-  [[ -n "$INCLUDE_AESTHETIC" ]] && {
-    adversarial_prompt="$adversarial_prompt Also include style and consistency findings."
-    constructive_prompt="$constructive_prompt Also note style inconsistencies."
-  }
+$review_prompt
+
+$(if [[ -n "$context" ]]; then echo "Here is the content to review:"; echo '```'; echo "$context"; echo '```'; fi)
+
+Output: ## Verdict / ## Blockers / ## Major / ## Minor. Per-finding: cite section, explain issue, state fix."
+
+  full_constructive="You are a constructive $KIND reviewer.
+
+$review_prompt
+
+$(if [[ -n "$context" ]]; then echo "Here is the content to review:"; echo '```'; echo "$context"; echo '```'; fi)
+
+Output: ## Strengths / ## Gaps / ## Suggestions."
+
+  local fail_count=0
 
   {
     echo "--- REVIEWER_1 (adversarial, model: $MODEL) ---"
     if command -v claude &>/dev/null; then
-      echo "$adversarial_prompt" | timeout 300 claude --print --model "$MODEL" 2>/dev/null || echo "(adversarial reviewer failed)"
+      echo "$full_adversarial" | timeout 300 claude --print --model "$MODEL" 2>/dev/null || { echo "(adversarial reviewer failed)"; fail_count=$((fail_count + 1)); }
     else
       echo "(claude CLI not available — adversarial prompt below)"
-      echo "$adversarial_prompt"
+      echo "$full_adversarial"
+      fail_count=$((fail_count + 1))
     fi
     echo ""
     echo "--- REVIEWER_2 (constructive, model: $MODEL) ---"
     if command -v claude &>/dev/null; then
-      echo "$constructive_prompt" | timeout 300 claude --print --model "$MODEL" 2>/dev/null || echo "(constructive reviewer failed)"
+      echo "$full_constructive" | timeout 300 claude --print --model "$MODEL" 2>/dev/null || { echo "(constructive reviewer failed)"; fail_count=$((fail_count + 1)); }
     else
       echo "(claude CLI not available — constructive prompt below)"
-      echo "$constructive_prompt"
+      echo "$full_constructive"
+      fail_count=$((fail_count + 1))
     fi
   } > "$OUTFILE"
+
+  if [[ $fail_count -ge 2 ]]; then
+    echo "ERROR: Both Claude fallback reviewers failed" >&2
+    exit 1
+  fi
+  if [[ $fail_count -ge 1 ]]; then
+    echo "WARNING: One Claude fallback reviewer failed (partial review)" >&2
+  fi
 }
 
 if has_codex; then

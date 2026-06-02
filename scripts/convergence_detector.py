@@ -67,7 +67,14 @@ def check_convergence(rounds_history):
             for c in new_classes
             if any(
                 s in c
-                for s in ("security", "data-loss", "correctness", "auth", "injection")
+                for s in (
+                    "security",
+                    "data-loss",
+                    "correctness",
+                    "auth",
+                    "injection",
+                    "privilege",
+                )
             )
         ]
         if not new_safety:

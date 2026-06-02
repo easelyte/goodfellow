@@ -49,9 +49,10 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/research.sh" --claims '<json array of claims
 ```
 
 Append verified claims to review context:
-- **Confirmed:** claim + source URL
-- **Contradicted:** correct fact + source
-- **Unverifiable:** no authoritative source
+- **Confirmed (✓):** claim + source URL
+- **Unverifiable (?):** no authoritative source (flagged for reviewers)
+
+Note: the Tavily adapter uses word-overlap heuristic — it confirms or flags, but cannot detect outright refutation. Read ✓ sources manually if a claim seems suspect.
 
 **Graceful degradation:** if WebSearch is unavailable, skip silently. Log "research injection skipped: <reason>". All findings retain original severity.
 

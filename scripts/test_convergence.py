@@ -110,6 +110,13 @@ def test_severity_drop_converges_when_new_class_not_safety():
     assert result.is_converged
 
 
+def test_privilege_escalation_blocks_severity_drop_convergence():
+    round1 = [{"severity": "blocker", "defect_class": "auth"}]
+    round2 = [{"severity": "major", "defect_class": "privilege-escalation"}]
+    result = convergence_detector.check_convergence([round1, round2])
+    assert not result.is_converged
+
+
 def test_single_round_needs_two():
     result = convergence_detector.check_convergence([[{"severity": "minor"}]])
     assert not result.is_converged
