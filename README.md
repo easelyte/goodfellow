@@ -91,7 +91,7 @@ The knowledge file (`.goodfellow/knowledge.md`) is append-only by default, human
 
 ## Follow-Up Tracking
 
-Review findings that aren't fixed now become tracked loops in `.goodfellow/loops.json`:
+Safety-critical review findings that aren't fixed at convergence become tracked loops in `.goodfellow/loops.json`. Polish-tier findings go to the knowledge file as gotchas instead:
 
 ```bash
 # File a follow-up manually
@@ -219,7 +219,7 @@ GOODFELLOW_REVIEW_MODEL=haiku   # Quick passes on small diffs
 
 ## Platform Support
 
-Goodfellow works on **macOS, Linux, and Windows**. On Unix, the loop store uses `fcntl` file locking for concurrent session safety. On Windows, locking is skipped — single-session use works fine, but running `/goodfellow:ship` and `/goodfellow:triage` simultaneously may produce duplicate loop IDs.
+**Best on macOS and Linux.** On Unix, the loop store uses `fcntl` file locking for concurrent session safety. Windows works for single-session use, but file locking is skipped — avoid running multiple Goodfellow sessions on the same project simultaneously (duplicate loop IDs possible).
 
 **Worktree-first execution recommended** — `/goodfellow:execute` nudges you to use `/goodfellow:branch <topic>` before execution. This isolates feature work from your main workspace, keeps your root clean, and avoids the Windows-specific issue where Codex temp folders require admin rights to delete after a session ends. The nudge is advisory, not mandatory.
 
