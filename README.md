@@ -192,12 +192,15 @@ GOODFELLOW_REVIEW_MODEL=haiku  # Quick passes on small diffs
 | `GOODFELLOW_AUTOPILOT` | unset | `1` for full auto, `dry-run` for observe mode |
 | `GOODFELLOW_CODEX` | `1` | `0` to force-disable Codex |
 | `GOODFELLOW_REVIEW_MODEL` | `sonnet` | Claude reviewer model: `sonnet`, `opus`, `haiku` |
+| `GOODFELLOW_TAVILY_KEY` | unset | Tavily API key for batch research verification (optional — falls back to WebSearch) |
 | `GOODFELLOW_TRIAGE_RETENTION_DAYS` | `90` | Days to keep closed-loop triage entries |
 | `GOODFELLOW_RUNS_RETENTION_DAYS` | `90` | Days to keep autopilot run logs |
 
 ## Platform Support
 
 Goodfellow works on **macOS and Linux**. The loop store and triage helper use `fcntl` file locking which is Unix-only. On Windows, concurrent session locking is unavailable — single-session use works fine, but running `/goodfellow:ship` and `/goodfellow:triage` simultaneously may produce duplicate loop IDs.
+
+**Worktree-first execution recommended** — `/goodfellow:execute` nudges you to use `/goodfellow:branch <topic>` before execution. This isolates feature work from your main workspace, keeps your root clean, and avoids the Windows-specific issue where Codex temp folders require admin rights to delete after a session ends. The nudge is advisory, not mandatory.
 
 ## Contributing
 

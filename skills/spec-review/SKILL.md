@@ -32,7 +32,13 @@ After round 1 findings return, extract load-bearing factual claims:
 - Version compatibility
 - Protocol/standard support
 
-Verify via WebSearch (cap: 5 searches). Append verified claims to review context:
+Verify via Tavily batch search (if `GOODFELLOW_TAVILY_KEY` is set) or WebSearch fallback (cap: 5 searches):
+
+```bash
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/research.sh" --claims '<json array of claims>' --max 5
+```
+
+Append verified claims to review context:
 - **Confirmed:** claim + source URL
 - **Contradicted:** correct fact + source
 - **Unverifiable:** no authoritative source

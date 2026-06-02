@@ -17,9 +17,15 @@ Extract factual, externally verifiable claims from the plan:
 - Tool availability and flags
 - Rate limits, quotas, TTLs
 
-Announce: "Researching N claims: [summary]. WebSearch dispatched."
+Announce: "Researching N claims: [summary]."
 
-Dispatch parallel WebSearch calls. Append to plan:
+Verify via Tavily batch search (if `GOODFELLOW_TAVILY_KEY` is set) or WebSearch fallback:
+
+```bash
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/research.sh" --claims '<json array of claims>' --max 5
+```
+
+Append to plan:
 
 ```
 ## Appendix: Verified Claims (research pass YYYY-MM-DD)

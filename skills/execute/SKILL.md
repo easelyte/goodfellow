@@ -5,6 +5,21 @@ description: Per-task plan implementation with built-in verification (lint, form
 
 Implement the plan at: $ARGUMENTS
 
+## 0. Worktree hygiene check
+
+Before starting execution, check if you're running in the root workspace:
+
+```bash
+git rev-parse --show-toplevel
+git worktree list
+```
+
+If the current directory IS the root workspace (not a worktree), warn:
+
+> "Running in root workspace. For cleaner isolation (especially on Windows where Codex temp folders require admin rights to delete), consider `/goodfellow:branch <topic>` first, then execute from the worktree."
+
+Proceed regardless — this is a nudge, not a gate.
+
 ## 1. Read the plan and knowledge
 
 Read the plan file. Parse phases and tasks (headers: `## Phase N`, `### T-N.X`).
