@@ -20,7 +20,7 @@ jobs:
         run: cd scripts && python -m pytest -v
       - name: Check for project-specific references
         run: |
-          if grep -r "openclaw\|son-of-anton\|ANTON_SESSION\|anton/" --include="*.md" --include="*.py" --include="*.sh" . | grep -v '.github/'; then
+          if grep -r "openclaw\|son-of-anton\|ANTON_SESSION\|anton/\|shipline" --include="*.md" --include="*.py" --include="*.sh" . | grep -v '.github/'; then
             echo "ERROR: Found project-specific references"
             exit 1
           fi
