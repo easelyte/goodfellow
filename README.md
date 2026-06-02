@@ -62,7 +62,7 @@ Every skill in the chain participates in a read-extract-persist cycle:
 | Skill | Reads | Writes |
 |---|---|---|
 | brainstorm | All sections (Principles, Patterns, Gotchas) | — |
-| spec-review / plan-review | Principles + Gotchas (flags violations) | — |
+| spec-review / plan-review | Principles + Gotchas (flags violations against your project's accumulated knowledge) | — |
 | execute | Gotchas (catches footguns at code-writing stage) | — |
 | ship | — | New entries with `[pending]` tag |
 | snap-compact | — | Extracts learnings before context loss |
@@ -198,7 +198,7 @@ GOODFELLOW_REVIEW_MODEL=haiku  # Quick passes on small diffs
 
 ## Platform Support
 
-Goodfellow works on **macOS and Linux**. The loop store and triage helper use `fcntl` file locking which is Unix-only. On Windows, concurrent session locking is unavailable — single-session use works fine, but running `/goodfellow:ship` and `/goodfellow:triage` simultaneously may produce duplicate loop IDs.
+Goodfellow works on **macOS, Linux, and Windows**. On Unix, the loop store uses `fcntl` file locking for concurrent session safety. On Windows, locking is skipped — single-session use works fine, but running `/goodfellow:ship` and `/goodfellow:triage` simultaneously may produce duplicate loop IDs.
 
 **Worktree-first execution recommended** — `/goodfellow:execute` nudges you to use `/goodfellow:branch <topic>` before execution. This isolates feature work from your main workspace, keeps your root clean, and avoids the Windows-specific issue where Codex temp folders require admin rights to delete after a session ends. The nudge is advisory, not mandatory.
 

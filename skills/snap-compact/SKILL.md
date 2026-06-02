@@ -5,6 +5,12 @@ description: Extract learnings from the session before context compaction — pr
 
 Extract learnings before compacting context.
 
+## 0. Ensure state directory
+
+```bash
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/init_state.sh"
+```
+
 ## 1. Scan for learnings
 
 Review the current session's work for:

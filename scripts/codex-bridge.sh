@@ -59,8 +59,13 @@ run_codex() {
   [[ -n "$INCLUDE_AESTHETIC" ]] && review_prompt="$review_prompt Include aesthetic/style findings."
   [[ -n "$PROMPT" ]] && review_prompt="$PROMPT"
 
+  # codex exec review: --commit/--base/--uncommitted are mutually exclusive with positional PROMPT
   local rc=0
-  timeout 300 "${args[@]}" "$review_prompt" > "$OUTFILE" 2>&1 || rc=$?
+  if [[ -n "$COMMIT" || -n "$BASE" || -n "$UNCOMMITTED" ]]; then
+    timeout 300 "${args[@]}" > "$OUTFILE" 2>&1 || rc=$?
+  else
+    timeout 300 "${args[@]}" "$review_prompt" > "$OUTFILE" 2>&1 || rc=$?
+  fi
   if [[ $rc -ne 0 ]]; then
     echo "ERROR: Codex review timed out or failed (exit $rc)" >&2
     exit 1

@@ -5,6 +5,12 @@ description: Two-reviewer loop triage — independently assess each open loop, r
 
 Triage open loops to separate real defects from noise.
 
+## 0. Ensure state directory
+
+```bash
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/init_state.sh"
+```
+
 ## 1. Load open loops
 
 ```bash

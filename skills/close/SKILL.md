@@ -5,6 +5,12 @@ description: Structured session closing — commit check, persist learnings to k
 
 Close the current session cleanly.
 
+## 0. Ensure state directory
+
+```bash
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/init_state.sh"
+```
+
 ## 1. Uncommitted changes check
 
 Run `git status`. If uncommitted changes exist, warn and offer to commit.

@@ -5,6 +5,12 @@ description: "Verify, review, create PR, extract learnings to knowledge file, fi
 
 Ship the current work. Runs verify → review → PR → extract learnings → file loops.
 
+## 0. Ensure state directory
+
+```bash
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/init_state.sh"
+```
+
 ## 1. Full verification pass
 
 Run verification on the entire diff:

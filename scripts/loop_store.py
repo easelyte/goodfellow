@@ -1,11 +1,18 @@
 #!/usr/bin/env python3
 """Goodfellow loop store — tracks follow-up work in .goodfellow/loops.json.
 
-File lock covers the entire read-modify-write critical section.
-Unix only (fcntl.flock). Windows raises ImportError — document in README.
+File lock covers the entire read-modify-write critical section on Unix (fcntl.flock).
+On Windows, locking is skipped — single-session use works fine, concurrent sessions
+may produce duplicate IDs.
 """
 
-import fcntl
+try:
+    import fcntl
+
+    _HAS_FLOCK = True
+except ImportError:
+    _HAS_FLOCK = False
+
 import json
 import os
 import sys
@@ -58,6 +65,8 @@ def _locked(func):
     def wrapper(*args, project_root=".", **kwargs):
         path = _loops_path(project_root)
         path.parent.mkdir(parents=True, exist_ok=True)
+        if not _HAS_FLOCK:
+            return func(*args, project_root=project_root, **kwargs)
         lock_path = path.with_suffix(".lock")
         lock_path.touch(exist_ok=True)
         with open(lock_path, "r") as lock_fd:
@@ -180,6 +189,11 @@ if __name__ == "__main__":
     close_p = sub.add_parser("close")
     close_p.add_argument("id", type=int)
 
+    triage_p = sub.add_parser("update-triage")
+    triage_p.add_argument("id", type=int)
+    triage_p.add_argument("--count", type=int, required=True)
+    triage_p.add_argument("--date", default=None)
+
     sub.add_parser("list")
     sub.add_parser("stale")
     sub.add_parser("count")
@@ -203,6 +217,17 @@ if __name__ == "__main__":
     elif args.cmd == "close":
         if close_loop(args.id, project_root=args.root):
             print(f"Closed loop #{args.id}")
+        else:
+            print(f"Loop #{args.id} not found", file=sys.stderr)
+            sys.exit(1)
+    elif args.cmd == "update-triage":
+        date = args.date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        if update_triage(
+            args.id, triage_count=args.count, last_triaged=date, project_root=args.root
+        ):
+            print(
+                f"Updated loop #{args.id}: triage_count={args.count}, last_triaged={date}"
+            )
         else:
             print(f"Loop #{args.id} not found", file=sys.stderr)
             sys.exit(1)

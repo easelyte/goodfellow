@@ -2,7 +2,10 @@
 """Batch-verify factual claims via Tavily Search API.
 
 Requires GOODFELLOW_TAVILY_KEY. Each claim becomes one search query.
-Output: markdown appendix with verified/refuted/unverifiable labels.
+Output: markdown appendix with verified (✓) or unverifiable (?) labels.
+Limitation: cannot detect refutation — word-overlap heuristic confirms relevance,
+not agreement. A contradicting source scores the same as a confirming one.
+Refutation detection requires LLM judgment (future enhancement).
 """
 
 import argparse

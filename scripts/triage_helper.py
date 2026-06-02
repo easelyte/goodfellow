@@ -1,7 +1,13 @@
 #!/usr/bin/env python3
 """Goodfellow triage helper — reconciliation logic and JSONL ground truth logging."""
 
-import fcntl
+try:
+    import fcntl
+
+    _HAS_FLOCK = True
+except ImportError:
+    _HAS_FLOCK = False
+
 import json
 import os
 from datetime import datetime, timezone
@@ -56,13 +62,15 @@ def log_decision(decision_record, project_root="."):
     line = json.dumps(record, separators=(",", ":")) + "\n"
 
     with open(path, "a") as f:
-        fcntl.flock(f, fcntl.LOCK_EX)
+        if _HAS_FLOCK:
+            fcntl.flock(f, fcntl.LOCK_EX)
         try:
             f.write(line)
             f.flush()
             os.fsync(f.fileno())
         finally:
-            fcntl.flock(f, fcntl.LOCK_UN)
+            if _HAS_FLOCK:
+                fcntl.flock(f, fcntl.LOCK_UN)
 
 
 def read_triage_log(project_root="."):
