@@ -59,9 +59,9 @@ claude --plugin-dir /path/to/goodfellow
 # 1. Start a design
 /goodfellow:brainstorm "Add user authentication with OAuth"
 
-# 2. The chain runs automatically:
+# 2. Each skill auto-dispatches the next:
 #    brainstorm -> spec-review -> plan -> plan-review -> execute -> ship
-#    Knowledge file created on first run, compounds on every subsequent run.
+#    Rounds 1-3 are gateless; round 4+ asks once. Knowledge compounds across runs.
 
 # 3. Check what accumulated
 cat .goodfellow/knowledge.md
@@ -98,13 +98,13 @@ The knowledge file (`.goodfellow/knowledge.md`) is append-only by default, human
 
 ## Follow-Up Tracking
 
-Safety-critical review findings that aren't fixed at convergence become tracked loops in `.goodfellow/loops.json`. Polish-tier findings go to the knowledge file as gotchas instead:
+Deferred review findings are routed by severity: safety-critical findings at ship time **block the PR** (must be fixed or explicitly waived). Non-blocking safety-critical findings from earlier stages (spec-review, plan-review) become tracked loops in `.goodfellow/loops.json`. Polish-tier findings go to the knowledge file as gotchas:
 
 ```bash
 # File a follow-up manually
 /goodfellow:ship  # (auto-files safety-critical deferred findings)
 
-# List open loops
+# List open loops (inside Claude Code — CLAUDE_PLUGIN_ROOT is set automatically)
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/loop_store.py" list
 
 # Seed a brainstorm from a loop
@@ -113,6 +113,8 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/loop_store.py" list
 # Triage accumulated loops
 /goodfellow:triage
 ```
+
+**Priority scale:** p1 = critical, p2 = high, p3 = medium (default), p4 = low (round 4+ findings).
 
 **Anti-whack-a-mole design:**
 - Only safety-critical findings become loops; polish goes to knowledge gotchas

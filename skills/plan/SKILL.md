@@ -19,6 +19,15 @@ Only questions whose answers change execution order or task decomposition. Skip 
 
 Write the complete plan in one pass at `docs/plans/<slug>-plan.md`.
 
+**Required frontmatter:**
+```yaml
+---
+title: "<Plan Title>"
+spec: <path to spec file>
+date: YYYY-MM-DD
+---
+```
+
 **Required header format:**
 - Phase headers: `## Phase N — <title>` (N is a positive integer, sequential)
 - Task headers: `### T-N.X: <title>` (N = phase number, X = task index)

@@ -28,11 +28,17 @@ def test_safety_critical_is_ship_blocking():
     assert result.ship_blocking
 
 
-def test_hard_cap_converges():
+def test_hard_cap_converges_at_cap():
+    findings = [{"severity": "minor", "defect_class": "style"}]
+    result = convergence.check_round(findings, round_number=6, hard_cap=6)
+    assert result.converged
+    assert len(result.deferred_findings) == 1
+
+
+def test_hard_cap_converges_past_cap():
     findings = [{"severity": "minor", "defect_class": "style"}]
     result = convergence.check_round(findings, round_number=7, hard_cap=6)
     assert result.converged
-    assert len(result.deferred_findings) == 1
 
 
 def test_severity_drop_converges():

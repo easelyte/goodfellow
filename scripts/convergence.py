@@ -41,7 +41,7 @@ def check_round(round_findings, round_number, min_rounds=2, hard_cap=6):
     if round_number < 1:
         raise ValueError(f"round_number must be >= 1, got {round_number}")
 
-    if round_number > hard_cap:
+    if round_number >= hard_cap:
         result.converged = True
         result.reason = f"hard cap ({hard_cap}) reached"
         result.deferred_findings = round_findings

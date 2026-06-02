@@ -27,7 +27,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-OUTFILE=$(mktemp /tmp/goodfellow-review-XXXXXX.md)
+OUTFILE="$(mktemp /tmp/goodfellow-review-XXXXXX).md"
 
 has_codex() {
   [[ "${GOODFELLOW_CODEX:-1}" != "0" ]] && command -v codex &>/dev/null
@@ -60,9 +60,11 @@ run_codex() {
   [[ -n "$PROMPT" ]] && review_prompt="$PROMPT"
 
   # codex exec review: --commit/--base/--uncommitted are mutually exclusive with positional PROMPT
+  # codex exec review: scope flags reject positional PROMPT.
+  # Pipe the review prompt via stdin instead.
   local rc=0
   if [[ -n "$COMMIT" || -n "$BASE" || -n "$UNCOMMITTED" ]]; then
-    timeout 300 "${args[@]}" > "$OUTFILE" 2>&1 || rc=$?
+    echo "$review_prompt" | timeout 300 "${args[@]}" - > "$OUTFILE" 2>&1 || rc=$?
   else
     timeout 300 "${args[@]}" "$review_prompt" > "$OUTFILE" 2>&1 || rc=$?
   fi

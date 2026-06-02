@@ -4,7 +4,7 @@ set -euo pipefail
 
 PROJECT_ROOT="${1:-.}"
 
-mkdir -p "$PROJECT_ROOT/.goodfellow"
+mkdir -p "$PROJECT_ROOT/.goodfellow/runs"
 
 GITIGNORE="$PROJECT_ROOT/.gitignore"
 if [ -f "$GITIGNORE" ]; then
