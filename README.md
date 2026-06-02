@@ -157,7 +157,7 @@ When loops accumulate, `/goodfellow:triage` helps separate real defects from noi
 
 | Skill | Invocation | Codex? |
 |---|---|---|
-| codex-review | `/goodfellow:codex-review` | Required |
+| codex-review | `/goodfellow:codex-review` | Optional (dual-Claude fallback) |
 | triage | `/goodfellow:triage` | Optional |
 
 ### Session Lifecycle (4 skills)

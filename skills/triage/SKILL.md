@@ -70,7 +70,10 @@ For each confirmed decision:
   ```bash
   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/loop_store.py" --root . close <id>
   ```
-- `still-unclear` → increment triage_count, update last_triaged
+- `still-unclear` → increment triage_count, update last_triaged:
+  ```bash
+  python3 "${CLAUDE_PLUGIN_ROOT}/scripts/loop_store.py" --root . update-triage <id> --count <N+1>
+  ```
 
 ## 7. Log to ground truth
 

@@ -52,7 +52,7 @@ def _write_atomic(path, data):
             f.write("\n")
             f.flush()
             os.fsync(f.fileno())
-        os.rename(tmp, str(path))
+        os.replace(tmp, str(path))
     except Exception:
         try:
             os.unlink(tmp)
