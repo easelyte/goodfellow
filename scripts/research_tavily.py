@@ -2,11 +2,12 @@
 """Batch-verify factual claims via Tavily Search API.
 
 Requires GOODFELLOW_TAVILY_KEY. Each claim becomes one search query.
-Output: markdown appendix with verified (✓) or unverifiable (?) labels.
-By design there are only these two statuses — no "refuted" path. The word-overlap
-heuristic confirms relevance, not agreement: a contradicting source scores the same
-as a confirming one, so the tool cannot detect refutation. Callers must read ✓
-sources manually when a claim looks suspect rather than trust a refutation signal.
+Output: markdown appendix marking each claim ✓ (a relevant source was found) or
+? (no clear source). ✓ is a relevance signal, NOT a verification verdict — the
+word-overlap heuristic confirms relevance, not agreement, so a contradicting
+source scores the same as a confirming one. By design there are only these two
+statuses — no "refuted"/"verified" adjudication. Callers must read ✓ sources
+manually when a claim looks suspect rather than trust the label as confirmation.
 """
 
 import argparse
@@ -94,7 +95,14 @@ def verify_claims(claims, api_key, max_searches=5):
 
 
 def format_markdown(results):
-    lines = [f"## Verified Claims (Tavily research pass)", ""]
+    lines = [
+        "## Researched Claims (Tavily research pass)",
+        "",
+        "_✓ = a relevant source was found (word-overlap relevance, NOT a "
+        "verification verdict — read the source before relying on it). "
+        "? = no clear source. The adapter cannot detect refutation._",
+        "",
+    ]
     for r in results:
         lines.append(f"{r['status']} **{r['claim']}**")
         if r["url"]:

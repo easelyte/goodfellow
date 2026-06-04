@@ -11,7 +11,15 @@ Read the spec file fully. Also read `.goodfellow/knowledge.md` (Principles + Got
 
 ## 0.5 Parent self-review (Opus pass)
 
-Before dispatching external reviewers, do your own review pass as the parent model. Look for:
+First, initialize the run log so any decision below has a concrete destination:
+
+```bash
+RUN_LOG=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/run_log.sh")
+```
+
+This creates `.goodfellow/runs/` (idempotent) and resolves a concrete timestamped path (e.g. `./.goodfellow/runs/20260604T173000Z.jsonl`). Use `$RUN_LOG` for **every** append in this skill — never write to a literal `<timestamp>.jsonl` placeholder. (The file is created on first append; interactive runs that log nothing leave none.)
+
+Then do your own review pass as the parent model. Look for:
 - Internal contradictions (section A says X, section B says not-X)
 - Undefined behavior at decision boundaries
 - Success criteria that can't be tested
@@ -20,9 +28,9 @@ Before dispatching external reviewers, do your own review pass as the parent mod
 Dispose of each finding by class — **apply small unambiguous fixes only; NO large structural rewrite in this pass:**
 - **Small + unambiguous** (typo, dangling reference, single-line clarification) → fix inline now. This pass is cheap (no subagent cost) and clears low-hanging fruit that would otherwise consume a full review round.
 - **Large or ambiguous** (structural rewrite, a contradiction whose correct resolution isn't obvious) → do NOT fix. Surface it and defer to the reviewer rounds. A larger-but-seemingly-correct restructuring done here rides into the reviewers unchallenged — blind-rewriting a contradiction's baseline before reviewers see it removes their chance to catch and revert it.
-- **Needs an operator decision** (a scope question only the operator can settle) → strategic halt. Stop the chain; under autopilot append `{"event": "self_review_halt", "reason": "<the question>"}` to `.goodfellow/runs/<timestamp>.jsonl`. Do not guess the operator's intent.
+- **Needs an operator decision** (a scope question only the operator can settle) → strategic halt. Stop the chain; under autopilot append `{"event": "self_review_halt", "reason": "<the question>"}` to `$RUN_LOG`. Do not guess the operator's intent.
 
-**Autopilot dry-run (`GOODFELLOW_AUTOPILOT=dry-run`):** don't apply self-review fixes inline. For each small-unambiguous fix you would make, log `{"event": "self_review_fix", "would_act": true, "fix": "<one-line>"}` to `.goodfellow/runs/<timestamp>.jsonl` instead of editing. (Large/ambiguous findings carry to the reviewer rounds as usual; halts log as above. This branch scopes only the step-0.5 edits — the research-injection append keeps its existing dry-run behavior.)
+**Autopilot dry-run (`GOODFELLOW_AUTOPILOT=dry-run`):** don't apply self-review fixes inline. For each small-unambiguous fix you would make, log `{"event": "self_review_fix", "would_act": true, "fix": "<one-line>"}` to `$RUN_LOG` instead of editing. (Large/ambiguous findings carry to the reviewer rounds as usual; halts log as above. This branch scopes only the step-0.5 edits — the research-injection append has its own dry-run branch in step 1.5.)
 
 ## 1. Each round, dispatch both reviewers in parallel
 
@@ -53,11 +61,13 @@ Verify via Tavily batch search (if `GOODFELLOW_TAVILY_KEY` is set) or WebSearch 
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/research.sh" --claims '<json array of claims>' --max 5
 ```
 
-Append verified claims to review context:
-- **Confirmed (✓):** claim + source URL
-- **Unverifiable (?):** no authoritative source (flagged for reviewers)
+Append the results to review context. The adapter marks each claim:
+- **Source-matched (✓):** a relevant source was found (word-overlap heuristic) — this means *a source talks about the claim*, NOT that the claim was confirmed or agreed with. Include the source URL.
+- **No clear source (?):** nothing relevant surfaced (flagged for reviewers).
 
-Note: the Tavily adapter uses word-overlap heuristic — it confirms or flags, but cannot detect outright refutation. Read ✓ sources manually if a claim seems suspect.
+Note: the Tavily adapter scores relevance only — a contradicting source scores the same as a confirming one, so ✓ is **not** a verification verdict and there is no refutation signal. Read ✓ sources manually before relying on a claim.
+
+**Autopilot dry-run (`GOODFELLOW_AUTOPILOT=dry-run`):** do NOT append the appendix to the spec file. Instead log `{"event": "would_append_verified_claims", "would_act": true, "claims": <n>, "source_matched": <n>, "no_source": <n>}` to `$RUN_LOG` (from step 0.5). The dry-run contract is observe-without-mutating; the appendix is a project-file mutation.
 
 **Graceful degradation:** if WebSearch is unavailable, skip silently. Log "research injection skipped: <reason>". All findings retain original severity.
 
