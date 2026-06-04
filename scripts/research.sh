@@ -20,6 +20,13 @@ if [[ -z "$CLAIMS" ]]; then
   exit 1
 fi
 
+# MAX_SEARCHES is interpolated into an inline Python slice below; reject anything
+# that is not a plain positive integer to prevent code injection via --max.
+if ! [[ "$MAX_SEARCHES" =~ ^[1-9][0-9]*$ ]]; then
+  echo "ERROR: --max must be a positive integer (got: $MAX_SEARCHES)" >&2
+  exit 1
+fi
+
 OUTFILE=$(mktemp /tmp/goodfellow-research-XXXXXX)
 
 if [[ -n "${GOODFELLOW_TAVILY_KEY:-}" ]]; then
@@ -29,17 +36,19 @@ if [[ -n "${GOODFELLOW_TAVILY_KEY:-}" ]]; then
     --api-key "$GOODFELLOW_TAVILY_KEY" \
     > "$OUTFILE"
 else
-  echo "## Research: Tavily not configured (set GOODFELLOW_TAVILY_KEY)" > "$OUTFILE"
-  echo "" >> "$OUTFILE"
-  echo "Claims to verify via WebSearch:" >> "$OUTFILE"
-  echo "$CLAIMS" | python3 -c "
+  {
+    echo "## Research: Tavily not configured (set GOODFELLOW_TAVILY_KEY)"
+    echo ""
+    echo "Claims to verify via WebSearch:"
+    echo "$CLAIMS" | python3 -c "
 import json, sys
 claims = json.load(sys.stdin)
 for i, c in enumerate(claims[:${MAX_SEARCHES}], 1):
     print(f'{i}. {c}')
-" >> "$OUTFILE"
-  echo "" >> "$OUTFILE"
-  echo "Falling back to WebSearch — dispatch searches manually from the skill." >> "$OUTFILE"
+"
+    echo ""
+    echo "Falling back to WebSearch — dispatch searches manually from the skill."
+  } > "$OUTFILE"
 fi
 
 echo "$OUTFILE"

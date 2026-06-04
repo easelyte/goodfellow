@@ -18,6 +18,21 @@ jobs:
         run: pip install pytest
       - name: Run tests
         run: cd scripts && python -m pytest -v
+      - name: Lint shell scripts
+        run: |
+          # shellcheck is preinstalled on ubuntu-latest runners.
+          shopt -s nullglob
+          scripts=(scripts/*.sh)
+          if [ ${#scripts[@]} -eq 0 ]; then
+            echo "No shell scripts to lint"
+            exit 0
+          fi
+          for f in "${scripts[@]}"; do
+            echo "==> bash -n $f"
+            bash -n "$f"
+          done
+          echo "==> shellcheck ${scripts[*]}"
+          shellcheck "${scripts[@]}"
       - name: Check for project-specific references
         run: |
           if grep -r "openclaw\|son-of-anton\|ANTON_SESSION\|anton/\|shipline" --include="*.md" --include="*.py" --include="*.sh" . | grep -v '.github/'; then

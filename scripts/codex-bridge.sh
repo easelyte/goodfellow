@@ -95,7 +95,8 @@ run_claude_fallback() {
   review_prompt=$(build_review_prompt)
   context=$(get_review_context)
 
-  local full_prompt="You are an adversarial $KIND reviewer.
+  local full_prompt
+  full_prompt="You are an adversarial $KIND reviewer.
 
 $review_prompt
 
