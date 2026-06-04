@@ -22,6 +22,8 @@ Dispose of each finding by class — **apply small unambiguous fixes only; NO la
 - **Large or ambiguous** (structural rewrite, a contradiction whose correct resolution isn't obvious) → do NOT fix. Surface it and defer to the reviewer rounds. A larger-but-seemingly-correct restructuring done here rides into the reviewers unchallenged — blind-rewriting a contradiction's baseline before reviewers see it removes their chance to catch and revert it.
 - **Needs an operator decision** (a scope question only the operator can settle) → strategic halt. Stop the chain; under autopilot append `{"event": "self_review_halt", "reason": "<the question>"}` to `.goodfellow/runs/<timestamp>.jsonl`. Do not guess the operator's intent.
 
+**Autopilot dry-run (`GOODFELLOW_AUTOPILOT=dry-run`):** do NOT mutate the spec — dry-run observes without writing. For each small-unambiguous fix you would apply, log `{"event": "self_review_fix", "would_act": true, "fix": "<one-line>"}` to `.goodfellow/runs/<timestamp>.jsonl` instead of editing. Deferrals and halts log as above.
+
 ## 1. Each round, dispatch both reviewers in parallel
 
 **Reviewer 1 (Claude subagent, model from GOODFELLOW_REVIEW_MODEL or default sonnet):**
