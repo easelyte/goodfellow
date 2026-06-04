@@ -17,7 +17,10 @@ Before dispatching external reviewers, do your own review pass as the parent mod
 - Success criteria that can't be tested
 - Knowledge gotcha violations (if `.goodfellow/knowledge.md` exists)
 
-Surface any findings immediately — fix obvious issues in the spec before burning reviewer tokens on things you can catch yourself. This pass is cheap (no subagent cost) and catches the low-hanging fruit that would otherwise consume a full review round.
+Dispose of each finding by class — **apply small unambiguous fixes only; NO large structural rewrite in this pass:**
+- **Small + unambiguous** (typo, dangling reference, single-line clarification) → fix inline now. This pass is cheap (no subagent cost) and clears low-hanging fruit that would otherwise consume a full review round.
+- **Large or ambiguous** (structural rewrite, a contradiction whose correct resolution isn't obvious) → do NOT fix. Surface it and defer to the reviewer rounds. A larger-but-seemingly-correct restructuring done here rides into the reviewers unchallenged — blind-rewriting a contradiction's baseline before reviewers see it removes their chance to catch and revert it.
+- **Needs an operator decision** (a scope question only the operator can settle) → strategic halt. Stop the chain; under autopilot append `{"event": "self_review_halt", "reason": "<the question>"}` to `.goodfellow/runs/<timestamp>.jsonl`. Do not guess the operator's intent.
 
 ## 1. Each round, dispatch both reviewers in parallel
 

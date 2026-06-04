@@ -142,6 +142,7 @@ GOODFELLOW_AUTOPILOT=dry-run
 - `confidence: low` in spec frontmatter (architecture-changing unknowns)
 - Verifier flags >50% of findings as stale/noise in a round
 - Unresolved questions that would change the architecture
+- Parent self-review (spec-review/plan-review step 0.5) hits a finding that needs an operator decision
 
 Decision log written to `.goodfellow/runs/<timestamp>.jsonl` for auditability.
 
