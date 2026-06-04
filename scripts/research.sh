@@ -20,6 +20,13 @@ if [[ -z "$CLAIMS" ]]; then
   exit 1
 fi
 
+# MAX_SEARCHES is interpolated into an inline Python slice below; reject anything
+# that is not a plain positive integer to prevent code injection via --max.
+if ! [[ "$MAX_SEARCHES" =~ ^[1-9][0-9]*$ ]]; then
+  echo "ERROR: --max must be a positive integer (got: $MAX_SEARCHES)" >&2
+  exit 1
+fi
+
 OUTFILE=$(mktemp /tmp/goodfellow-research-XXXXXX)
 
 if [[ -n "${GOODFELLOW_TAVILY_KEY:-}" ]]; then
