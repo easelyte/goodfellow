@@ -18,7 +18,12 @@ Before dispatching external reviewers, do your own review pass as the parent mod
 - Acceptance criteria that are untestable or contradict each other
 - Knowledge gotcha violations
 
-Fix obvious issues in the plan before burning reviewer tokens. This pass is free and catches structural problems that would otherwise dominate round 1 findings.
+Dispose of each finding by class — **apply small unambiguous fixes only; NO large structural rewrite in this pass:**
+- **Small + unambiguous** (typo, dangling reference, single-line clarification) → fix inline now. This pass is free and clears low-hanging fruit that would otherwise dominate round 1 findings.
+- **Large or ambiguous** (re-sequencing phases, a dependency rework whose correct shape isn't obvious) → do NOT fix. Surface it and defer to the reviewer rounds. A larger-but-seemingly-correct restructuring done here rides into the reviewers unchallenged, where a blind rewrite can no longer be caught and reverted.
+- **Needs an operator decision** (a scope question only the operator can settle) → strategic halt. Stop the chain; under autopilot append `{"event": "self_review_halt", "reason": "<the question>"}` to `.goodfellow/runs/<timestamp>.jsonl`. Do not guess the operator's intent.
+
+**Autopilot dry-run (`GOODFELLOW_AUTOPILOT=dry-run`):** don't apply self-review fixes inline. For each small-unambiguous fix you would make, log `{"event": "self_review_fix", "would_act": true, "fix": "<one-line>"}` to `.goodfellow/runs/<timestamp>.jsonl` instead of editing. (Large/ambiguous findings carry to the reviewer rounds as usual; halts log as above. This branch scopes only the step-0.5 edits — the research-injection append keeps its existing dry-run behavior.)
 
 ## 1. Research injection (before adversarial rounds)
 
@@ -77,6 +82,6 @@ Same rules as spec-review. Hard cap 6. Deferred findings: discard (plan-review d
 
 ## 6. After convergence
 
-Summarize: "Plan converged at round N. Research verified X/Y claims, refuted Z."
+Summarize: "Plan converged at round N. Research verified X/Y claims, Z unverifiable." (The Tavily adapter has no refutation path — never report a "refuted" count.)
 
 Auto-dispatch `/goodfellow:execute <plan-path>`.

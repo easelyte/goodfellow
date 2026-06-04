@@ -3,9 +3,10 @@
 
 Requires GOODFELLOW_TAVILY_KEY. Each claim becomes one search query.
 Output: markdown appendix with verified (✓) or unverifiable (?) labels.
-Limitation: cannot detect refutation — word-overlap heuristic confirms relevance,
-not agreement. A contradicting source scores the same as a confirming one.
-Refutation detection requires LLM judgment (future enhancement).
+By design there are only these two statuses — no "refuted" path. The word-overlap
+heuristic confirms relevance, not agreement: a contradicting source scores the same
+as a confirming one, so the tool cannot detect refutation. Callers must read ✓
+sources manually when a claim looks suspect rather than trust a refutation signal.
 """
 
 import argparse
