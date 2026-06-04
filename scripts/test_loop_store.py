@@ -17,6 +17,23 @@ def test_add_loop_returns_id():
         assert lid2 == 2
 
 
+def test_add_loop_rejects_invalid_priority():
+    with tempfile.TemporaryDirectory() as d:
+        for bad in ("p5", "P1", "high", "", "1"):
+            try:
+                loop_store.add_loop("Bad pri", priority=bad, project_root=d)
+                assert False, f"Should have rejected priority {bad!r}"
+            except ValueError as e:
+                assert "priority" in str(e).lower()
+
+
+def test_add_loop_accepts_valid_priorities():
+    with tempfile.TemporaryDirectory() as d:
+        for good in loop_store.VALID_PRIORITIES:
+            lid = loop_store.add_loop("Good pri", priority=good, project_root=d)
+            assert loop_store.get_loop(lid, project_root=d)["priority"] == good
+
+
 def test_close_loop():
     with tempfile.TemporaryDirectory() as d:
         lid = loop_store.add_loop("Closeable", project_root=d)

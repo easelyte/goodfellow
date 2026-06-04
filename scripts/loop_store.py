@@ -22,6 +22,8 @@ from pathlib import Path
 
 LOOPS_FILE = ".goodfellow/loops.json"
 
+VALID_PRIORITIES = ("p1", "p2", "p3", "p4")
+
 
 def _loops_path(project_root="."):
     return Path(project_root) / LOOPS_FILE
@@ -90,6 +92,10 @@ def add_loop(
     next_action="",
     project_root=".",
 ):
+    if priority not in VALID_PRIORITIES:
+        raise ValueError(
+            f"Invalid priority {priority!r}; must be one of {', '.join(VALID_PRIORITIES)}"
+        )
     path = _loops_path(project_root)
     store = _read_store(path)
     loop_id = store["next_id"]
@@ -179,7 +185,7 @@ if __name__ == "__main__":
 
     add_p = sub.add_parser("add")
     add_p.add_argument("title")
-    add_p.add_argument("--priority", default="p3")
+    add_p.add_argument("--priority", default="p3", choices=VALID_PRIORITIES)
     add_p.add_argument("--source", default=None)
     add_p.add_argument("--description", default="")
     add_p.add_argument("--tags", default="")

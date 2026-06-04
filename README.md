@@ -138,7 +138,10 @@ GOODFELLOW_AUTOPILOT=1
 GOODFELLOW_AUTOPILOT=dry-run
 ```
 
-**Strategic halts** — the system stops itself when it should:
+**Strategic halts** — the chain stops itself rather than guessing:
+- Parent self-review (spec-review/plan-review step 0.5) hits a finding that needs an operator decision
+
+**Planned** (not yet wired into the chain):
 - `confidence: low` in spec frontmatter (architecture-changing unknowns)
 - Verifier flags >50% of findings as stale/noise in a round
 - Unresolved questions that would change the architecture

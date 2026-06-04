@@ -29,17 +29,19 @@ if [[ -n "${GOODFELLOW_TAVILY_KEY:-}" ]]; then
     --api-key "$GOODFELLOW_TAVILY_KEY" \
     > "$OUTFILE"
 else
-  echo "## Research: Tavily not configured (set GOODFELLOW_TAVILY_KEY)" > "$OUTFILE"
-  echo "" >> "$OUTFILE"
-  echo "Claims to verify via WebSearch:" >> "$OUTFILE"
-  echo "$CLAIMS" | python3 -c "
+  {
+    echo "## Research: Tavily not configured (set GOODFELLOW_TAVILY_KEY)"
+    echo ""
+    echo "Claims to verify via WebSearch:"
+    echo "$CLAIMS" | python3 -c "
 import json, sys
 claims = json.load(sys.stdin)
 for i, c in enumerate(claims[:${MAX_SEARCHES}], 1):
     print(f'{i}. {c}')
-" >> "$OUTFILE"
-  echo "" >> "$OUTFILE"
-  echo "Falling back to WebSearch — dispatch searches manually from the skill." >> "$OUTFILE"
+"
+    echo ""
+    echo "Falling back to WebSearch — dispatch searches manually from the skill."
+  } > "$OUTFILE"
 fi
 
 echo "$OUTFILE"
