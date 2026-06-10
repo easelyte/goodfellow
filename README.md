@@ -77,12 +77,15 @@ Every skill in the chain participates in a read-extract-persist cycle:
 
 | Skill | Reads | Writes |
 |---|---|---|
-| brainstorm | All sections (Principles, Patterns, Gotchas) | — |
-| spec-review / plan-review | Principles + Gotchas (flags violations against your project's accumulated knowledge) | — |
-| execute | Gotchas (catches footguns at code-writing stage) | — |
+| brainstorm | All sections (Principles, Patterns, Gotchas) + seeded principles | — |
+| spec-review / plan-review | Principles + Gotchas + seeded principles (flags violations by `P-NNN`) | — |
+| plan | Principles + seeded principles (per-task principles pass) | — |
+| execute | Gotchas + seeded principles (catches footguns at code-writing stage) | — |
 | ship | — | New entries with `[pending]` tag |
 | snap-compact | — | Extracts learnings before context loss |
 | close | — | Promotes `[pending]` to confirmed |
+
+**Seeded universal principles.** Goodfellow ships with a curated set of battle-tested, stack-agnostic design principles (`knowledge/principles.md`) so a fresh install starts with accumulated wisdom rather than an empty knowledge file. These are plugin-owned and read-only (updated via plugin update, never clobbering your `.goodfellow/knowledge.md`). The chain skills above read them every run and cite violations by their stable `P-NNN` id. A web supplement (`knowledge/principles-web.md`, JS/React/Next.js/Postgres/RLS rules) is read only when web context is opted in — see `GOODFELLOW_PRINCIPLES_WEB` below, or auto-detected by a `package.json` at the project root.
 
 The knowledge file (`.goodfellow/knowledge.md`) is append-only by default, human-curated, and intentionally unbounded. Entries follow a lightweight convention:
 
@@ -235,6 +238,7 @@ GOODFELLOW_REVIEW_MODEL=haiku   # Quick passes on small diffs
 | `GOODFELLOW_TAVILY_KEY` | unset | Tavily API key for batch research verification (optional — falls back to WebSearch) |
 | `GOODFELLOW_TRIAGE_RETENTION_DAYS` | `90` | Days to keep closed-loop triage entries |
 | `GOODFELLOW_RUNS_RETENTION_DAYS` | `90` | Days to keep autopilot run logs |
+| `GOODFELLOW_PRINCIPLES_WEB` | unset | `1` to read the web supplement (`knowledge/principles-web.md`) alongside the core principles. Unset → auto-detected by a `package.json` at the project root. Any other value hard-errors. |
 
 ## Platform Support
 
