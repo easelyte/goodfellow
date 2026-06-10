@@ -9,6 +9,14 @@ Run a multi-round adversarial review on the plan file the operator indicated.
 
 Read the plan file fully. Also read its spec (from plan frontmatter). Read `.goodfellow/knowledge.md` if it exists.
 
+Also read the plugin-shipped universal design principles and flag violations by their `P-NNN` id (the web supplement is read only when web context is opted in — `GOODFELLOW_PRINCIPLES_WEB=1` or a `package.json` at the project root; an invalid value hard-errors here):
+
+```bash
+for f in $(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/principles_context.py" --project-root .); do
+  cat "${CLAUDE_PLUGIN_ROOT}/knowledge/$f"
+done
+```
+
 ## 0.5 Parent self-review (Opus pass)
 
 First, initialize the run log so any decision below has a concrete destination:

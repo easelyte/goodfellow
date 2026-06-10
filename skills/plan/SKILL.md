@@ -9,6 +9,14 @@ Write a plan for: $ARGUMENTS
 
 Read the spec file fully. Also read `.goodfellow/knowledge.md` (Principles section) if it exists.
 
+Also read the plugin-shipped universal design principles, so the per-task principles pass (step 4) can cite violations by `P-NNN` (the web supplement is read only when web context is opted in — `GOODFELLOW_PRINCIPLES_WEB=1` or a `package.json` at the project root; an invalid value hard-errors here):
+
+```bash
+for f in $(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/principles_context.py" --project-root .); do
+  cat "${CLAUDE_PLUGIN_ROOT}/knowledge/$f"
+done
+```
+
 ## 2. Clarifying questions (max 3, asked once)
 
 Only questions whose answers change execution order or task decomposition. Skip questions answerable from the spec + codebase.

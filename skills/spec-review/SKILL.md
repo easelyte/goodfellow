@@ -9,6 +9,14 @@ Run a multi-round adversarial review on the spec file the operator indicated.
 
 Read the spec file fully. Also read `.goodfellow/knowledge.md` (Principles + Gotchas sections) if it exists — these inform principle checking during review.
 
+Also read the plugin-shipped universal design principles and flag violations by their `P-NNN` id (the web supplement is read only when web context is opted in — `GOODFELLOW_PRINCIPLES_WEB=1` or a `package.json` at the project root; an invalid value hard-errors here):
+
+```bash
+for f in $(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/principles_context.py" --project-root .); do
+  cat "${CLAUDE_PLUGIN_ROOT}/knowledge/$f"
+done
+```
+
 ## 0.5 Parent self-review (Opus pass)
 
 First, initialize the run log so any decision below has a concrete destination:

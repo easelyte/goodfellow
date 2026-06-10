@@ -19,6 +19,13 @@ Before proposing approaches, read the project's accumulated design knowledge:
 
 1. Read `.goodfellow/knowledge.md` — all sections (Principles, Patterns, Gotchas)
 2. If the file doesn't exist, skip silently — first chain run starts empty
+3. Read the plugin-shipped universal design principles (the web supplement is read only when web context is opted in — `GOODFELLOW_PRINCIPLES_WEB=1` or a `package.json` at the project root; an invalid value hard-errors here):
+
+```bash
+for f in $(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/principles_context.py" --project-root .); do
+  cat "${CLAUDE_PLUGIN_ROOT}/knowledge/$f"
+done
+```
 
 Internalize silently. Don't list principles back to the operator. Let them shape the design.
 
