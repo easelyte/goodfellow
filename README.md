@@ -6,16 +6,17 @@ An opinionated development lifecycle for Claude Code.
 Your system gets smarter every time you ship.
 
 ```
-    +-------------+     +------+     +------+     +---------+     +------+
-    |  Brainstorm  |---->| Spec |---->| Plan |---->| Execute |---->| Ship |
-    +-------------+     +------+     +------+     +---------+     +------+
-           |                |            |              |              |
-           |           spec-review  plan-review     verify        review
-           |            + research   + research                  PR + merge
-           |                                                          |
-           +--- reads knowledge ------------------------------ writes +
-    
-                   your system gets smarter every cycle
+  ┌────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────┐  ┌─────────────┐
+  │ Brainstorm │  │     Spec    │  │     Plan    │  │ Execute │  │     Ship    │
+  │            │━▶│ spec-review │━▶│ plan-review │━▶│  verify │━▶│ review · PR │
+  │            │  │  + research │  │  + research │  │         │  │   + merge   │
+  └────────────┘  └─────────────┘  └─────────────┘  └─────────┘  └─────────────┘
+
+  ┌────────────────────────────────────────────────────────────────────────────┐
+  │             reads ▸  knowledge compounds every cycle  ◀ writes             │
+  └────────────────────────────────────────────────────────────────────────────┘
+
+                     your system gets smarter every cycle
 ```
 
 Adversarial review at every stage. Knowledge that compounds. Nothing that slips.
