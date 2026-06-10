@@ -1,0 +1,17 @@
+# Egress denylist for knowledge/principles*.md (public repo).
+# One phrase per line. Lines starting with # are comments.
+# Matching is whole-word/phrase, case-insensitive (see test_seed_egress.py).
+# NOTE: `easelyte` is deliberately NOT listed — it is the public publisher org.
+SNAFU
+vladfilms
+nipple-pie
+real-estate
+VIE
+matron
+anton
+son-of-anton
+mission control
+loop-store
+loop store
+/root/
+217.216
