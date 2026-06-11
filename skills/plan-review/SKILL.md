@@ -9,6 +9,16 @@ Run a multi-round adversarial review on the plan file the operator indicated.
 
 Read the plan file fully. Also read its spec (from plan frontmatter). Read `.goodfellow/knowledge.md` if it exists.
 
+Also read the plugin-shipped universal design principles and flag violations by their `P-NNN` id (the web supplement is read only when web context is opted in — `GOODFELLOW_PRINCIPLES_WEB=1` or a `package.json` at the project root; an invalid value hard-errors here):
+
+```bash
+# One robust command: resolves + reads the seeded principles, with ALL error handling
+# in Python (bad config / missing core / unreadable file -> non-zero exit + stderr).
+# Its stdout IS the principles to apply (cite violations by P-NNN). A non-zero exit
+# means a config/packaging problem — stop and surface it.
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/principles_context.py" --emit --project-root .
+```
+
 ## 0.5 Parent self-review (Opus pass)
 
 First, initialize the run log so any decision below has a concrete destination:
