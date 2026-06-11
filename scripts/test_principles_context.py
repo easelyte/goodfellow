@@ -57,6 +57,18 @@ def test_web_file_absent_not_appended(tmp_path, monkeypatch):
     assert files == ["principles.md"]
 
 
+def test_autodetect_with_web_file_absent_not_appended(tmp_path, monkeypatch):
+    # M1: package.json autodetect turns web ON, but the web file isn't present ->
+    # the exists() gate still wins, only core is returned (no crash).
+    monkeypatch.delenv("GOODFELLOW_PRINCIPLES_WEB", raising=False)
+    (tmp_path / "package.json").write_text("{}")
+    kn = tmp_path / "knowledge"
+    kn.mkdir()
+    (kn / "principles.md").write_text("")
+    files = resolve_principle_files(plugin_root=tmp_path, project_root=tmp_path)
+    assert files == ["principles.md"]
+
+
 # --- CLI (skills invoke via CLI, not import) ---
 
 

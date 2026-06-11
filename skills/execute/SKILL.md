@@ -29,7 +29,10 @@ Read `.goodfellow/knowledge.md` Gotchas section if it exists — these are known
 Also read the plugin-shipped universal design principles and apply them at the code-writing stage (the web supplement is read only when web context is opted in — `GOODFELLOW_PRINCIPLES_WEB=1` or a `package.json` at the project root; an invalid value hard-errors here):
 
 ```bash
-for f in $(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/principles_context.py" --project-root .); do
+# Capture + check exit BEFORE iterating: `for f in $(failing-cmd)` exits 0 with zero
+# iterations, which would silently swallow an invalid GOODFELLOW_PRINCIPLES_WEB. Propagate it.
+principle_files=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/principles_context.py" --project-root .) || { echo "$principle_files" >&2; exit 1; }
+for f in $principle_files; do
   cat "${CLAUDE_PLUGIN_ROOT}/knowledge/$f"
 done
 ```
