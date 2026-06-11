@@ -24,7 +24,22 @@ Proceed regardless — this is a nudge, not a gate.
 
 Read the plan file. Parse phases and tasks (headers: `## Phase N`, `### T-N.X`).
 
-Read `.goodfellow/knowledge.md` Gotchas section if it exists — these are known footguns to watch for during implementation.
+Read the project's accumulated knowledge, backend-aware (invalid `GOODFELLOW_MEMORY` hard-errors here):
+
+```bash
+MODE=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/memory_config.py" resolve-mode) || { echo "$MODE"; exit 1; }
+if [ "$MODE" = "rich" ]; then
+  # execute reads the FULL MEMORY.md index in rich mode (NOT a gotchas-only subset —
+  # that would silently drop confirmed pattern/principle facts); it WEIGHTS gotchas/
+  # principles at the code-writing stage. Includes ## Pending (unconfirmed) — discount those.
+  # Internal fallback: .migrating -> knowledge.md (no regen), absent -> knowledge.md, dirty/stale -> regenerate.
+  python3 "${CLAUDE_PLUGIN_ROOT}/scripts/memory_index.py" --root .goodfellow read-index
+else
+  cat .goodfellow/knowledge.md 2>/dev/null || true   # flat: Gotchas are known footguns to watch for
+fi
+```
+
+In rich mode, auto-pull bodies of exact-`domain` matches; open other relevant fact bodies by name from the index.
 
 Also read the plugin-shipped universal design principles and apply them at the code-writing stage (the web supplement is read only when web context is opted in — `GOODFELLOW_PRINCIPLES_WEB=1` or a `package.json` at the project root; an invalid value hard-errors here):
 
