@@ -31,48 +31,61 @@ def test_all_five_skills_invoke_principles_context():
         assert "principles_context.py" in txt, f"{s} missing principles read-path"
 
 
-def test_skills_consume_resolver_output_and_propagate_errors():
-    """M2: a bare filename mention isn't enough — verify the real shell contract:
-    the resolver output is consumed (cat'd) AND its non-zero exit is propagated
-    (capture + `|| { ... exit 1; }`), so an invalid GOODFELLOW_PRINCIPLES_WEB
-    hard-errors instead of being swallowed by `for f in $(failing-cmd)` (CB1)."""
+def test_skills_use_single_emit_command_not_inline_bash():
+    """Post-refactor contract: each skill invokes the ONE robust helper (`--emit`)
+    and contains NONE of the old hand-rolled inline bash (which twice shipped a
+    silent-failure bug — CB1 swallowed the resolver exit, R6 swallowed a cat).
+    All error handling now lives in Python, so the skill markdown can't reintroduce
+    the class."""
     for s in CHAIN_SKILLS:
         txt = (SK / s / "SKILL.md").read_text()
-        assert 'cat "${CLAUDE_PLUGIN_ROOT}/knowledge/$f"' in txt, (
-            f"{s} missing cat consumer"
+        assert "principles_context.py" in txt and "--emit" in txt, (
+            f"{s} does not invoke the --emit helper"
         )
-        # error must be propagated: captured into a var with a failing-exit guard,
-        # NOT a bare `for f in $(...)` (which exits 0 on resolver failure)
-        assert "principle_files=$(" in txt and "exit 1" in txt, (
-            f"{s} does not propagate resolver exit (CB1 regression risk)"
-        )
-        assert "for f in $(python3" not in txt, (
-            f"{s} still uses exit-swallowing for-substitution"
-        )
+        # the fragile inline patterns must be gone for good
+        assert "for f in " not in txt, f"{s} still has an inline read loop"
+        assert "principle_files=$(" not in txt, f"{s} still has inline capture bash"
 
 
-def test_skill_block_actually_hard_errors_on_invalid_env(tmp_path):
-    """M2 (behavioral guard, not just substring): extract each skill's real bash
-    block and RUN it with an invalid GOODFELLOW_PRINCIPLES_WEB. The block must
-    exit non-zero — proving the resolver failure propagates end-to-end, not just
-    that the source contains the right strings."""
-    # CLAUDE_PLUGIN_ROOT points at the real plugin (has scripts/ + knowledge/principles.md)
-    env = {
-        k: v for k, v in os.environ.items() if k not in ("GOODFELLOW_PRINCIPLES_WEB",)
-    }
-    env["CLAUDE_PLUGIN_ROOT"] = str(ROOT)
-    env["GOODFELLOW_PRINCIPLES_WEB"] = "true"  # invalid -> resolver exits 1
+def test_emit_block_hard_errors_end_to_end(tmp_path):
+    """Behavioral guard: extract each skill's real bash block and RUN it under two
+    failure modes — invalid env, and missing core seed. Both must exit non-zero
+    (the helper centralizes the failure handling). Proves the contract end-to-end,
+    not just by source-string inspection."""
+    # fake plugin root with a working copy of the resolver + a core seed
+    plugin = tmp_path / "plugin"
+    (plugin / "scripts").mkdir(parents=True)
+    (plugin / "knowledge").mkdir()
+    (plugin / "scripts" / "principles_context.py").write_text(
+        (ROOT / "scripts" / "principles_context.py").read_text()
+    )
+    (plugin / "knowledge" / "principles.md").write_text("core")
+    proj = tmp_path / "proj"
+    proj.mkdir()
+
+    def run(block, **extra_env):
+        env = {
+            k: v
+            for k, v in os.environ.items()
+            if k not in ("GOODFELLOW_PRINCIPLES_WEB",)
+        }
+        env["CLAUDE_PLUGIN_ROOT"] = str(plugin)
+        env.update(extra_env)
+        return subprocess.run(
+            ["bash", "-c", block], cwd=proj, env=env, capture_output=True, text=True
+        )
+
     for s in CHAIN_SKILLS:
         block = _extract_resolver_block((SK / s / "SKILL.md").read_text())
         assert block, f"{s} has no runnable principles_context bash block"
-        # run from a non-web project dir (no package.json) so only the env drives it
-        r = subprocess.run(
-            ["bash", "-c", block],
-            cwd=tmp_path,
-            env=env,
-            capture_output=True,
-            text=True,
+        # 1) invalid env -> exit non-zero
+        assert run(block, GOODFELLOW_PRINCIPLES_WEB="true").returncode != 0, (
+            f"{s} did not hard-error on invalid env"
         )
-        assert r.returncode != 0, (
-            f"{s} block swallowed the resolver failure (exit 0) — CB1 regression"
-        )
+        # 2) happy path -> exit 0 and emits the core content
+        ok = run(block)
+        assert ok.returncode == 0 and "core" in ok.stdout, f"{s} happy path broken"
+        # 3) missing core seed -> exit non-zero (no silent core loss, R6 class)
+        (plugin / "knowledge" / "principles.md").unlink()
+        assert run(block).returncode != 0, f"{s} silently tolerated missing core seed"
+        (plugin / "knowledge" / "principles.md").write_text("core")  # restore

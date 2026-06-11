@@ -70,9 +70,29 @@ def resolve_principle_files(plugin_root, project_root):
     return files
 
 
+def emit_principles(plugin_root, project_root):
+    """Resolve AND read the principle files, returning their concatenated content.
+
+    All error handling lives here (one place, fully testable): bad config, missing
+    core, or an unreadable file all raise ConfigError. This is what the chain skills
+    invoke (`--emit`) so the skill markdown is a single command with no hand-rolled
+    bash error handling — replacing the per-skill inline loop that twice shipped a
+    silent-failure bug (CB1 swallowed the resolver exit; R6 swallowed a cat failure)."""
+    files = resolve_principle_files(plugin_root=plugin_root, project_root=project_root)
+    kn = pathlib.Path(plugin_root) / "knowledge"
+    parts = []
+    for f in files:
+        p = kn / f
+        try:
+            parts.append(p.read_text())
+        except OSError as e:
+            raise ConfigError(f"cannot read principle file {p}: {e}")
+    return "\n".join(parts)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(
-        description="Resolve seeded principle files to read."
+        description="Resolve (or emit) seeded principle files for the chain skills."
     )
     parser.add_argument(
         "--project-root",
@@ -84,6 +104,12 @@ def main(argv=None):
         default=None,
         help="Plugin root holding knowledge/. Defaults to $CLAUDE_PLUGIN_ROOT.",
     )
+    parser.add_argument(
+        "--emit",
+        action="store_true",
+        help="Print the concatenated principle CONTENT (what skills read). "
+        "Without it, prints the resolved filenames only.",
+    )
     args = parser.parse_args(argv)
 
     plugin_root = args.plugin_root or os.environ.get("CLAUDE_PLUGIN_ROOT")
@@ -92,14 +118,18 @@ def main(argv=None):
         plugin_root = str(pathlib.Path(__file__).resolve().parents[1])
 
     try:
-        files = resolve_principle_files(
-            plugin_root=plugin_root, project_root=args.project_root
-        )
+        if args.emit:
+            sys.stdout.write(
+                emit_principles(plugin_root=plugin_root, project_root=args.project_root)
+            )
+        else:
+            for f in resolve_principle_files(
+                plugin_root=plugin_root, project_root=args.project_root
+            ):
+                print(f)
     except ConfigError as e:
         print(str(e), file=sys.stderr)
         return 1
-    for f in files:
-        print(f)
     return 0
 
 

@@ -12,12 +12,11 @@ Read the spec file fully. Also read `.goodfellow/knowledge.md` (Principles secti
 Also read the plugin-shipped universal design principles, so the per-task principles pass (step 4) can cite violations by `P-NNN` (the web supplement is read only when web context is opted in — `GOODFELLOW_PRINCIPLES_WEB=1` or a `package.json` at the project root; an invalid value hard-errors here):
 
 ```bash
-# Capture + check exit BEFORE iterating: `for f in $(failing-cmd)` exits 0 with zero
-# iterations, which would silently swallow an invalid GOODFELLOW_PRINCIPLES_WEB. Propagate it.
-principle_files=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/principles_context.py" --project-root .) || { echo "$principle_files" >&2; exit 1; }
-for f in $principle_files; do
-  cat "${CLAUDE_PLUGIN_ROOT}/knowledge/$f" || { echo "missing principle file: $f" >&2; exit 1; }
-done
+# One robust command: resolves + reads the seeded principles, with ALL error handling
+# in Python (bad config / missing core / unreadable file -> non-zero exit + stderr).
+# Its stdout IS the principles to apply (cite violations by P-NNN). A non-zero exit
+# means a config/packaging problem — stop and surface it.
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/principles_context.py" --emit --project-root .
 ```
 
 ## 2. Clarifying questions (max 3, asked once)
