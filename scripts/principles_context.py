@@ -38,6 +38,11 @@ def resolve_principle_files(plugin_root, project_root):
     `principles-web.md` is absent is packaging/install drift and hard-errors
     (CM-R5-1); autodetect is best-effort and silently falls back to core-only.
     """
+    # Core is mandatory — validate it exists rather than just asserting it in prose
+    # (R6: the skill cat-loop can't be the only guard; fail loud at resolution).
+    core = pathlib.Path(plugin_root) / "knowledge" / "principles.md"
+    if not core.exists():
+        raise ConfigError(f"core seed {core} is missing (packaging/install drift)")
     files = ["principles.md"]
     web = os.environ.get("GOODFELLOW_PRINCIPLES_WEB")
     forced = False

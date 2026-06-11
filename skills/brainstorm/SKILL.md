@@ -26,7 +26,7 @@ Before proposing approaches, read the project's accumulated design knowledge:
 # iterations, which would silently swallow an invalid GOODFELLOW_PRINCIPLES_WEB. Propagate it.
 principle_files=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/principles_context.py" --project-root .) || { echo "$principle_files" >&2; exit 1; }
 for f in $principle_files; do
-  cat "${CLAUDE_PLUGIN_ROOT}/knowledge/$f"
+  cat "${CLAUDE_PLUGIN_ROOT}/knowledge/$f" || { echo "missing principle file: $f" >&2; exit 1; }
 done
 ```
 

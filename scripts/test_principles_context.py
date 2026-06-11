@@ -54,6 +54,15 @@ def test_empty_env_behaves_as_unset_autodetect(tmp_path, monkeypatch):
     assert files == ["principles.md"]
 
 
+def test_missing_core_seed_hard_errors(tmp_path, monkeypatch):
+    # R6: core principles.md is mandatory; a missing core must fail loud at resolution,
+    # not rely solely on the skill cat-loop (which previously could read only web).
+    monkeypatch.delenv("GOODFELLOW_PRINCIPLES_WEB", raising=False)
+    (tmp_path / "knowledge").mkdir()  # knowledge/ exists but principles.md absent
+    with pytest.raises(ConfigError):
+        resolve_principle_files(plugin_root=tmp_path, project_root=tmp_path)
+
+
 def test_forced_web_with_file_absent_hard_errors(tmp_path, monkeypatch):
     # CM-R5-1: explicit GOODFELLOW_PRINCIPLES_WEB=1 but the supplement isn't shipped
     # -> packaging drift, must fail loud (NOT silently fall back to core-only).
