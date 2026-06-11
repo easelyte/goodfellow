@@ -335,6 +335,9 @@ class MemoryStore:
     def write_fact(
         self, *, name, description, type, status, opened, domain=None, body=""
     ):
+        warn_kb()  # P-019 preflight: validate abort-capable config BEFORE mutating,
+        # else a bad GOODFELLOW_MEMORY_WARN_KB throws only at regenerate() — after the
+        # fact is on disk — and a retry would suffix a duplicate (CB R4).
         with memory_lock(self.gf_root):
             self._maybe_auto_migrate_locked()
             self._write_fact_file(
@@ -352,6 +355,7 @@ class MemoryStore:
         """Flip status: pending -> confirmed for a per-fact file."""
         if not NAME_RE.match(name or ""):
             raise ValueError(f"name must match {NAME_RE.pattern} (got: {name!r})")
+        warn_kb()  # P-019 preflight (see write_fact)
         with memory_lock(self.gf_root):
             path = self.memory_dir / f"{name}.md"
             text = path.read_text()
@@ -369,6 +373,7 @@ class MemoryStore:
         (a just-written fact could be removed and a regenerate publish without it)."""
         if not NAME_RE.match(name or ""):
             raise ValueError(f"name must match {NAME_RE.pattern} (got: {name!r})")
+        warn_kb()  # P-019 preflight (see write_fact)
         with memory_lock(self.gf_root):
             path = self.memory_dir / f"{name}.md"
             if not path.exists():
@@ -625,6 +630,8 @@ def migrate(gf_root, *, _lock_held=False):
       `_lock_held=True` -> does NOT re-enter the lock (flock is per-fd; re-acquire
       deadlocks).
     knowledge.md is left in place (non-destructive backup)."""
+    warn_kb()  # P-019 preflight: abort on bad config BEFORE writing any fact (CB R4).
+    # (Safe under _lock_held=True: it's a pure env read, no lock involved.)
     if _lock_held:
         _migrate_core(gf_root)
     else:

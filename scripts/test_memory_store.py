@@ -306,3 +306,18 @@ def test_delete_fact_missing_raises(tmp_path):
     s = MemoryStore(_root(tmp_path))
     with pytest.raises(FileNotFoundError):
         s.delete_fact("nope")
+
+
+def test_invalid_warn_kb_aborts_before_writing_fact(tmp_path, monkeypatch):
+    # CB R4 (P-019 check-act ordering): an invalid GOODFELLOW_MEMORY_WARN_KB must abort
+    # write_fact BEFORE the fact file is created — else a retry would suffix a duplicate.
+    import pytest
+
+    monkeypatch.setenv("GOODFELLOW_MEMORY_WARN_KB", "abc")
+    gf = _root(tmp_path)
+    s = MemoryStore(gf)
+    with pytest.raises(Exception):
+        _mk(s, name="a", description="should-not-persist")
+    # no fact file, no dirty marker left behind
+    assert not list((gf / "memory").glob("*.md"))
+    assert not (gf / "memory" / ".dirty").exists()
