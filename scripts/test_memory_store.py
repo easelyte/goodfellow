@@ -274,3 +274,35 @@ def test_delete_fact_rejects_bad_name(tmp_path):
     s = MemoryStore(_root(tmp_path))
     with pytest.raises(ValueError):
         s.delete_fact("../../evil")
+
+
+def test_write_fact_never_overwrites_suffixes_instead(tmp_path):
+    # CB1 (R3): writing an existing name must NOT overwrite — suffix deterministically.
+    gf = _root(tmp_path)
+    s = MemoryStore(gf)
+    _mk(s, name="dup", description="first")
+    _mk(s, name="dup", description="second")
+    names = sorted(p.stem for p in (gf / "memory").glob("*.md"))
+    assert names == ["dup", "dup-2"]
+    idx = (gf / "MEMORY.md").read_text()
+    assert "first" in idx and "second" in idx  # neither lost
+
+
+def test_first_rich_write_does_not_overwrite_migrated_fact(tmp_path):
+    # CB1 (R3): auto-migrate then a triggering write with a colliding slug must keep both.
+    gf = _root(tmp_path)
+    (gf / "knowledge.md").write_text("## Gotchas\n- 2026-06-02: cache invalidation legacy\n")
+    s = MemoryStore(gf)
+    # triggering write whose name collides with the migrated slug "cache-invalidation"
+    _mk(s, name="cache-invalidation", description="new triggering learning")
+    idx = (gf / "MEMORY.md").read_text()
+    assert "cache invalidation legacy" in idx  # migrated legacy fact survived
+    assert "new triggering learning" in idx     # triggering fact also present
+
+
+def test_delete_fact_missing_raises(tmp_path):
+    import pytest
+
+    s = MemoryStore(_root(tmp_path))
+    with pytest.raises(FileNotFoundError):
+        s.delete_fact("nope")

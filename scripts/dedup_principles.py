@@ -80,6 +80,17 @@ def main(argv=None):
         print(str(e), file=sys.stderr, flush=True)
         return 1
     shipped = parse_shipped(text)
+    if not shipped:
+        # fail CLOSED (CM-R3): zero principles parsed from required inputs means
+        # path/format drift — error rather than silently returning "no match" (which
+        # would let a restatement of a shipped principle get persisted as new).
+        print(
+            f"no shipped principles parsed from {args.principles} "
+            "— refusing to dedup-pass (fail closed)",
+            file=sys.stderr,
+            flush=True,
+        )
+        return 1
     pid = match_shipped_principle(args.description, shipped)
     if pid:
         print(pid)

@@ -54,3 +54,14 @@ def test_parse_then_match_roundtrip():
         )
         == "P-002"
     )
+
+
+def test_dedup_fails_closed_on_empty_principles(tmp_path):
+    # CM-R3: zero parsed principles (drift/format) must error (exit 1), not pass silently.
+    import subprocess, sys, pathlib
+    empty = tmp_path / "empty.md"; empty.write_text("# no principle headings here\n")
+    r = subprocess.run(
+        [sys.executable, "dedup_principles.py", "--description", "x", "--principles", str(empty)],
+        cwd=pathlib.Path(__file__).parent, capture_output=True, text=True,
+    )
+    assert r.returncode == 1 and "fail closed" in r.stderr

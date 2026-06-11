@@ -313,9 +313,23 @@ class MemoryStore:
         }
         if domain:
             fm["domain"] = domain
+        # CB1 (R3): never silently overwrite an existing fact. On the first rich write
+        # auto-migrate runs first; if the triggering --name collides with a just-migrated
+        # slug, overwriting would drop the migrated legacy learning (silent loss). Also
+        # guards same-name reuse within a session. Allocate a deterministic suffix like
+        # migration does; skills discover actual on-disk names (they iterate the dir), so
+        # the suffix is safe. Returns the final name written.
+        final = name
+        if (self.memory_dir / f"{final}.md").exists():
+            i = 2
+            while (self.memory_dir / f"{name}-{i}.md").exists():
+                i += 1
+            final = f"{name}-{i}"
+            fm["name"] = final
         fm_text = "\n".join(f"{k}: {v}" for k, v in fm.items())
         text = f"---\n{fm_text}\n---\n{body}\n"
-        _atomic_write(self.memory_dir / f"{name}.md", text)
+        _atomic_write(self.memory_dir / f"{final}.md", text)
+        return final
 
     # -- public mutations (each acquires the lock ONCE) --------------------- #
     def write_fact(
@@ -357,8 +371,10 @@ class MemoryStore:
             raise ValueError(f"name must match {NAME_RE.pattern} (got: {name!r})")
         with memory_lock(self.gf_root):
             path = self.memory_dir / f"{name}.md"
-            if path.exists():
-                path.unlink()
+            if not path.exists():
+                # surface a typo'd name rather than a silent no-op (parity with promote)
+                raise FileNotFoundError(f"no such fact: {path}")
+            path.unlink()
             self._regenerate_locked()
 
     def regenerate(self):
@@ -675,7 +691,7 @@ def main(argv=None):
             store.regenerate()
         elif args.cmd == "migrate":
             migrate(args.root)
-    except (ConfigError, SchemaError, ValueError) as e:
+    except (ConfigError, SchemaError, ValueError, FileNotFoundError) as e:
         print(str(e), file=sys.stderr, flush=True)
         return 1
     return 0

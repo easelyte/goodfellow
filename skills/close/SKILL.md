@@ -31,8 +31,12 @@ Scan the session's recent work for principles, patterns, or gotchas not yet capt
 **rich mode (`MODE=rich`):** Before persisting a learning, skip it if it restates a shipped principle (cite the `P-NNN`):
 
 ```bash
+# Fail CLOSED: a dedup error (drift / unparseable principles) must STOP, not silently
+# persist a restatement. principles.md is required; the web supplement is optional.
+DEDUP_FILES=( "${CLAUDE_PLUGIN_ROOT}/knowledge/principles.md" )
+[ -f "${CLAUDE_PLUGIN_ROOT}/knowledge/principles-web.md" ] && DEDUP_FILES+=( "${CLAUDE_PLUGIN_ROOT}/knowledge/principles-web.md" )
 PID=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/dedup_principles.py" --description "<learning text>" \
-        --principles "${CLAUDE_PLUGIN_ROOT}/knowledge/principles.md" "${CLAUDE_PLUGIN_ROOT}/knowledge/principles-web.md")
+        --principles "${DEDUP_FILES[@]}") || exit 1
 # if $PID is non-empty: skip persisting, log "skipped (restates $PID)"
 ```
 
