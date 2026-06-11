@@ -329,9 +329,19 @@ class MemoryStore:
             return self._regenerate_locked()
 
     def _maybe_auto_migrate_locked(self):
-        """Placeholder hook filled in by T-2.6 (migrate). Defined here so the
-        write path is migration-aware once T-2.6 lands; in T-2.3 it is a no-op."""
-        return
+        """Auto-migrate flat knowledge.md -> rich facts on the first rich write
+        (B3). Trigger: knowledge.md non-empty AND (memory/ empty OR .migrating
+        present). Runs INSIDE the caller's held lock (_lock_held=True) — must NOT
+        re-enter memory_lock (flock re-acquire deadlocks)."""
+        if not self.knowledge_path.exists():
+            return
+        if not self.knowledge_path.read_text().strip():
+            return
+        has_facts = any(
+            not p.name.startswith(".") for p in self.memory_dir.glob("*.md")
+        )
+        if (not has_facts) or self.migrating_path.exists():
+            migrate(self.gf_root, _lock_held=True)
 
     # -- read path (ordered fallback) --------------------------------------- #
     def _is_stale(self):
@@ -371,6 +381,188 @@ class MemoryStore:
         if self.knowledge_path.exists():
             return self.knowledge_path.read_text()
         return ""
+
+
+# --------------------------------------------------------------------------- #
+# Migration (flat knowledge.md -> rich per-fact files) — crash-resumable,
+# idempotent, auto on first rich write (T-2.6).
+# --------------------------------------------------------------------------- #
+import datetime as _dt
+import hashlib
+
+_SECTION_TYPE = {
+    "principles": "principle",
+    "patterns": "pattern",
+    "gotchas": "gotcha",
+}
+_ENTRY_RE = re.compile(r"^-\s+(.*)$")
+_PENDING_RE = re.compile(r"^\[pending\]\s*(.*)$")
+_ISO_RE = re.compile(r"^(\d{4}-\d{2}-\d{2}):?\s*(.*)$")
+
+
+def _slugify(text):
+    s = re.sub(r"[^\w\s-]", "", text.casefold())
+    s = re.sub(r"[\s_]+", "-", s).strip("-")
+    return s or "fact"
+
+
+def _source_id(section, date, body, ordinal):
+    """Stable identity for crash-resume idempotency. Ordinal makes two
+    identical-body source entries distinct (CB-R5-2)."""
+    raw = f"{section}\x00{date}\x00{body}\x00{ordinal}"
+    return hashlib.sha256(raw.encode()).hexdigest()[:16]
+
+
+def _parse_knowledge_entries(text):
+    """Yield dicts {section, type, status, date, body} in deterministic source
+    order. Section header sets type; entries before any header default to the
+    'principle' bucket (irregular -> reported)."""
+    entries = []
+    current_section = None  # None => irregular (no header yet)
+    for line in text.splitlines():
+        stripped = line.strip()
+        hm = re.match(r"^#{1,6}\s+(.*)$", stripped)
+        if hm:
+            current_section = hm.group(1).strip().casefold()
+            continue
+        em = _ENTRY_RE.match(stripped)
+        if not em:
+            continue
+        rest = em.group(1).strip()
+        status = "confirmed"
+        pm = _PENDING_RE.match(rest)
+        if pm:
+            status = "pending"
+            rest = pm.group(1).strip()
+        date = None
+        dm = _ISO_RE.match(rest)
+        if dm:
+            date = dm.group(1)
+            body = dm.group(2).strip()
+        else:
+            body = rest
+        irregular = current_section not in _SECTION_TYPE
+        ftype = _SECTION_TYPE.get(current_section, "principle")
+        entries.append(
+            {
+                "section": current_section or "(none)",
+                "type": ftype,
+                "status": status,
+                "date": date,
+                "body": body,
+                "irregular": irregular,
+            }
+        )
+    return entries
+
+
+def _existing_source_ids(memory_dir):
+    ids = set()
+    for p in pathlib.Path(memory_dir).glob("*.md"):
+        if p.name.startswith("."):
+            continue
+        fm = _parse_frontmatter(p)
+        if fm and "source_id" in fm:
+            ids.add(fm["source_id"])
+    return ids
+
+
+def _migrate_core(gf_root):
+    """The actual migration body — caller holds the lock. Idempotent + resumable
+    via source_id."""
+    gf_root = pathlib.Path(gf_root)
+    memory_dir = gf_root / "memory"
+    memory_dir.mkdir(parents=True, exist_ok=True)
+    knowledge = gf_root / "knowledge.md"
+    migrating = memory_dir / ".migrating"
+    report_path = gf_root / "migration-report.md"
+
+    text = knowledge.read_text() if knowledge.exists() else ""
+    migrating.write_text("")  # sentinel BEFORE first fact write
+
+    run_date = _dt.date.today().isoformat()
+    entries = _parse_knowledge_entries(text)
+    existing = _existing_source_ids(memory_dir)
+    used_slugs = {p.stem for p in memory_dir.glob("*.md") if not p.name.startswith(".")}
+
+    report_irregular = []
+    report_slugs = []
+    written = 0
+    for ordinal, e in enumerate(entries):
+        sid = _source_id(e["section"], e["date"] or "", e["body"], ordinal)
+        if sid in existing:
+            continue  # resume: already written
+        opened = e["date"] or run_date
+        slug = _slugify(e["body"])
+        base = slug
+        n = 1
+        while slug in used_slugs:
+            n += 1
+            slug = f"{base}-{n}"
+        if slug != base:
+            report_slugs.append(f"- `{slug}` (collision on `{base}`)")
+        used_slugs.add(slug)
+        fm_lines = [
+            f"name: {slug}",
+            f"description: {e['body'][:200]}",
+            f"type: {e['type']}",
+            f"status: {e['status']}",
+            f"opened: {opened}",
+            f"source_id: {sid}",
+        ]
+        fact_text = "---\n" + "\n".join(fm_lines) + "\n---\n" + e["body"] + "\n"
+        _atomic_write(memory_dir / f"{slug}.md", fact_text)
+        existing.add(sid)
+        written += 1
+        if e["irregular"]:
+            report_irregular.append(
+                f"- `{slug}`: {e['body'][:120]} (defaulted to principle)"
+            )
+
+    # regenerate index (in-process; caller holds the lock)
+    idx_text = regenerate(memory_dir)
+    _atomic_write(gf_root / "MEMORY.md", idx_text)
+
+    # write report OUTSIDE the fact glob
+    report = [
+        "# Migration report",
+        "",
+        f"Migrated {written} entries from knowledge.md.",
+        "",
+    ]
+    if report_irregular:
+        report += [
+            "## Irregular entries (retag candidates — defaulted to type: principle)",
+            "",
+        ]
+        report += report_irregular + [""]
+    if report_slugs:
+        report += ["## Slug collisions (deterministic suffix applied)", ""]
+        report += report_slugs + [""]
+    _atomic_write(report_path, "\n".join(report).rstrip() + "\n")
+    print(
+        f"migrate: wrote {written} facts; report at {report_path}",
+        file=sys.stderr,
+        flush=True,
+    )
+
+    migrating.unlink(missing_ok=True)  # clear sentinel ONLY after full success
+
+
+def migrate(gf_root, *, _lock_held=False):
+    """Convert flat knowledge.md -> rich per-fact files, then regenerate.
+
+    Two call sites (PM2/B1):
+    - Standalone CLI: `_lock_held=False` -> acquires memory_lock itself.
+    - Auto-migrate from write_fact() (already inside memory_lock):
+      `_lock_held=True` -> does NOT re-enter the lock (flock is per-fd; re-acquire
+      deadlocks).
+    knowledge.md is left in place (non-destructive backup)."""
+    if _lock_held:
+        _migrate_core(gf_root)
+    else:
+        with memory_lock(gf_root):
+            _migrate_core(gf_root)
 
 
 # --------------------------------------------------------------------------- #
