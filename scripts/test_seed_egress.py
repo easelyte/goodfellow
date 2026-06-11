@@ -37,12 +37,14 @@ def _principle_text():
 
 
 def _phrase_hits(phrase, text):
-    """Whole-word/phrase match, case-insensitive. Boundaries are non-word chars
-    (so 'VIE' matches 'VIE' or 'VIE.' but not 'review'/'viewport')."""
-    return (
-        re.search(r"(?<![\w-])" + re.escape(phrase) + r"(?![\w-])", text, re.IGNORECASE)
-        is not None
-    )
+    """Case-insensitive denylist match. Word-boundary aware ONLY on edges that are
+    word characters: 'VIE' matches 'VIE'/'VIE.' but not 'review'/'viewport'.
+    Path-like entries whose edge is a non-word char (e.g. '/root/') get NO boundary
+    on that side, so '/root/' correctly matches '/root/workspace' — a word-boundary
+    lookahead there would fail on the following 'w' and let the path leak (R4 fix)."""
+    left = r"(?<![\w-])" if re.match(r"[\w-]", phrase) else ""
+    right = r"(?![\w-])" if re.search(r"[\w-]\Z", phrase) else ""
+    return re.search(left + re.escape(phrase) + right, text, re.IGNORECASE) is not None
 
 
 def test_no_denylisted_phrases_in_seed():
@@ -73,4 +75,12 @@ def test_legit_word_review_not_false_positive():
     assert not any(
         _phrase_hits(phrase, "adversarial review of the viewport view")
         for phrase in DENY
+    )
+
+
+def test_root_path_prefix_is_caught(tmp_path):
+    # R4 fix: a path-prefix denylist entry ('/root/') must catch '/root/workspace...'
+    # even though a word char follows the trailing slash.
+    assert any(
+        _phrase_hits(phrase, "leak: /root/workspace/goodfellow/x") for phrase in DENY
     )
