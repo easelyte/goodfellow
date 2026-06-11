@@ -239,6 +239,12 @@ GOODFELLOW_REVIEW_MODEL=haiku   # Quick passes on small diffs
 | `GOODFELLOW_TRIAGE_RETENTION_DAYS` | `90` | Days to keep closed-loop triage entries |
 | `GOODFELLOW_RUNS_RETENTION_DAYS` | `90` | Days to keep autopilot run logs |
 | `GOODFELLOW_PRINCIPLES_WEB` | unset | `1` forces reading the web supplement (`knowledge/principles-web.md`) alongside core (and hard-errors if that file is missing — packaging drift). Unset or empty → auto-detected by a `package.json` at the project root (best-effort: core-only if the supplement isn't present). Any other non-empty value hard-errors. |
+| `GOODFELLOW_MEMORY` | `flat` | Memory backend. `flat` (default): append-only `.goodfellow/knowledge.md` with `[pending]→confirmed` promotion — zero-config, unchanged. `rich`: per-fact files (`.goodfellow/memory/*.md`) + regenerated index (`.goodfellow/MEMORY.md`) + domain registries + hybrid recall; first rich write auto-migrates an existing `knowledge.md`. Any other value hard-errors (no silent fall-back — this gates migration, write, and read formats). |
+| `GOODFELLOW_MEMORY_WARN_KB` | `16` | Rich-mode advisory size threshold (KB). When `MEMORY.md` exceeds it, regenerate prints a stderr warning suggesting `/goodfellow:triage`. Must be a positive integer; any other value hard-errors. Warning only — regeneration always completes. |
+
+### Rich-mode recall hook (best-effort)
+
+In rich mode, a plugin `SessionStart` hook (`hooks/hooks.json` → `scripts/recall_pointer.py`) injects a one-line pointer (`Goodfellow memory: N entries — read .goodfellow/MEMORY.md before design/review.`) when `.goodfellow/MEMORY.md` exists. This is **best-effort**: SessionStart hooks do not fire for local file-based / git-clone-installed plugins ([#11509](https://github.com/anthropics/claude-code/issues/11509), closed "not planned"), which is goodfellow's primary install method. The load-bearing recall path is the in-chain index read the chain skills perform every run — the design does not depend on the hook firing. Verify hook firing empirically on a marketplace install if you rely on it; flat-mode sessions get nothing injected.
 
 ## Platform Support
 

@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/recall_pointer.py\" --root \"${CLAUDE_PROJECT_DIR}/.goodfellow\""
+          }
+        ]
+      }
+    ]
+  }
+}
