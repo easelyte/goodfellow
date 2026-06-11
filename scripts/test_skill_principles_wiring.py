@@ -4,9 +4,22 @@ A missed skill can't ship silently: every chain skill that reads knowledge must
 invoke the principles_context resolver.
 """
 
+import os
 import pathlib
+import re
+import subprocess
+import sys
 
-SK = pathlib.Path(__file__).resolve().parents[1] / "skills"
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+SK = ROOT / "skills"
+
+
+def _extract_resolver_block(skill_md_text):
+    """Return the fenced ```bash block that invokes principles_context, or None."""
+    for m in re.finditer(r"```bash\n(.*?)```", skill_md_text, re.S):
+        if "principles_context.py" in m.group(1):
+            return m.group(1)
+    return None
 
 
 CHAIN_SKILLS = ("brainstorm", "spec-review", "plan", "plan-review", "execute")
@@ -35,4 +48,31 @@ def test_skills_consume_resolver_output_and_propagate_errors():
         )
         assert "for f in $(python3" not in txt, (
             f"{s} still uses exit-swallowing for-substitution"
+        )
+
+
+def test_skill_block_actually_hard_errors_on_invalid_env(tmp_path):
+    """M2 (behavioral guard, not just substring): extract each skill's real bash
+    block and RUN it with an invalid GOODFELLOW_PRINCIPLES_WEB. The block must
+    exit non-zero — proving the resolver failure propagates end-to-end, not just
+    that the source contains the right strings."""
+    # CLAUDE_PLUGIN_ROOT points at the real plugin (has scripts/ + knowledge/principles.md)
+    env = {
+        k: v for k, v in os.environ.items() if k not in ("GOODFELLOW_PRINCIPLES_WEB",)
+    }
+    env["CLAUDE_PLUGIN_ROOT"] = str(ROOT)
+    env["GOODFELLOW_PRINCIPLES_WEB"] = "true"  # invalid -> resolver exits 1
+    for s in CHAIN_SKILLS:
+        block = _extract_resolver_block((SK / s / "SKILL.md").read_text())
+        assert block, f"{s} has no runnable principles_context bash block"
+        # run from a non-web project dir (no package.json) so only the env drives it
+        r = subprocess.run(
+            ["bash", "-c", block],
+            cwd=tmp_path,
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        assert r.returncode != 0, (
+            f"{s} block swallowed the resolver failure (exit 0) — CB1 regression"
         )

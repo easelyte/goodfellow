@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 """Resolve which seeded principle files the chain skills should read.
 
-Skills invoke this via the CLI (not import), matching the loop_store.py pattern:
+Skills invoke this via the CLI (not import), matching the loop_store.py pattern.
+Capture the output and propagate a non-zero exit BEFORE iterating — a bare
+`for f in $(failing-cmd)` runs zero iterations and exits 0, silently swallowing
+an invalid GOODFELLOW_PRINCIPLES_WEB instead of hard-erroring:
 
-    for f in $(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/principles_context.py" --project-root .); do
+    principle_files=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/principles_context.py" --project-root .) || { echo "$principle_files" >&2; exit 1; }
+    for f in $principle_files; do
         cat "${CLAUDE_PLUGIN_ROOT}/knowledge/$f"
     done
 
