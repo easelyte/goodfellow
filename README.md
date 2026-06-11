@@ -238,7 +238,7 @@ GOODFELLOW_REVIEW_MODEL=haiku   # Quick passes on small diffs
 | `GOODFELLOW_TAVILY_KEY` | unset | Tavily API key for batch research verification (optional — falls back to WebSearch) |
 | `GOODFELLOW_TRIAGE_RETENTION_DAYS` | `90` | Days to keep closed-loop triage entries |
 | `GOODFELLOW_RUNS_RETENTION_DAYS` | `90` | Days to keep autopilot run logs |
-| `GOODFELLOW_PRINCIPLES_WEB` | unset | `1` to read the web supplement (`knowledge/principles-web.md`) alongside the core principles. Unset → auto-detected by a `package.json` at the project root. Any other value hard-errors. |
+| `GOODFELLOW_PRINCIPLES_WEB` | unset | `1` forces reading the web supplement (`knowledge/principles-web.md`) alongside core (and hard-errors if that file is missing — packaging drift). Unset or empty → auto-detected by a `package.json` at the project root (best-effort: core-only if the supplement isn't present). Any other non-empty value hard-errors. |
 
 ## Platform Support
 

@@ -28,22 +28,40 @@ class ConfigError(ValueError):
 
 
 def resolve_principle_files(plugin_root, project_root):
-    """Return the ordered list of principle filenames the chain skills should read."""
+    """Return the ordered list of principle filenames the chain skills should read.
+
+    GOODFELLOW_PRINCIPLES_WEB contract:
+      - unset or empty  -> autodetect web context via a project-root package.json
+      - exactly "1"      -> FORCE web on (operator opted in explicitly)
+      - any other value  -> hard error (fail loud)
+    `forced` vs `autodetect` differ on a missing web file: a forced opt-in whose
+    `principles-web.md` is absent is packaging/install drift and hard-errors
+    (CM-R5-1); autodetect is best-effort and silently falls back to core-only.
+    """
     files = ["principles.md"]
     web = os.environ.get("GOODFELLOW_PRINCIPLES_WEB")
+    forced = False
     if web is None or web == "":
         web_on = (pathlib.Path(project_root) / "package.json").exists()
     elif web == "1":
         web_on = True
+        forced = True
     else:
         raise ConfigError(
-            f"GOODFELLOW_PRINCIPLES_WEB must be unset or '1' (got: {web!r})"
+            f"GOODFELLOW_PRINCIPLES_WEB must be unset, empty, or '1' (got: {web!r})"
         )
-    if (
-        web_on
-        and (pathlib.Path(plugin_root) / "knowledge" / "principles-web.md").exists()
-    ):
-        files.append("principles-web.md")
+    web_file = pathlib.Path(plugin_root) / "knowledge" / "principles-web.md"
+    if web_on:
+        if web_file.exists():
+            files.append("principles-web.md")
+        elif forced:
+            # explicit opt-in but the supplement isn't shipped -> visible failure,
+            # not a silent core-only run (CM-R5-1)
+            raise ConfigError(
+                f"GOODFELLOW_PRINCIPLES_WEB=1 but {web_file} is missing "
+                "(packaging/install drift)"
+            )
+        # autodetect + missing file -> best-effort core-only (no error)
     return files
 
 

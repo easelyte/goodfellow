@@ -47,14 +47,22 @@ def test_invalid_web_value_hard_errors(tmp_path, monkeypatch, bad):
         resolve_principle_files(plugin_root=_seed(tmp_path), project_root=tmp_path)
 
 
-def test_web_file_absent_not_appended(tmp_path, monkeypatch):
-    # env says on, but the web file isn't shipped -> only core
+def test_empty_env_behaves_as_unset_autodetect(tmp_path, monkeypatch):
+    # CB-R5-1 contract: empty string == unset == autodetect (no package.json -> core only).
+    monkeypatch.setenv("GOODFELLOW_PRINCIPLES_WEB", "")
+    files = resolve_principle_files(plugin_root=_seed(tmp_path), project_root=tmp_path)
+    assert files == ["principles.md"]
+
+
+def test_forced_web_with_file_absent_hard_errors(tmp_path, monkeypatch):
+    # CM-R5-1: explicit GOODFELLOW_PRINCIPLES_WEB=1 but the supplement isn't shipped
+    # -> packaging drift, must fail loud (NOT silently fall back to core-only).
     monkeypatch.setenv("GOODFELLOW_PRINCIPLES_WEB", "1")
     kn = tmp_path / "knowledge"
     kn.mkdir()
     (kn / "principles.md").write_text("")
-    files = resolve_principle_files(plugin_root=tmp_path, project_root=tmp_path)
-    assert files == ["principles.md"]
+    with pytest.raises(ConfigError):
+        resolve_principle_files(plugin_root=tmp_path, project_root=tmp_path)
 
 
 def test_autodetect_with_web_file_absent_not_appended(tmp_path, monkeypatch):
