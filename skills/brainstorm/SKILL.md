@@ -17,8 +17,24 @@ This ensures `.goodfellow/` exists and is gitignored.
 
 Before proposing approaches, read the project's accumulated design knowledge:
 
-1. Read `.goodfellow/knowledge.md` — all sections (Principles, Patterns, Gotchas)
-2. If the file doesn't exist, skip silently — first chain run starts empty
+1. Read the project's accumulated knowledge, backend-aware (invalid `GOODFELLOW_MEMORY` hard-errors here):
+
+```bash
+MODE=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/memory_config.py" resolve-mode) || { echo "$MODE"; exit 1; }
+if [ "$MODE" = "rich" ]; then
+  # Full MEMORY.md index (incl. ## Pending (unconfirmed), which you DISCOUNT as
+  # unconfirmed). Internally applies the ordered fallback: .migrating -> knowledge.md
+  # (no regen), absent -> knowledge.md, dirty/stale -> regenerate, else read index.
+  python3 "${CLAUDE_PLUGIN_ROOT}/scripts/memory_index.py" --root .goodfellow read-index
+else
+  # flat mode (default): read .goodfellow/knowledge.md — all sections (Principles, Patterns, Gotchas)
+  cat .goodfellow/knowledge.md 2>/dev/null || true
+fi
+```
+
+In rich mode, auto-pull the full bodies of facts whose `domain` matches the brainstorm topic (`.goodfellow/memory/<name>.md` / `.goodfellow/memory/domains/<domain>.md`); for everything else, open relevant fact bodies by name from the index as a human would scan an index.
+
+2. If no knowledge exists, skip silently — first chain run starts empty
 3. Read the plugin-shipped universal design principles (the web supplement is read only when web context is opted in — `GOODFELLOW_PRINCIPLES_WEB=1` or a `package.json` at the project root; an invalid value hard-errors here):
 
 ```bash

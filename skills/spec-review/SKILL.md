@@ -7,7 +7,20 @@ Run a multi-round adversarial review on the spec file the operator indicated.
 
 ## 0. Read the spec
 
-Read the spec file fully. Also read `.goodfellow/knowledge.md` (Principles + Gotchas sections) if it exists — these inform principle checking during review.
+Read the spec file fully, then read the project's accumulated knowledge, backend-aware (invalid `GOODFELLOW_MEMORY` hard-errors here):
+
+```bash
+MODE=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/memory_config.py" resolve-mode) || { echo "$MODE"; exit 1; }
+if [ "$MODE" = "rich" ]; then
+  # Full MEMORY.md index (incl. ## Pending (unconfirmed) — discount those). Internally
+  # falls back: .migrating -> knowledge.md (no regen), absent -> knowledge.md, dirty/stale -> regenerate.
+  python3 "${CLAUDE_PLUGIN_ROOT}/scripts/memory_index.py" --root .goodfellow read-index
+else
+  cat .goodfellow/knowledge.md 2>/dev/null || true   # flat: Principles + Gotchas inform principle checking
+fi
+```
+
+In rich mode, auto-pull bodies of exact-`domain` matches; open other relevant fact bodies by name from the index.
 
 Also read the plugin-shipped universal design principles and flag violations by their `P-NNN` id (the web supplement is read only when web context is opted in — `GOODFELLOW_PRINCIPLES_WEB=1` or a `package.json` at the project root; an invalid value hard-errors here):
 
