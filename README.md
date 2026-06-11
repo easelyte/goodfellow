@@ -33,6 +33,8 @@ Your 50th feature ships with the wisdom of the first 49.
 - **Research injection** — factual claims in review findings are verified via web search before acting on them
 - **Verifier pass** — before fixing a round 2+ finding, checks if it's still real. Prevents infinite fix-find-fix loops
 - **Knowledge compounding** — `.goodfellow/knowledge.md` accumulates principles, patterns, and gotchas across chain runs
+- **Seeded principles out of the box** — ships with curated, battle-tested universal design principles so a fresh install starts smart, not empty (see Memory backends below)
+- **Pluggable memory** — keep the zero-config flat knowledge file, or opt into a rich per-fact backend with a regenerated index and crash-safe migration
 - **Follow-up tracking** — safety-critical deferred findings become loops in `.goodfellow/loops.json`, triaged with a two-reviewer system; polish-tier goes to knowledge gotchas
 
 ## Install
@@ -99,6 +101,15 @@ The knowledge file (`.goodfellow/knowledge.md`) is append-only by default, human
 ## Gotchas
 - [pending] 2026-06-02: The Codex CLI has no --file flag — use codex exec review with --commit/--base/--uncommitted
 ```
+
+## Memory Backends
+
+Goodfellow's accumulated knowledge has two backends, selected by `GOODFELLOW_MEMORY` (the seeded principles above are read in both):
+
+- **`flat` (default, zero-config).** The single append-only `.goodfellow/knowledge.md` shown above. Human-curated, unbounded, dead simple. Nothing to set up.
+- **`rich` (opt-in: `GOODFELLOW_MEMORY=rich`).** One file per fact under `.goodfellow/memory/*.md` (typed frontmatter), a regenerated index `.goodfellow/MEMORY.md`, and per-domain registries. Built for scale: writes are atomic + file-locked + transactional, the first rich write **auto-migrates** an existing `knowledge.md` (crash-resumable, non-destructive), and chain skills read the index with an ordered fallback so recall never silently degrades.
+
+Switching is safe and reversible — `flat` is never modified, and the rich path is entirely additive. Most users never need `rich`; reach for it when your knowledge file grows large enough that a single flat file becomes unwieldy. Tuning: `GOODFELLOW_MEMORY_WARN_KB` (advisory index-size warning). All three memory env vars fail loud on invalid values.
 
 ## Follow-Up Tracking
 

@@ -1,7 +1,7 @@
 {
   "name": "goodfellow",
   "description": "Named after the inventor of adversarial networks. Your good fellow for shipping code — adversarial review, knowledge compounding, follow-up tracking.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": {
     "name": "easelyte",
     "email": "fantin@easelyte.ai"
