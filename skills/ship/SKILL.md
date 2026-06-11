@@ -54,9 +54,25 @@ After the final review pass, scan the diff and review findings for new knowledge
 - **Patterns:** solutions that worked ("convergence-based termination")
 - **Gotchas:** footguns discovered ("API returns null not undefined on empty")
 
-Append candidates to `.goodfellow/knowledge.md` with `[pending]` tag and date:
+Resolve the backend mode first (invalid `GOODFELLOW_MEMORY` hard-errors here):
+
+```bash
+MODE=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/memory_config.py" resolve-mode) || { echo "$MODE"; exit 1; }
+```
+
+**flat mode (`MODE=flat`, default — behavior unchanged):** Append candidates to `.goodfellow/knowledge.md` with `[pending]` tag and date:
 ```
 - [pending] 2026-06-02: <learning text>
+```
+
+**rich mode (`MODE=rich`):** skip restatements of shipped principles (cite `P-NNN`), then write each kept candidate as a per-fact file:
+```bash
+PID=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/dedup_principles.py" --description "<learning text>" \
+        --principles "${CLAUDE_PLUGIN_ROOT}/knowledge/principles.md" "${CLAUDE_PLUGIN_ROOT}/knowledge/principles-web.md")
+# if $PID non-empty: skip, log "skipped (restates $PID)"; else:
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/memory_index.py" --root .goodfellow write-fact \
+  --name <kebab-slug> --description "<one-line>" --type <principle|pattern|gotcha> \
+  --status pending --opened "$(date +%F)" [--domain <subsystem>] --body "<detail>"
 ```
 
 ## 5. File follow-up loops

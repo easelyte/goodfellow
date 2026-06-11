@@ -17,13 +17,46 @@ Run `git status`. If uncommitted changes exist, warn and offer to commit.
 
 ## 2. Knowledge persistence
 
+Resolve the backend mode first (invalid `GOODFELLOW_MEMORY` hard-errors here):
+
+```bash
+MODE=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/memory_config.py" resolve-mode) || { echo "$MODE"; exit 1; }
+```
+
 ### 2a. Extract remaining session learnings
-Scan the session's recent work for principles, patterns, or gotchas not yet captured. Append to `.goodfellow/knowledge.md` with `[pending]` tag and date.
+Scan the session's recent work for principles, patterns, or gotchas not yet captured.
+
+**flat mode (`MODE=flat`, default — behavior unchanged):** Append each learning to `.goodfellow/knowledge.md` with `[pending]` tag and date.
+
+**rich mode (`MODE=rich`):** Before persisting a learning, skip it if it restates a shipped principle (cite the `P-NNN`):
+
+```bash
+PID=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/dedup_principles.py" --description "<learning text>" \
+        --principles "${CLAUDE_PLUGIN_ROOT}/knowledge/principles.md" "${CLAUDE_PLUGIN_ROOT}/knowledge/principles-web.md")
+# if $PID is non-empty: skip persisting, log "skipped (restates $PID)"
+```
+
+For each kept learning, write a per-fact file with `status: pending` (the CLI auto-migrates `knowledge.md` on first rich write):
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/memory_index.py" --root .goodfellow write-fact \
+  --name <kebab-slug> --description "<one-line>" --type <principle|pattern|gotcha> \
+  --status pending --opened "$(date +%F)" [--domain <subsystem>] --body "<detail>"
+```
 
 ### 2b. Promote pending entries
-Read `.goodfellow/knowledge.md`. For each `[pending]` entry:
+
+**flat mode:** Read `.goodfellow/knowledge.md`. For each `[pending]` entry:
 - If the learning survived the chain (the code it references is still present and working), promote: remove `[pending]` tag
 - If the learning was reverted or invalidated, remove the entry
+
+**rich mode:** for each `status: pending` per-fact file in `.goodfellow/memory/`:
+- If the learning survived the chain, promote it: `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/memory_index.py" --root .goodfellow promote --name <name>`
+- If invalidated, delete the per-fact file
+- Then rebuild the index: `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/memory_index.py" --root .goodfellow regenerate`
+
+### 2c. Pending-fact staleness (rich mode)
+Flag `status: pending` per-fact files whose `opened:` date is older than the 30-day loop-staleness window for review, so orphaned pending facts (sessions ended without `/close`) don't accumulate unbounded.
 
 ## 3. Loop staleness check
 
