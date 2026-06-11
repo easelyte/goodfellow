@@ -33,6 +33,9 @@ REQUIRED = ("name", "description", "type", "status", "opened")
 TYPES = ("principle", "pattern", "gotcha")
 STATUS = ("pending", "confirmed")
 DOMAIN_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+# CB1: fact names are filename components — reject anything that could escape memory/
+# (path separators, dot segments, absolute paths). Same charset as migration slugs.
+NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
 _TYPE_HEADINGS = [
     ("principle", "## Principles"),
@@ -168,9 +171,15 @@ def _write_domain_registries(facts, memory_dir):
         dom = f.get("domain")
         if dom and DOMAIN_RE.match(dom):
             by_domain.setdefault(dom, []).append(f)
+    domains_dir = pathlib.Path(memory_dir) / "domains"
+    # CB2: purge stale registries first — a domain whose facts were all deleted/retagged
+    # must NOT leave a registry file behind (rich reads auto-pull domain bodies, so a
+    # stale registry would re-surface an invalidated learning). Rebuild the dir each regen.
+    if domains_dir.exists():
+        for stale in domains_dir.glob("*.md"):
+            stale.unlink()
     if not by_domain:
         return
-    domains_dir = pathlib.Path(memory_dir) / "domains"
     domains_dir.mkdir(parents=True, exist_ok=True)
     for dom, group in by_domain.items():
         lines = [f"# Domain: {dom}", ""]
@@ -279,6 +288,8 @@ class MemoryStore:
     def _write_fact_file(
         self, *, name, description, type, status, opened, domain=None, body=""
     ):
+        if not NAME_RE.match(name or ""):
+            raise ValueError(f"name must match {NAME_RE.pattern} (got: {name!r})")
         if type not in TYPES:
             raise ValueError(f"type must be one of {TYPES} (got: {type!r})")
         if status not in STATUS:
@@ -317,10 +328,16 @@ class MemoryStore:
 
     def promote(self, name):
         """Flip status: pending -> confirmed for a per-fact file."""
+        if not NAME_RE.match(name or ""):
+            raise ValueError(f"name must match {NAME_RE.pattern} (got: {name!r})")
         with memory_lock(self.gf_root):
             path = self.memory_dir / f"{name}.md"
             text = path.read_text()
-            new = re.sub(r"(?m)^status:\s*pending\s*$", "status: confirmed", text)
+            # count=1: only the FIRST (frontmatter) status line — never a `status: pending`
+            # line that happens to appear in the body (which would corrupt content).
+            new = re.sub(
+                r"(?m)^status:\s*pending\s*$", "status: confirmed", text, count=1
+            )
             _atomic_write(path, new)
             self._regenerate_locked()
 
@@ -358,24 +375,35 @@ class MemoryStore:
         return False
 
     def read_index_recovering_stale(self):
-        """Ordered read contract (CB-R5-3):
+        """Ordered read contract (CB-R5-3 + CM-P2R1: absent-index must NOT fall back
+        to knowledge.md when rich facts exist or .dirty is set — that would hide
+        already-written facts after a first-write index failure):
         1. .migrating present -> read knowledge.md, do NOT regenerate.
-        2. else MEMORY.md absent -> read knowledge.md.
-        3. else .dirty/stale -> regenerate under lock (re-check after acquire).
-        4. else -> read the index."""
+        2. index absent AND no facts AND not .dirty -> genuinely-empty rich store ->
+           read knowledge.md.
+        3. else if index present and fresh -> read the index.
+        4. else (.dirty, stale, OR absent-with-facts) -> regenerate under lock
+           (re-check after acquire)."""
         if self.migrating_path.exists():
             return self._read_knowledge_fallback()
-        if not self.index_path.exists():
+        has_facts = any(
+            not p.name.startswith(".") for p in self.memory_dir.glob("*.md")
+        )
+        if (
+            not self.index_path.exists()
+            and not has_facts
+            and not self.dirty_path.exists()
+        ):
             return self._read_knowledge_fallback()
-        if self._is_stale():
-            with memory_lock(self.gf_root):
-                # re-check after acquiring (a concurrent writer may have fixed it)
-                if self.migrating_path.exists():
-                    return self._read_knowledge_fallback()
-                if self._is_stale():
-                    return self._regenerate_locked()
+        if self.index_path.exists() and not self._is_stale():
             return self.index_path.read_text()
-        return self.index_path.read_text()
+        with memory_lock(self.gf_root):
+            # re-check after acquiring (a concurrent writer may have published/fixed it)
+            if self.migrating_path.exists():
+                return self._read_knowledge_fallback()
+            if self.index_path.exists() and not self._is_stale():
+                return self.index_path.read_text()
+            return self._regenerate_locked()
 
     def _read_knowledge_fallback(self):
         if self.knowledge_path.exists():

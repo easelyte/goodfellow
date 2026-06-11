@@ -174,3 +174,72 @@ def test_cli_write_and_read_roundtrip(tmp_path):
     assert "a" in out.stdout
     # read-index stdout is data-only (V7): no WARN lines
     assert "WARN" not in out.stdout
+
+
+# --- Phase-2 ship-review R1 regression tests ---
+
+
+def _mk(s, **kw):
+    base = dict(
+        name="a",
+        description="d",
+        type="gotcha",
+        status="confirmed",
+        opened="2026-01-01",
+        body="b",
+    )
+    base.update(kw)
+    s.write_fact(**base)
+
+
+def test_name_path_traversal_rejected(tmp_path):
+    # CB1: --name must not escape memory/
+    s = MemoryStore(_root(tmp_path))
+    import pytest
+
+    for bad in ("../../evil", "a/b", "..", "/abs", "", "Cap"):
+        with pytest.raises(ValueError):
+            _mk(s, name=bad)
+
+
+def test_promote_count1_preserves_body(tmp_path):
+    # MAJOR: promote() must flip only the frontmatter status, not a body line
+    gf = _root(tmp_path)
+    s = MemoryStore(gf)
+    _mk(s, name="a", status="pending", body="line1\nstatus: pending\nline3")
+    s.promote("a")
+    raw = (gf / "memory" / "a.md").read_text()
+    fm, body = raw.split("---", 2)[1], raw.split("---", 2)[2]
+    assert "status: confirmed" in fm
+    assert "status: pending" in body  # body line untouched
+
+
+def test_promote_rejects_bad_name(tmp_path):
+    import pytest
+
+    s = MemoryStore(_root(tmp_path))
+    with pytest.raises(ValueError):
+        s.promote("../../evil")
+
+
+def test_stale_domain_registry_removed_on_regen(tmp_path):
+    # CB2: deleting a domain-tagged fact must remove its registry file
+    gf = _root(tmp_path)
+    s = MemoryStore(gf)
+    _mk(s, name="x", domain="infra")
+    assert (gf / "memory" / "domains" / "infra.md").exists()
+    (gf / "memory" / "x.md").unlink()
+    s.regenerate()
+    assert not (gf / "memory" / "domains" / "infra.md").exists()
+
+
+def test_absent_index_with_facts_recovers_not_flat_fallback(tmp_path):
+    # CM1: index gone but facts on disk (first-write failure) -> regenerate from facts,
+    # NOT silently fall back to knowledge.md (which would hide the written facts).
+    gf = _root(tmp_path)
+    s = MemoryStore(gf)
+    _mk(s, name="y", description="distinct-desc")
+    (gf / "MEMORY.md").unlink()
+    (gf / "knowledge.md").write_text("## Gotchas\n- flat-only content\n")
+    out = s.read_index_recovering_stale()
+    assert "distinct-desc" in out and "flat-only content" not in out
