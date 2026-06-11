@@ -70,9 +70,11 @@ MODE=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/memory_config.py" resolve-mode) ||
 PID=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/dedup_principles.py" --description "<learning text>" \
         --principles "${CLAUDE_PLUGIN_ROOT}/knowledge/principles.md" "${CLAUDE_PLUGIN_ROOT}/knowledge/principles-web.md")
 # if $PID non-empty: skip, log "skipped (restates $PID)"; else:
+# Valid as written — substitute your own values. --name is a kebab-slug matching
+# [a-z0-9-]; --type is one of principle|pattern|gotcha; --domain is optional (omit if none):
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/memory_index.py" --root .goodfellow write-fact \
-  --name <kebab-slug> --description "<one-line>" --type <principle|pattern|gotcha> \
-  --status pending --opened "$(date +%F)" [--domain <subsystem>] --body "<detail>"
+  --name validate-at-boundary --description "Always validate at the boundary" \
+  --type principle --status pending --opened "$(date +%F)" --body "Detail of the learning."
 ```
 
 ## 5. File follow-up loops

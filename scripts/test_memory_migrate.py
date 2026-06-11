@@ -160,3 +160,16 @@ def test_cli_migrate(tmp_path):
     assert any(not p.name.startswith(".") for p in (gf / "memory").glob("*.md"))
     # report path printed to stderr
     assert "migration-report.md" in r.stderr
+
+
+def test_unicode_knowledge_entry_yields_name_re_valid_slug(tmp_path):
+    # M1: a Unicode knowledge.md entry must migrate to an ASCII slug satisfying NAME_RE,
+    # so a later promote() doesn't reject it.
+    from memory_index import migrate, NAME_RE
+    gf = _seed_dirs(tmp_path)
+    _km(gf, "## Gotchas\n- 2026-06-02: привет mir cache fix\n")
+    migrate(gf)
+    facts = _facts(gf)
+    assert facts, "no fact produced"
+    for p in facts:
+        assert NAME_RE.match(p.stem), f"slug {p.stem!r} violates NAME_RE"

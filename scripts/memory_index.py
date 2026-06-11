@@ -296,6 +296,14 @@ class MemoryStore:
             raise ValueError(f"status must be one of {STATUS} (got: {status!r})")
         if domain is not None and domain != "" and not DOMAIN_RE.match(domain):
             raise ValueError(f"domain must match {DOMAIN_RE.pattern} (got: {domain!r})")
+        # Frontmatter values are single-line: a newline (or a bare `---`) in a value
+        # would produce a malformed file that regenerate() silently skips while
+        # write-fact still exits 0 -> the learning vanishes. Reject at write time.
+        for _k, _v in (("description", description), ("opened", opened)):
+            if "\n" in str(_v) or str(_v).strip() == "---":
+                raise ValueError(
+                    f"{_k} must be a single line without '---' (got: {_v!r})"
+                )
         fm = {
             "name": name,
             "description": description,
@@ -339,6 +347,18 @@ class MemoryStore:
                 r"(?m)^status:\s*pending\s*$", "status: confirmed", text, count=1
             )
             _atomic_write(path, new)
+            self._regenerate_locked()
+
+    def delete_fact(self, name):
+        """Locked delete + regenerate (CB2). Invalidation must NOT be a raw `rm`
+        from skill markdown — that bypasses memory_lock and races concurrent writers
+        (a just-written fact could be removed and a regenerate publish without it)."""
+        if not NAME_RE.match(name or ""):
+            raise ValueError(f"name must match {NAME_RE.pattern} (got: {name!r})")
+        with memory_lock(self.gf_root):
+            path = self.memory_dir / f"{name}.md"
+            if path.exists():
+                path.unlink()
             self._regenerate_locked()
 
     def regenerate(self):
@@ -429,7 +449,10 @@ _ISO_RE = re.compile(r"^(\d{4}-\d{2}-\d{2}):?\s*(.*)$")
 
 
 def _slugify(text):
-    s = re.sub(r"[^\w\s-]", "", text.casefold())
+    # ASCII-only so the slug always satisfies NAME_RE (M1: `\w` passed Unicode through,
+    # producing slugs that promote()/NAME_RE later rejected). Drop non-[a-z0-9] after
+    # casefold; collapse whitespace/underscores to hyphens.
+    s = re.sub(r"[^a-z0-9\s-]", "", text.casefold())
     s = re.sub(r"[\s_]+", "-", s).strip("-")
     return s or "fact"
 
@@ -617,6 +640,9 @@ def _build_parser():
     pr = sub.add_parser("promote")
     pr.add_argument("--name", required=True)
 
+    df = sub.add_parser("delete-fact")
+    df.add_argument("--name", required=True)
+
     sub.add_parser("regenerate")
 
     sub.add_parser("migrate")
@@ -643,6 +669,8 @@ def main(argv=None):
             sys.stdout.write(store.read_index_recovering_stale())
         elif args.cmd == "promote":
             store.promote(args.name)
+        elif args.cmd == "delete-fact":
+            store.delete_fact(args.name)
         elif args.cmd == "regenerate":
             store.regenerate()
         elif args.cmd == "migrate":

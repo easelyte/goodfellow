@@ -243,3 +243,34 @@ def test_absent_index_with_facts_recovers_not_flat_fallback(tmp_path):
     (gf / "knowledge.md").write_text("## Gotchas\n- flat-only content\n")
     out = s.read_index_recovering_stale()
     assert "distinct-desc" in out and "flat-only content" not in out
+
+
+def test_frontmatter_newline_rejected(tmp_path):
+    # CM-major: a newline (or bare ---) in a single-line frontmatter value would
+    # make the fact malformed (silently skipped by regenerate); reject at write.
+    import pytest
+
+    s = MemoryStore(_root(tmp_path))
+    with pytest.raises(ValueError):
+        _mk(s, name="a", description="line1\nline2")
+    with pytest.raises(ValueError):
+        _mk(s, name="b", description="---")
+
+
+def test_delete_fact_locked_removes_and_regenerates(tmp_path):
+    # CB2: invalidation goes through the locked CLI/method, not a raw rm.
+    gf = _root(tmp_path)
+    s = MemoryStore(gf)
+    _mk(s, name="gone", description="to-remove")
+    assert (gf / "memory" / "gone.md").exists()
+    s.delete_fact("gone")
+    assert not (gf / "memory" / "gone.md").exists()
+    assert "to-remove" not in (gf / "MEMORY.md").read_text()
+
+
+def test_delete_fact_rejects_bad_name(tmp_path):
+    import pytest
+
+    s = MemoryStore(_root(tmp_path))
+    with pytest.raises(ValueError):
+        s.delete_fact("../../evil")

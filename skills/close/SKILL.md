@@ -39,9 +39,11 @@ PID=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/dedup_principles.py" --description 
 For each kept learning, write a per-fact file with `status: pending` (the CLI auto-migrates `knowledge.md` on first rich write):
 
 ```bash
+# Valid as written — substitute your own values. --name is a kebab-slug matching
+# [a-z0-9-]; --type is one of principle|pattern|gotcha; --domain is optional (omit if none):
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/memory_index.py" --root .goodfellow write-fact \
-  --name <kebab-slug> --description "<one-line>" --type <principle|pattern|gotcha> \
-  --status pending --opened "$(date +%F)" [--domain <subsystem>] --body "<detail>"
+  --name validate-at-boundary --description "Always validate at the boundary" \
+  --type principle --status pending --opened "$(date +%F)" --body "Detail of the learning."
 ```
 
 ### 2b. Promote pending entries
@@ -50,10 +52,9 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/memory_index.py" --root .goodfellow write
 - If the learning survived the chain (the code it references is still present and working), promote: remove `[pending]` tag
 - If the learning was reverted or invalidated, remove the entry
 
-**rich mode:** for each `status: pending` per-fact file in `.goodfellow/memory/`:
+**rich mode:** for each `status: pending` per-fact file in `.goodfellow/memory/` (substitute the real fact name for `<name>`; both commands take the lock + regenerate the index themselves, so no separate rebuild step):
 - If the learning survived the chain, promote it: `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/memory_index.py" --root .goodfellow promote --name <name>`
-- If invalidated, delete the per-fact file
-- Then rebuild the index: `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/memory_index.py" --root .goodfellow regenerate`
+- If invalidated, delete it via the locked CLI (NOT a raw `rm` — that bypasses the lock and can race a concurrent write): `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/memory_index.py" --root .goodfellow delete-fact --name <name>`
 
 ### 2c. Pending-fact staleness (rich mode)
 Flag `status: pending` per-fact files whose `opened:` date is older than the 30-day loop-staleness window for review, so orphaned pending facts (sessions ended without `/close`) don't accumulate unbounded.
