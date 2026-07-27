@@ -57,21 +57,24 @@ Dispose of each finding by class — **apply small unambiguous fixes only; NO la
 
 ## 1. Each round, dispatch both reviewers in parallel
 
-**Reviewer 1 (Claude subagent, model from GOODFELLOW_REVIEW_MODEL or default sonnet):**
+The two reviewers run **distinct lenses** so the parallel slot buys coverage diversity, not duplicate hunting. Reviewer 1 owns the requirements side; reviewer 2 owns the correctness side. Both emit the **identical output format** (`## Verdict / ## Blockers / ## Major / ## Minor`, per-finding: cite section, explain issue, state fix) — only the focus differs.
+
+**Reviewer 1 (Claude subagent, model from GOODFELLOW_REVIEW_MODEL or default sonnet) — testability / requirements lens:**
 
 Use the Agent tool with `model: "sonnet"` (or the value of GOODFELLOW_REVIEW_MODEL). Prompt:
 
-> "You are an adversarial spec reviewer. Read <path>. Find weaknesses: contradictions, undefined behavior, missing requirements, ambiguous success criteria, hidden coupling. Check against .goodfellow/knowledge.md principles and gotchas if provided. Output: ## Verdict / ## Blockers / ## Major / ## Minor. Per-finding: cite section, explain issue, state fix. If a finding matches a knowledge gotcha, note 'knowledge-elevated' and bump severity one tier (cap at blocker)."
+> "You are an adversarial spec reviewer with a **testability, acceptance-criteria, requirements-completeness, and principle-compliance lens**. Read <path>. Focus on: success/acceptance criteria that can't be objectively tested; requirements that are incomplete, ambiguous, or missing entirely; undefined behavior at decision boundaries; and compliance with the seeded design principles (cite violations by P-NNN) plus .goodfellow/knowledge.md principles and gotchas if provided. Output: ## Verdict / ## Blockers / ## Major / ## Minor. Per-finding: cite section, explain issue, state fix. If a finding matches a knowledge gotcha, note 'knowledge-elevated' and bump severity one tier (cap at blocker)."
 
-**Reviewer 2 (Codex bridge):**
+**Reviewer 2 (Codex bridge) — correctness / security lens:**
 
-Use `--file <spec-path>` — a freshly-written spec is usually still untracked and appears in no git diff, so a diff-scoped review (`--uncommitted`/`--commit`/`--base`) would hand the reviewer an EMPTY context. `--file` embeds the actual spec body:
+Use `--file <spec-path>` — a freshly-written spec is usually still untracked and appears in no git diff, so a diff-scoped review (`--uncommitted`/`--commit`/`--base`) would hand the reviewer an EMPTY context. `--file` embeds the actual spec body. Pass the correctness lens as the trailing `-- <prompt>` (the bridge honors it in both the Codex path and the Claude fallback):
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/codex-bridge.sh" --kind spec --file <spec-path>
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/codex-bridge.sh" --kind spec --file <spec-path> \
+  -- "Review this spec with a correctness, security, edge-cases, hidden-coupling, and contract-integrity lens. Focus on: logical/correctness errors, security exposure, unhandled edge cases and failure modes, hidden coupling between components, and contract integrity (inputs/outputs/invariants other components depend on). Output: ## Verdict / ## Blockers / ## Major / ## Minor. Per-finding: cite section, explain issue, state fix."
 ```
 
-If Codex is absent, the bridge falls back to a single Claude reviewer automatically.
+If Codex is absent, the bridge falls back to a single Claude reviewer automatically — but because the lens is passed via `-- <prompt>`, that fallback reviewer still runs the correctness lens. So in no-Codex fallback mode (both reviewers are Claude) the two lenses still apply, preserving lens diversity even without model diversity.
 
 ## 1.5 Research injection (between round 1 and round 2 only)
 
@@ -116,9 +119,9 @@ No trailing question. No "How do you want to proceed?"
 
 ## 4. Verifier pass (round 2+)
 
-Before fixing round 2+ findings, dispatch a lightweight verifier for each finding:
+Before fixing round 2+ findings, dispatch a **single batched verifier** subagent that receives **all** of the round's findings at once (not one subagent per finding — the batched call mirrors the `build_verifier_input(findings, …)` pattern: one dispatch in, per-finding verdicts out).
 
-The verifier checks: does this finding still apply to current code? Returns `real`/`stale`/`noise`.
+Give the verifier the full findings list (numbered) and the current spec, and require a verdict per finding: `real` / `stale` / `noise`. It returns one verdict line per finding id.
 
 Only `real` findings proceed to fix. Stale/noise get noted but not fixed.
 
