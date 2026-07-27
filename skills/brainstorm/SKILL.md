@@ -62,6 +62,7 @@ Find loop N, use its title + description as the brainstorm seed. If not found, t
 - Pick only questions whose answers genuinely change the design
 - Skip questions answerable by reading the codebase
 - Bundle into one message
+- For each question, propose a recommended default answer so the operator can confirm with one word instead of composing a reply. The cap stays at 3 — this adds a default per question, not more questions.
 
 **Autopilot mode (`GOODFELLOW_AUTOPILOT=1` or `dry-run`):** skip questions entirely. Record unresolved questions in spec frontmatter as `unresolved_questions:`.
 
