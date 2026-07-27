@@ -52,4 +52,7 @@ jobs:
             exit 1
           fi
           python -c "import json; json.load(open('.claude-plugin/plugin.json'))"
+          python -c "import json; json.load(open('.claude-plugin/marketplace.json'))"
           echo "Plugin structure valid"
+      - name: Check version consistency
+        run: python scripts/check_version_consistency.py
