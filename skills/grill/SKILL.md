@@ -3,7 +3,7 @@ name: grill
 description: Opt-in relentless one-question-at-a-time interview for underspecified or high-stakes design intent. Fires ONLY on explicit invocation — /goodfellow:grill, "grill me on X", "interview me about X", "grill me". Does NOT claim the generic "design X" / "brainstorm X" triggers (those stay with brainstorm). Scouts facts, interviews to a ledger-empty finish, writes a spec, auto-dispatches spec-review.
 ---
 
-<!-- CONTRACT-SYNC: grill contract_version=1 sha=2ca1bded7beb9124bf91a61c785a712d9cbcff2357ce534026e20c6d153ca680 -->
+<!-- CONTRACT-SYNC: grill contract_version=1 sha=20a728725a6ad13a940de701cb89174ad011fd5cb5a6cedd9f210fdd30e28cac -->
 
 The operator wants to be **grilled**: a relentless, one-question-at-a-time interview that
 drives a fuzzy or high-stakes idea to a resolved design before any spec is written. This is the
@@ -41,7 +41,9 @@ LF-normalized, emitted as full lowercase hex.
   populated on both the early-cut and autopilot paths — autopilot holds the best-effort identifiable
   set, not a fictional "every question"); `confidence` (`high` = interview fully resolved AND the
   approach has precedent; `medium` = fully resolved but novel; `low` = operator cut early with
-  material questions open, OR autopilot) plus `confidence_basis: grill`.
+  material questions open, OR autopilot) plus `confidence_basis: grill`; and `next_action`
+  (`halt-after-spec-review` on the autopilot `=1` path only, empty/omitted otherwise — see the
+  `next_action` halt bullet below).
 - **Autopilot `=1` degradation.** Under `GOODFELLOW_AUTOPILOT=1`, grill emits zero interactive
   questions: it answers from scout + context, writes the spec with `confidence: low`, best-effort
   `unresolved_questions`, and `next_action: halt-after-spec-review`, then dispatches spec-review.
@@ -53,6 +55,11 @@ LF-normalized, emitted as full lowercase hex.
 - **Escape hatch.** Every interview question carries a prominent "enough / write it" exit; the
   operator can invoke it at any turn to jump to the spec, populating `unresolved_questions` from the
   still-open ledger.
+- **Slug safety.** The topic-derived slug is validated to strict kebab-case
+  (`^[a-z0-9]+(-[a-z0-9]+)*$`) **before any filesystem interpolation** (mktemp, target path). It is
+  first sanitized to `[a-z0-9-]` (lowercased, invalid chars folded to `-`, dashes collapsed, leading/
+  trailing dashes trimmed); if the result still does not match the pattern, the write **halts** rather
+  than risk a path escape from `docs/specs/` (traversal via `/`, `..`, etc.).
 <!-- CONTRACT-SYNC-BLOCK-END -->
 
 ## 0. Initialize the run log
@@ -117,6 +124,13 @@ Interactive only (autopilot never reaches this section — see §4).
 
 Path convention: `docs/specs/<slug>-design.md` (kebab-case slug from the topic).
 
+**Validate the slug before any filesystem interpolation.** The slug is derived from the operator's
+topic and is interpolated into `mktemp` and the `target` path below. An unvalidated slug containing
+`/`, `..`, or other path characters could escape `docs/specs/` (path traversal). Enforce strict
+kebab-case (`^[a-z0-9]+(-[a-z0-9]+)*$`): sanitize to `[a-z0-9-]` (lowercase, fold invalid chars to
+`-`, collapse repeats, trim leading/trailing dashes), then **halt** if the result still does not
+conform — never interpolate an unvalidated slug into a path.
+
 Write the **entire** spec — body **and** the full frontmatter, including the pending-review recovery
 keys below — into a same-directory temp file first, flush it, then publish with an **atomic
 no-clobber** link. Do **not** reserve an empty file and fill it later (non-atomic), and do **not**
@@ -124,6 +138,17 @@ check-then-write (TOCTOU — see P19).
 
 ```bash
 slug="<kebab-slug>"
+
+# Guard: enforce strict kebab-case BEFORE the slug is interpolated into any path (mktemp /
+# target below). Sanitize first, then halt if it still isn't valid — never let a topic-derived
+# slug carrying "/", "..", or other path chars escape docs/specs/ (path traversal).
+slug="$(printf '%s' "$slug" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9-' '-' \
+        | sed -E 's/-+/-/g; s/^-+//; s/-+$//')"
+if ! printf '%s' "$slug" | grep -Eq '^[a-z0-9]+(-[a-z0-9]+)*$'; then
+  echo "grill: refusing to write spec — derived slug is not valid kebab-case" >&2
+  exit 1
+fi
+
 dir="docs/specs"
 mkdir -p "$dir"
 
@@ -162,6 +187,7 @@ confidence: <high|medium|low>       # high = resolved + precedent; medium = reso
 confidence_basis: grill
 interview_rounds: <int>             # question->answer exchanges; the scout pass is round 0, NOT counted
 unresolved_questions: []            # populated on early-cut AND autopilot (best-effort identifiable set)
+next_action: ""                     # autopilot (=1) ONLY sets "halt-after-spec-review"; empty/omitted otherwise
 # --- pending-review recovery (written UP FRONT, cleared only on confirmed successful review) ---
 review_status: pending
 failed_reviewers: []
@@ -217,8 +243,14 @@ active** — §1's degradation routes autopilot to write-from-context, never to 
   printf '%s\n' '{"event":"would_dispatch","would_act":true,"skill":"spec-review"}' >> "$RUN_LOG"
   ```
 
-  The dry-run contract is observe-without-mutating: the only thing touched is the `.goodfellow/runs/`
-  audit log itself.
+  The logged `path` is the **base** target (`<slug>-design.md`). Because dry-run performs no publish,
+  it cannot observe a collision; the real (non-dry-run) publish loop in §3a disambiguates to
+  `<slug>-design-2.md`, `-3.md`, … on collision, so treat the logged path as the intended base, not a
+  guaranteed final filename.
+
+  The dry-run contract is observe-without-mutating **except for the audit log itself**: no spec is
+  written and no review is dispatched, but each `would_act` event IS appended to the
+  `.goodfellow/runs/` log (created in §0).
 - **`GOODFELLOW_AUTOPILOT` unset:** not autopilot — the interactive flow (§1 → §2 → §3) applies.
   (Listed only to enumerate the env var's three values.)
 

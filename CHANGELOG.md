@@ -12,7 +12,8 @@
   auto-dispatches spec-review by file content. Explicit-invocation only (`/goodfellow:grill`, "grill
   me on X", "interview me about X") — never auto-selected over `brainstorm`. Three-state autopilot:
   `=1` writes-from-context with `confidence: low` + `next_action: halt-after-spec-review`; `dry-run`
-  logs `would_act` events and mutates nothing. Carries a `CONTRACT-SYNC` marker for future cross-repo
+  writes no spec and dispatches no review, but does append `would_act` events to the run log
+  (`.goodfellow/runs/`). Carries a `CONTRACT-SYNC` marker for future cross-repo
   contract-parity checking. Interview philosophy adapted from Matt Pocock's `grilling` skill.
 
 ## 0.2.0 (2026-06-11)
