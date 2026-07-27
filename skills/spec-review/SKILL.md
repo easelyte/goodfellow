@@ -65,8 +65,10 @@ Use the Agent tool with `model: "sonnet"` (or the value of GOODFELLOW_REVIEW_MOD
 
 **Reviewer 2 (Codex bridge):**
 
+Use `--file <spec-path>` — a freshly-written spec is usually still untracked and appears in no git diff, so a diff-scoped review (`--uncommitted`/`--commit`/`--base`) would hand the reviewer an EMPTY context. `--file` embeds the actual spec body:
+
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/codex-bridge.sh" --kind spec --uncommitted
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/codex-bridge.sh" --kind spec --file <spec-path>
 ```
 
 If Codex is absent, the bridge falls back to a single Claude reviewer automatically.
@@ -137,4 +139,10 @@ Summarize: "Spec converged at round N. Key changes: {bullets}."
 
 Deferred findings: discard (spec-review doesn't file loops — unresolved findings are addressed in the next chain stage).
 
-Auto-dispatch `/goodfellow:plan <spec-path>`.
+**Halt gate — check before cascading.** Re-read the reviewed spec's frontmatter. If it declares `next_action: halt-after-spec-review`, do NOT auto-dispatch plan. HALT and surface to the operator instead:
+
+> "Spec converged at round N. Frontmatter requests `halt-after-spec-review` — stopping here. Run `/goodfellow:plan <spec-path>` when ready to continue."
+
+Under autopilot, append `{"event": "halt_after_spec_review", "spec": "<spec-path>"}` to `$RUN_LOG` and stop the chain. This matches the autopilot dry-run intent (observe, don't cascade) and lets a spec opt out of the automatic spec→plan handoff.
+
+Otherwise (no `halt-after-spec-review`), auto-dispatch `/goodfellow:plan <spec-path>`.
