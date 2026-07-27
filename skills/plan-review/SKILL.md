@@ -58,7 +58,7 @@ Dispose of each finding by class — **apply small unambiguous fixes only; NO la
 
 ## 1. Research injection (before adversarial rounds)
 
-Extract factual, externally verifiable claims from the plan:
+Extract factual, externally verifiable claims from the plan (this is cheap and reads the plan already in context):
 - Library/framework version claims
 - API endpoint behavior
 - Tool availability and flags
@@ -66,42 +66,44 @@ Extract factual, externally verifiable claims from the plan:
 
 Announce: "Researching N claims: [summary]."
 
-Verify via Tavily batch search (if `GOODFELLOW_TAVILY_KEY` is set) or WebSearch fallback:
+**Run the research in a dedicated subagent** (vanilla Task tool, one single subagent — do NOT fan out per-claim; the batch script already parallelizes internally). The win is **parent context hygiene**: the subagent absorbs the raw web snippets / search output and the parent only ever sees the compact appendix, keeping the reviewing model's window free of noise. Dispatch prompt:
 
-```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/research.sh" --claims '<json array of claims>' --max 5
-```
+> "Run `bash \"${CLAUDE_PLUGIN_ROOT}/scripts/research.sh\" --claims '<json array of claims>' --max 5` (Tavily batch if `GOODFELLOW_TAVILY_KEY` is set, else WebSearch fallback). For each ✓ (relevance-matched) claim, open the cited source and confirm whether it actually supports the claim. Return ONLY the compact appendix below — no raw search output, no snippets, no commentary. If research tooling is unavailable, return exactly `RESEARCH_SKIPPED: <reason>`.
+>
+> ```
+> ## Appendix: Researched Claims (research pass YYYY-MM-DD)
+>
+> ✓ Claim: <text>. Supporting source: <source URL> (relevance match — not adjudicated).
+> ✗ Claim: <text>. Cited source read and it contradicts the claim: <source URL>.
+> ? Claim: <text>. No clear source — flagged for reviewers.
+> ```"
 
-Append to plan:
+The parent appends the returned appendix verbatim to the plan (or, on `RESEARCH_SKIPPED`, logs the reason and proceeds).
 
-```
-## Appendix: Researched Claims (research pass YYYY-MM-DD)
+Note: the Tavily adapter uses a word-overlap heuristic — ✓ means *a relevant source was found*, NOT that the claim was confirmed. It scores relevance only, so a contradicting source scores the same as a confirming one and there is no refutation signal in the adapter itself (a ✗ line only appears when the research subagent manually read a ✓ source and found it contradictory). Proceed to adversarial after appending the appendix.
 
-✓ Claim: <text>. Supporting source: <source URL> (relevance match — not adjudicated).
-? Claim: <text>. No clear source — flagged for reviewers.
-```
+**Autopilot dry-run (`GOODFELLOW_AUTOPILOT=dry-run`):** do NOT append the appendix to the plan file. The subagent still returns the appendix, but the parent logs `{"event": "would_append_verified_claims", "would_act": true, "claims": <n>, "source_matched": <n>, "no_source": <n>}` to `$RUN_LOG` (from step 0.5) instead of writing it. The dry-run contract is observe-without-mutating; the appendix is a project-file mutation. Proceed to adversarial.
 
-Note: the Tavily adapter uses a word-overlap heuristic — ✓ means *a relevant source was found*, NOT that the claim was confirmed. It scores relevance only, so a contradicting source scores the same as a confirming one and there is no refutation signal. If a ✓ claim contradicts your expectation, read the cited source manually. Proceed to adversarial after appending the appendix.
-
-**Autopilot dry-run (`GOODFELLOW_AUTOPILOT=dry-run`):** do NOT append the appendix to the plan file. Instead log `{"event": "would_append_verified_claims", "would_act": true, "claims": <n>, "source_matched": <n>, "no_source": <n>}` to `$RUN_LOG` (from step 0.5). The dry-run contract is observe-without-mutating; the appendix is a project-file mutation. Proceed to adversarial.
-
-**Graceful degradation:** if WebSearch unavailable, skip. Log reason. Proceed to adversarial.
+**Graceful degradation:** if the subagent returns `RESEARCH_SKIPPED` (WebSearch/Tavily unavailable), skip. Log reason. Proceed to adversarial.
 
 ## 2. Adversarial loop (same structure as spec-review)
 
-Each round, dispatch both reviewers in parallel:
+Each round, dispatch both reviewers in parallel with **distinct lenses** — reviewer 1 owns the requirements/testability side, reviewer 2 owns the correctness side — so the parallel slot buys coverage diversity, not duplicate hunting. Both emit the **identical output format** (`## Verdict / ## Blockers / ## Major / ## Minor`, per-finding: cite section, explain issue, state fix); only the focus differs.
 
-**Reviewer 1 (Claude subagent, model: sonnet or GOODFELLOW_REVIEW_MODEL):**
+**Reviewer 1 (Claude subagent, model: sonnet or GOODFELLOW_REVIEW_MODEL) — testability / requirements lens:**
 
-> "You are an adversarial plan reviewer. Read <path>. Find: missing prerequisites, wrong execution order, unaddressed dependencies, steps that will fail, missing tests, missing rollback paths, risky API assumptions. Challenge '?' claims in the Researched Claims appendix (✓ is relevance only, not a verification verdict). Output: ## Verdict / ## Blockers / ## Major / ## Minor."
+> "You are an adversarial plan reviewer with a **testability, acceptance-criteria, requirements-completeness, and principle-compliance lens**. Read <path>. Focus on: acceptance criteria that can't be objectively tested; spec-coverage gaps (spec requirements with no plan task); tasks whose done-criteria are ambiguous or contradictory; missing tests; and compliance with the seeded design principles (cite violations by P-NNN) plus .goodfellow/knowledge.md principles/gotchas if provided. Challenge '?' claims in the Researched Claims appendix (✓ is relevance only, not a verification verdict). Output: ## Verdict / ## Blockers / ## Major / ## Minor. Per-finding: cite section, explain issue, state fix."
 
-**Reviewer 2 (Codex bridge):**
+**Reviewer 2 (Codex bridge) — correctness / sequencing lens:**
 
-Use `--file <plan-path>` — a freshly-written plan is usually still untracked and appears in no git diff, so a diff-scoped review would hand the reviewer an EMPTY context. `--file` embeds the actual plan body:
+Use `--file <plan-path>` — a freshly-written plan is usually still untracked and appears in no git diff, so a diff-scoped review would hand the reviewer an EMPTY context. `--file` embeds the actual plan body. Pass the correctness lens as the trailing `-- <prompt>` (the bridge honors it in both the Codex path and the Claude fallback):
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/codex-bridge.sh" --kind plan --file <plan-path>
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/codex-bridge.sh" --kind plan --file <plan-path> \
+  -- "Review this plan with a correctness, edge-cases, hidden-coupling, and contract-integrity lens. Focus on: missing prerequisites, wrong execution order (a task referencing something built later), unaddressed dependencies, steps that will fail at runtime, missing rollback paths, hidden coupling between phases, and risky API/contract assumptions. Challenge '?' claims in the Researched Claims appendix (✓ is relevance only, not a verification verdict). Output: ## Verdict / ## Blockers / ## Major / ## Minor. Per-finding: cite section, explain issue, state fix."
 ```
+
+If Codex is absent, the bridge falls back to a single Claude reviewer automatically — but because the lens is passed via `-- <prompt>`, that fallback reviewer still runs the correctness lens. So in no-Codex fallback mode (both reviewers are Claude) the two lenses still apply, preserving lens diversity even without model diversity.
 
 ## 3. Reconcile + address (no gate rounds 1-3)
 
@@ -109,7 +111,7 @@ Same flow as spec-review: deduplicate, present, fix blockers + majors, re-dispat
 
 ## 4. Verifier pass (round 2+)
 
-Before fixing, verify each finding is still real against current plan state.
+Before fixing, dispatch a **single batched verifier** subagent that receives **all** of the round's findings at once (not one subagent per finding — the batched call mirrors the `build_verifier_input(findings, …)` pattern: one dispatch in, per-finding verdicts out). Give it the numbered findings list and the current plan; it returns a `real` / `stale` / `noise` verdict per finding id. Only `real` findings proceed to fix.
 
 ## 5. Convergence
 
