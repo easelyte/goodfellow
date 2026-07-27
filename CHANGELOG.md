@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+- **New `grill` skill — opt-in relentless-interview design front-end.** A sibling to `brainstorm`
+  for fuzzy or high-stakes intent: a bounded fact-scout (≤8 tool-calls, foreground), then a
+  one-question-at-a-time interview (each question ships a recommended default + a prominent "enough /
+  write it" escape hatch, tracked against an understanding ledger) that self-terminates when the
+  open-decision ledger is empty — no hard question cap. Writes the spec via an atomic no-clobber
+  publish (collision → disambiguated `-2`/`-3` path, never an overwrite), persists durable
+  pending-review recovery frontmatter (`review_status`/`failed_reviewers`/`resume`) up front, and
+  auto-dispatches spec-review by file content. Explicit-invocation only (`/goodfellow:grill`, "grill
+  me on X", "interview me about X") — never auto-selected over `brainstorm`. Three-state autopilot:
+  `=1` writes-from-context with `confidence: low` + `next_action: halt-after-spec-review`; `dry-run`
+  logs `would_act` events and mutates nothing. Carries a `CONTRACT-SYNC` marker for future cross-repo
+  contract-parity checking. Interview philosophy adapted from Matt Pocock's `grilling` skill.
+
 ## 0.2.0 (2026-06-11)
 
 Seeded knowledge + opt-in rich memory backend.

@@ -177,16 +177,23 @@ When loops accumulate, `/goodfellow:triage` helps separate real defects from noi
 
 ## Skills Reference
 
-### The Chain (6 skills)
+### The Chain (7 skills)
 
 | Skill | Invocation | Codex? | Autopilot? |
 |---|---|---|---|
 | brainstorm | `/goodfellow:brainstorm [--from-loop N]` | No | Picks own approach |
+| grill | `/goodfellow:grill "<topic>"` | No | Write-from-context (`=1`) |
 | spec-review | `/goodfellow:spec-review <path>` | Optional | Full loop |
 | plan | `/goodfellow:plan <spec-path>` | No | Auto-dispatches |
 | plan-review | `/goodfellow:plan-review <path>` | Optional | Full loop |
 | execute | `/goodfellow:execute <plan-path>` | Optional | All tasks |
 | ship | `/goodfellow:ship [--quick]` | Optional | Full auto |
+
+`brainstorm` and `grill` are sibling design front-ends that produce the same spec artifact and both
+auto-dispatch spec-review. Routing is by intent: **clear intent → `brainstorm`** (default, ≤3
+questions); **fuzzy or high-stakes intent → `grill`** (explicit invocation only — `/goodfellow:grill`
+or "grill me on X" / "interview me about X"; a relentless one-question-at-a-time interview that
+self-terminates when its decision ledger is empty). `grill` never auto-selects over `brainstorm`.
 
 ### Review and Triage (2 skills)
 
