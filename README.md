@@ -5,8 +5,6 @@
   </picture>
 </p>
 
-# Goodfellow
-
 <p align="center">
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-475569?style=flat-square"></a>
   <a href="https://github.com/easelyte/goodfellow/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/easelyte/goodfellow/ci.yml?branch=main&style=flat-square&label=CI"></a>
@@ -20,19 +18,12 @@
 An opinionated development lifecycle for Claude Code.
 Your system gets smarter every time you ship.
 
-```text
-  ┌────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────┐  ┌─────────────┐
-  │ Brainstorm │  │     Spec    │  │     Plan    │  │ Execute │  │     Ship    │
-  │            │━▶│ spec-review │━▶│ plan-review │━▶│  verify │━▶│ review · PR │
-  │            │  │  + research │  │  + research │  │         │  │   + merge   │
-  └────────────┘  └─────────────┘  └─────────────┘  └─────────┘  └─────────────┘
-
-  ┌────────────────────────────────────────────────────────────────────────────┐
-  │             reads ▸  knowledge compounds every cycle  ◀ writes             │
-  └────────────────────────────────────────────────────────────────────────────┘
-
-                     your system gets smarter every cycle
-```
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/goodfellow-pipeline-dark.svg">
+    <img src="docs/assets/goodfellow-pipeline-light.svg" alt="Goodfellow lifecycle: Brainstorm to Spec (spec-review + research) to Plan (plan-review + research) to Execute (verify) to Ship (review · PR + merge), with a feedback loop where Ship writes to a knowledge store and Brainstorm reads from it — your system gets smarter every cycle" width="960">
+  </picture>
+</p>
 
 Adversarial review at every stage. Knowledge that compounds. Nothing that slips.
 

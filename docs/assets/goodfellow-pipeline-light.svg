@@ -1,0 +1,84 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="420" viewBox="0 0 1200 420" role="img" aria-label="Goodfellow lifecycle: Brainstorm to Spec (spec-review + research) to Plan (plan-review + research) to Execute (verify) to Ship (review, PR + merge), with a feedback loop where Ship writes to a knowledge store and Brainstorm reads from it — your system gets smarter every cycle">
+  <title>goodfellow — the lifecycle</title>
+  <desc>A five-stage chain with a compounding knowledge loop.</desc>
+
+  <!-- surface -->
+  <rect x="1" y="1" width="1198" height="418" rx="16" fill="#ffffff" stroke="#d0d7de" stroke-width="1"/>
+
+  <!-- eyebrow -->
+  <g font-family="'SFMono-Regular', 'JetBrains Mono', 'Fira Code', ui-monospace, 'DejaVu Sans Mono', monospace">
+    <polygon points="44,33 44,49 57,41" fill="#7c3aed"/>
+    <text x="70" y="46" font-size="13" font-weight="500" letter-spacing="2.5" fill="#8c959f">GOODFELLOW · THE CHAIN</text>
+  </g>
+
+  <!-- stage connectors (arrows left to right) -->
+  <g stroke="#7c3aed" stroke-width="1.6" stroke-linecap="round">
+    <line x1="244" y1="136" x2="258" y2="136"/>
+    <line x1="475" y1="136" x2="489" y2="136"/>
+    <line x1="706" y1="136" x2="720" y2="136"/>
+    <line x1="937" y1="136" x2="951" y2="136"/>
+  </g>
+  <g fill="#7c3aed">
+    <polygon points="267,136 258,131 258,141"/>
+    <polygon points="498,136 489,131 489,141"/>
+    <polygon points="729,136 720,131 720,141"/>
+    <polygon points="960,136 951,131 951,141"/>
+  </g>
+
+  <!-- stage boxes -->
+  <g fill="#ffffff" stroke="#7c3aed" stroke-width="1.5">
+    <rect x="40"  y="84" width="196" height="104" rx="10"/>
+    <rect x="271" y="84" width="196" height="104" rx="10"/>
+    <rect x="502" y="84" width="196" height="104" rx="10"/>
+    <rect x="733" y="84" width="196" height="104" rx="10"/>
+    <rect x="964" y="84" width="196" height="104" rx="10"/>
+  </g>
+
+  <!-- stage labels -->
+  <g font-family="'SFMono-Regular', 'JetBrains Mono', 'Fira Code', ui-monospace, 'DejaVu Sans Mono', monospace" text-anchor="middle">
+    <text x="138"  y="143" font-size="17" font-weight="600" fill="#1f2328">Brainstorm</text>
+
+    <text x="369"  y="129" font-size="17" font-weight="600" fill="#1f2328">Spec</text>
+    <text x="369"  y="155" font-size="11.5" font-weight="400" letter-spacing="0.3" fill="#59636e">spec-review + research</text>
+
+    <text x="600"  y="129" font-size="17" font-weight="600" fill="#1f2328">Plan</text>
+    <text x="600"  y="155" font-size="11.5" font-weight="400" letter-spacing="0.3" fill="#59636e">plan-review + research</text>
+
+    <text x="831"  y="129" font-size="17" font-weight="600" fill="#1f2328">Execute</text>
+    <text x="831"  y="155" font-size="11.5" font-weight="400" letter-spacing="0.3" fill="#59636e">verify</text>
+
+    <text x="1062" y="129" font-size="17" font-weight="600" fill="#1f2328">Ship</text>
+    <text x="1062" y="155" font-size="11.5" font-weight="400" letter-spacing="0.3" fill="#59636e">review · PR + merge</text>
+  </g>
+
+  <!-- feedback loop: Ship writes into knowledge, Brainstorm reads from it -->
+  <g fill="none" stroke="#6d28d9" stroke-width="1.6" stroke-linecap="round" opacity="0.9">
+    <!-- writes: Ship -> knowledge -->
+    <path d="M1062,188 C1062,246 852,286 702,286"/>
+    <!-- reads: knowledge -> Brainstorm -->
+    <path d="M498,286 C348,286 138,246 138,188"/>
+  </g>
+  <g fill="#6d28d9">
+    <!-- arrowhead into knowledge (pointing left) -->
+    <polygon points="690,286 699,281 699,291"/>
+    <!-- arrowhead into Brainstorm (pointing up) -->
+    <polygon points="138,188 133,197 143,197"/>
+  </g>
+
+  <!-- directionality labels -->
+  <g font-family="'SFMono-Regular', 'JetBrains Mono', 'Fira Code', ui-monospace, 'DejaVu Sans Mono', monospace" font-size="12" font-weight="500" letter-spacing="1" fill="#6d28d9" text-anchor="middle">
+    <text x="864" y="258">writes</text>
+    <text x="336" y="258">reads</text>
+  </g>
+
+  <!-- knowledge store -->
+  <rect x="512" y="259" width="176" height="54" rx="10" fill="#ffffff" stroke="#7c3aed" stroke-width="1.5"/>
+  <line x1="524" y1="271" x2="676" y2="271" stroke="#7c3aed" stroke-width="1" opacity="0.35"/>
+  <g font-family="'SFMono-Regular', 'JetBrains Mono', 'Fira Code', ui-monospace, 'DejaVu Sans Mono', monospace" text-anchor="middle">
+    <text x="600" y="291" font-size="14" font-weight="600" fill="#1f2328">knowledge</text>
+    <text x="600" y="306" font-size="9" font-weight="500" letter-spacing="1.5" fill="#8c959f">COMPOUNDS EVERY CYCLE</text>
+  </g>
+
+  <!-- tagline -->
+  <text x="600" y="392" text-anchor="middle" font-family="'SFMono-Regular', 'JetBrains Mono', 'Fira Code', ui-monospace, 'DejaVu Sans Mono', monospace" font-size="14" font-weight="500" letter-spacing="2.5" fill="#59636e">YOUR SYSTEM GETS SMARTER EVERY CYCLE</text>
+</svg>
