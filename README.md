@@ -1,11 +1,26 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/goodfellow-hero-dark.svg">
+    <img src="docs/assets/goodfellow-hero-light.svg" alt="Goodfellow — your good fellow for shipping code" width="880">
+  </picture>
+</p>
+
 # Goodfellow
+
+<p align="center">
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-475569?style=flat-square"></a>
+  <a href="https://github.com/easelyte/goodfellow/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/easelyte/goodfellow/ci.yml?branch=main&style=flat-square&label=CI"></a>
+  <img alt="Python 3.10+" src="https://img.shields.io/badge/python-3.10%2B-475569?style=flat-square&logo=python&logoColor=white">
+  <img alt="Claude Code plugin" src="https://img.shields.io/badge/Claude_Code-plugin-7c3aed?style=flat-square">
+  <img alt="Version 0.2.0" src="https://img.shields.io/badge/version-0.2.0-7c3aed?style=flat-square">
+</p>
 
 > Named after Ian Goodfellow, who invented adversarial networks. Your good fellow for shipping code.
 
 An opinionated development lifecycle for Claude Code.
 Your system gets smarter every time you ship.
 
-```
+```text
   ┌────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────┐  ┌─────────────┐
   │ Brainstorm │  │     Spec    │  │     Plan    │  │ Execute │  │     Ship    │
   │            │━▶│ spec-review │━▶│ plan-review │━▶│  verify │━▶│ review · PR │
@@ -40,7 +55,7 @@ Your 50th feature ships with the wisdom of the first 49.
 ## Install
 
 **From the marketplace (recommended).** Goodfellow ships its own single-repo marketplace manifest (`.claude-plugin/marketplace.json`), so install is three steps inside Claude Code:
-```
+```text
 /plugin marketplace add easelyte/goodfellow
 /plugin install goodfellow@goodfellow
 /reload-plugins
@@ -48,7 +63,7 @@ Your 50th feature ships with the wisdom of the first 49.
 `/plugin install goodfellow@goodfellow` reads `plugin@marketplace` — both are named `goodfellow` here (the plugin lives at the marketplace repo root).
 
 **Session-only** (for testing, no persistent install):
-```
+```bash
 claude --plugin-dir /path/to/goodfellow
 ```
 This loads the plugin for the current session only from a local checkout — nothing is registered or persisted.

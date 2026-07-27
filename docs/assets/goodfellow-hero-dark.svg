@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="300" viewBox="0 0 1200 300" role="img" aria-label="goodfellow — your good fellow for shipping code">
+  <title>goodfellow</title>
+  <desc>An opinionated dev lifecycle for Claude Code with multi-model adversarial review.</desc>
+
+  <!-- surface -->
+  <rect x="1" y="1" width="1198" height="298" rx="16" fill="#0d1117" stroke="#21262d" stroke-width="1"/>
+
+  <!-- wordmark -->
+  <g font-family="'SFMono-Regular', 'JetBrains Mono', 'Fira Code', ui-monospace, 'DejaVu Sans Mono', monospace">
+    <polygon points="74,103 74,143 104,123" fill="#8b5cf6"/>
+    <text x="118" y="150" font-size="76" font-weight="700" letter-spacing="-3" fill="#e6edf3">goodfellow</text>
+    <text x="120" y="200" font-family="'Segoe UI', system-ui, -apple-system, 'Helvetica Neue', Arial, sans-serif" font-size="24" font-weight="400" letter-spacing="0.5" fill="#8b949e">your good fellow for shipping code</text>
+    <text x="120" y="236" font-size="14" font-weight="500" letter-spacing="2.5" fill="#6e7681">BRAINSTORM · SPEC · PLAN · EXECUTE · SHIP</text>
+  </g>
+
+  <!-- adversarial lattice: generator (left) reflected across a seam into the discriminator (right) -->
+  <g stroke-linecap="round">
+    <!-- generator edges -->
+    <g stroke="#8b5cf6" stroke-width="1.3">
+      <line x1="800" y1="90" x2="880" y2="110"/>
+      <line x1="800" y1="90" x2="880" y2="190"/>
+      <line x1="800" y1="150" x2="880" y2="110"/>
+      <line x1="800" y1="150" x2="880" y2="190"/>
+      <line x1="800" y1="210" x2="880" y2="110"/>
+      <line x1="800" y1="210" x2="880" y2="190"/>
+    </g>
+    <!-- adversarial crossings over the seam -->
+    <g stroke="#a78bfa" stroke-width="1.4" opacity="0.85">
+      <line x1="880" y1="110" x2="1020" y2="110"/>
+      <line x1="880" y1="110" x2="1020" y2="190"/>
+      <line x1="880" y1="190" x2="1020" y2="110"/>
+      <line x1="880" y1="190" x2="1020" y2="190"/>
+    </g>
+    <!-- discriminator edges (the echo) -->
+    <g stroke="#8b5cf6" stroke-width="1.3" opacity="0.45">
+      <line x1="1020" y1="110" x2="1100" y2="90"/>
+      <line x1="1020" y1="110" x2="1100" y2="150"/>
+      <line x1="1020" y1="110" x2="1100" y2="210"/>
+      <line x1="1020" y1="190" x2="1100" y2="90"/>
+      <line x1="1020" y1="190" x2="1100" y2="150"/>
+      <line x1="1020" y1="190" x2="1100" y2="210"/>
+    </g>
+  </g>
+
+  <!-- seam: the adversarial boundary -->
+  <line x1="950" y1="62" x2="950" y2="238" stroke="#8b5cf6" stroke-width="1" opacity="0.4" stroke-dasharray="4 6"/>
+
+  <!-- nodes -->
+  <g fill="#0d1117" stroke="#8b5cf6" stroke-width="1.6">
+    <circle cx="800" cy="90" r="5.5"/><circle cx="800" cy="150" r="5.5"/><circle cx="800" cy="210" r="5.5"/>
+    <circle cx="880" cy="110" r="5.5"/><circle cx="880" cy="190" r="5.5"/>
+  </g>
+  <g fill="#0d1117" stroke="#8b5cf6" stroke-width="1.6" opacity="0.5">
+    <circle cx="1020" cy="110" r="5.5"/><circle cx="1020" cy="190" r="5.5"/>
+    <circle cx="1100" cy="90" r="5.5"/><circle cx="1100" cy="150" r="5.5"/><circle cx="1100" cy="210" r="5.5"/>
+  </g>
+
+  <!-- G / D micro-labels -->
+  <g font-family="'SFMono-Regular', ui-monospace, monospace" font-size="13" font-weight="600" letter-spacing="1" fill="#8b5cf6">
+    <text x="794" y="252" opacity="0.7">G</text>
+    <text x="1094" y="252" opacity="0.45">D</text>
+  </g>
+</svg>
