@@ -3,7 +3,7 @@ name: grill
 description: Opt-in relentless one-question-at-a-time interview for underspecified or high-stakes design intent. Fires ONLY on explicit invocation — /goodfellow:grill, "grill me on X", "interview me about X", "grill me". Does NOT claim the generic "design X" / "brainstorm X" triggers (those stay with brainstorm). Scouts facts, interviews to a ledger-empty finish, writes a spec, auto-dispatches spec-review.
 ---
 
-<!-- CONTRACT-SYNC: grill contract_version=1 sha=c374852af615783ed9037ec77f2bc742bdaaff42b03a0e339f117ec1509a5881 -->
+<!-- CONTRACT-SYNC: grill contract_version=1 sha=20a728725a6ad13a940de701cb89174ad011fd5cb5a6cedd9f210fdd30e28cac -->
 
 The operator wants to be **grilled**: a relentless, one-question-at-a-time interview that
 drives a fuzzy or high-stakes idea to a resolved design before any spec is written. This is the
@@ -41,7 +41,9 @@ LF-normalized, emitted as full lowercase hex.
   populated on both the early-cut and autopilot paths — autopilot holds the best-effort identifiable
   set, not a fictional "every question"); `confidence` (`high` = interview fully resolved AND the
   approach has precedent; `medium` = fully resolved but novel; `low` = operator cut early with
-  material questions open, OR autopilot) plus `confidence_basis: grill`.
+  material questions open, OR autopilot) plus `confidence_basis: grill`; and `next_action`
+  (`halt-after-spec-review` on the autopilot `=1` path only, empty/omitted otherwise — see the
+  `next_action` halt bullet below).
 - **Autopilot `=1` degradation.** Under `GOODFELLOW_AUTOPILOT=1`, grill emits zero interactive
   questions: it answers from scout + context, writes the spec with `confidence: low`, best-effort
   `unresolved_questions`, and `next_action: halt-after-spec-review`, then dispatches spec-review.
