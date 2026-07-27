@@ -2,15 +2,27 @@
 # Goodfellow Codex bridge — wraps codex exec review or falls back to dual-Claude.
 # Usage: codex-bridge.sh --kind <spec|plan|diff> [--model <sonnet|opus|haiku>]
 #        [--include-aesthetic] [--commit <sha>] [--base <branch>] [--uncommitted]
-#        [-- <prompt>]
+#        [--file <path>] [-- <prompt>]
+#
+# MODEL ($GOODFELLOW_REVIEW_MODEL, default sonnet) is a CLAUDE model id and is
+# only ever passed to the Claude fallback reviewer. The Codex path must NOT
+# receive a Claude model name (codex exec expects a GPT model id); it stays on
+# codex's configured default unless $GOODFELLOW_CODEX_MODEL is set to a GPT id.
+#
+# --file <path> reviews a file's CONTENT directly (for freshly-written, still
+# untracked spec/plan artifacts that appear in no git diff). It embeds the file
+# body into the review context rather than relying on git show/diff.
 set -euo pipefail
 
 KIND=""
 MODEL="${GOODFELLOW_REVIEW_MODEL:-sonnet}"
+# GPT model id for the Codex path only. Empty => codex uses its configured default.
+CODEX_MODEL="${GOODFELLOW_CODEX_MODEL:-}"
 INCLUDE_AESTHETIC=""
 COMMIT=""
 BASE=""
 UNCOMMITTED=""
+FILE=""
 PROMPT=""
 MIN_VERSION="0.120.0"
 
@@ -22,10 +34,16 @@ while [[ $# -gt 0 ]]; do
     --commit) COMMIT="$2"; shift 2 ;;
     --base) BASE="$2"; shift 2 ;;
     --uncommitted) UNCOMMITTED="1"; shift ;;
+    --file) FILE="$2"; shift 2 ;;
     --) shift; PROMPT="$*"; break ;;
     *) echo "Unknown arg: $1" >&2; exit 1 ;;
   esac
 done
+
+if [[ -n "$FILE" && ! -f "$FILE" ]]; then
+  echo "ERROR: --file target not found: $FILE" >&2
+  exit 1
+fi
 
 OUTFILE=$(mktemp /tmp/goodfellow-review-XXXXXX)
 
@@ -49,7 +67,11 @@ check_version() {
 
 # Collect the diff/content that the review should cover
 get_review_context() {
-  if [[ -n "$COMMIT" ]]; then
+  if [[ -n "$FILE" ]]; then
+    # Freshly-written spec/plan artifacts are untracked and appear in no git
+    # diff — feed the reviewer the actual file body.
+    cat "$FILE" 2>/dev/null || echo "(could not read file $FILE)"
+  elif [[ -n "$COMMIT" ]]; then
     git show "$COMMIT" 2>/dev/null || echo "(could not read commit $COMMIT)"
   elif [[ -n "$BASE" ]]; then
     git diff "$BASE"...HEAD 2>/dev/null || echo "(could not diff against $BASE)"
@@ -72,14 +94,27 @@ run_codex() {
   [[ -n "$COMMIT" ]] && args+=(--commit "$COMMIT")
   [[ -n "$BASE" ]] && args+=(--base "$BASE")
   [[ -n "$UNCOMMITTED" ]] && args+=(--uncommitted)
-  [[ -n "$MODEL" ]] && args+=(--model "$MODEL")
+  # Codex/GPT model id ONLY — never $MODEL (a Claude id). Empty => codex default.
+  [[ -n "$CODEX_MODEL" ]] && args+=(--model "$CODEX_MODEL")
 
   local review_prompt
   review_prompt=$(build_review_prompt)
 
-  # codex exec review: scope flags reject positional PROMPT — pipe via stdin
   local rc=0
-  if [[ -n "$COMMIT" || -n "$BASE" || -n "$UNCOMMITTED" ]]; then
+  if [[ -n "$FILE" ]]; then
+    # --file mode has no codex scope flag; embed the file body into the prompt
+    # (positional) so an untracked artifact is actually reviewed.
+    local context full_prompt
+    context=$(get_review_context)
+    full_prompt="$review_prompt
+
+Here is the $KIND to review (file: $FILE):
+\`\`\`
+$context
+\`\`\`"
+    timeout 300 "${args[@]}" "$full_prompt" > "$OUTFILE" 2>&1 || rc=$?
+  elif [[ -n "$COMMIT" || -n "$BASE" || -n "$UNCOMMITTED" ]]; then
+    # codex exec review: scope flags reject positional PROMPT — pipe via stdin
     echo "$review_prompt" | timeout 300 "${args[@]}" - > "$OUTFILE" 2>&1 || rc=$?
   else
     timeout 300 "${args[@]}" "$review_prompt" > "$OUTFILE" 2>&1 || rc=$?

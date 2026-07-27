@@ -97,8 +97,10 @@ Each round, dispatch both reviewers in parallel:
 
 **Reviewer 2 (Codex bridge):**
 
+Use `--file <plan-path>` — a freshly-written plan is usually still untracked and appears in no git diff, so a diff-scoped review would hand the reviewer an EMPTY context. `--file` embeds the actual plan body:
+
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/codex-bridge.sh" --kind plan --uncommitted
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/codex-bridge.sh" --kind plan --file <plan-path>
 ```
 
 ## 3. Reconcile + address (no gate rounds 1-3)
