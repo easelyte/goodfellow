@@ -53,7 +53,28 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/principles_context.py" --emit --project-r
 
 ## 2. Per-task implementation loop
 
-For each task in plan order:
+**Default: serial.** Implement every task inline yourself, in plan order. This is the baseline behavior and the safe default — do not deviate from it unless the gate in 2.0 provably clears.
+
+### 2.0. Optional: gated parallel implementers (opt-in, per phase)
+
+This is a capability the skill uses **only when the plan makes independence provable** — it is not a default change to how plans execute. Most phases run serial. Parallel fan-out is the exception you must justify from the plan's own dependency graph, not a mode you turn on by preference.
+
+**When it may apply:** at a phase boundary, look at the set of not-yet-done tasks in the current phase and the plan's stated dependency graph (the `what blocks what, what parallelizes` section). If a subset of those tasks is provably **file-disjoint** — no two of them touch the same file, per the plan's declared target files and dependency edges — you MAY fan out one implementer subagent per independent task (vanilla Agent/Task tool, following `superpowers:dispatching-parallel-agents`), then reconcile their results before continuing.
+
+**MANDATORY independence gate (load-bearing — do not soften):**
+- Parallelize a set of tasks ONLY if the plan's stated dependency graph proves they are file-disjoint: no shared target file, no declared dependency edge between them.
+- On **ANY** file overlap, ambiguity, or uncertainty about what a task touches → **fall back to serial** for those tasks. Do not guess. Do not parallelize "probably independent" tasks.
+- The default is serial; parallel is the exception. If you cannot cite the specific dependency-graph facts that prove disjointness, you have not cleared the gate — run serial.
+
+**Portability caveats (state these explicitly; they are why the gate is strict):**
+- goodfellow has **NO git-worktree isolation** and **NO #39-style parent-side liveness watchdog**. There is no worktree safety net.
+- (a) Parallel children write a **shared working tree**. If two children touch the same file they WILL collide and corrupt each other's work — the disjointness gate is the *only* thing preventing this. Nothing else will catch it.
+- (b) A hung child is **unrecoverable** — there is no TaskStop watchdog to reap it. Keep parallel children **foreground, short-lived, and bounded** (small, well-scoped tasks; never long-running or open-ended). Do not background them.
+- (c) If in doubt, serial.
+
+**Reconcile after fan-out:** once the parallel children return, integrate their changes, then run the per-task verify (2d) across all affected files together, and resolve any conflict serially. Then continue to the next phase.
+
+For each task run serially (or each task within a fanned-out set, executed by the child implementer): follow the loop below, in plan order.
 
 ### 2a. Read the task
 Read the task body, acceptance criteria, and dependencies. Check that dependencies are complete.
