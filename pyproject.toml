@@ -1,9 +1,14 @@
 [project]
 name = "goodfellow"
-version = "0.1.0"
-description = "Named after the inventor of adversarial networks. Your good fellow for shipping code."
+version = "0.2.0"
+description = "Named after the inventor of adversarial networks. Your good fellow for shipping code — adversarial review, knowledge compounding, follow-up tracking."
 requires-python = ">=3.10"
 license = {text = "MIT"}
+authors = [{name = "easelyte", email = "fantin@easelyte.ai"}]
+
+[project.urls]
+Homepage = "https://github.com/easelyte/goodfellow"
+Repository = "https://github.com/easelyte/goodfellow"
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0"]

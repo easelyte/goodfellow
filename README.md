@@ -39,22 +39,19 @@ Your 50th feature ships with the wisdom of the first 49.
 
 ## Install
 
-**From git (recommended for now):**
-```bash
-git clone https://github.com/easelyte/goodfellow.git ~/.claude/plugins/goodfellow
+**From the marketplace (recommended).** Goodfellow ships its own single-repo marketplace manifest (`.claude-plugin/marketplace.json`), so install is three steps inside Claude Code:
 ```
-
-Claude Code auto-discovers plugins in `~/.claude/plugins/`. Restart your session after cloning.
-
-**From marketplace** (when published):
+/plugin marketplace add easelyte/goodfellow
+/plugin install goodfellow@goodfellow
+/reload-plugins
 ```
-claude plugin install easelyte/goodfellow
-```
+`/plugin install goodfellow@goodfellow` reads `plugin@marketplace` — both are named `goodfellow` here (the plugin lives at the marketplace repo root).
 
 **Session-only** (for testing, no persistent install):
 ```
 claude --plugin-dir /path/to/goodfellow
 ```
+This loads the plugin for the current session only from a local checkout — nothing is registered or persisted.
 
 ## Quick Start
 
@@ -160,9 +157,8 @@ GOODFELLOW_AUTOPILOT=dry-run
 - `confidence: low` in spec frontmatter (architecture-changing unknowns)
 - Verifier flags >50% of findings as stale/noise in a round
 - Unresolved questions that would change the architecture
-- Parent self-review (spec-review/plan-review step 0.5) hits a finding that needs an operator decision
 
-Decision log written to `.goodfellow/runs/<timestamp>.jsonl` for auditability.
+Decision log written to `.goodfellow/runs/<timestamp>-<pid>.jsonl` for auditability.
 
 ## Triage
 
