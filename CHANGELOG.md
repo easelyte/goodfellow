@@ -15,6 +15,7 @@
   writes no spec and dispatches no review, but does append `would_act` events to the run log
   (`.goodfellow/runs/`). Carries a `CONTRACT-SYNC` marker for future cross-repo
   contract-parity checking. Interview philosophy adapted from Matt Pocock's `grilling` skill.
+- **Expanded seed principles.** Core `knowledge/principles.md` grows to 56 principles + 5 sub-entries (added P-059, P-061, P-063–P-069, and sub-entries P-017a/P-017b); web `knowledge/principles-web.md` grows to 10 (added P-062, P-070). Ported from easelyte's cross-repo design knowledge and grounded against current industry practice (OWASP, capability-based security / dual-LLM prompt-injection defense, ReDoS / algorithmic-complexity attacks, design-token semantics, git squash-merge semantics, optimistic-UI last-write-wins). P-060 intentionally skipped (worktree/canonical-store infra, out of scope for a general code-shipping tool — consistent with the existing 039/041/043 gaps). IDs stay aligned with the upstream `P-NNN` numbering; all KB contract tests pass.
 
 ## 0.2.0 (2026-06-11)
 

@@ -135,3 +135,45 @@ boundary, not more state.
 - `useState(0)` for a number input — typing "05" is impossible
 - `useMemo(() => default, [])` for "value on first render" — the wrong tool
 - A dialog showing item A's state after opening with item B's data
+
+### P-062. Design Tokens Carry Semantic Role and Shape
+> A token is a semantic role, not just a value. One literal serving two opposite roles needs two tokens; a token whose value is a CSS shorthand can only be consumed through that shorthand property.
+
+Design-token systems fail silently under theming and mechanical swaps when a token's role and
+value shape are ignored. Role coupling: one color used as both a surface background and as
+foreground text on a colored fill, mapped to a single token, couples two unrelated contrast
+decisions — they diverge under dark theme (dark-on-dark text). Shape mismatch: a token whose
+value is a full CSS `font` shorthand can't be assigned to the `font-size` longhand (the
+declaration is dropped, a silent no-op). Mirrors the primitive-vs-semantic token distinction.
+
+**Rules:**
+- When one literal serves two opposite semantic roles (surface vs on-surface foreground), split it into two tokens even when the light-theme values are identical.
+- A token whose value is a shorthand (`font`, `background`, `border`) is consumable only via that shorthand property; provide size-only/longhand tokens alongside shorthand tokens.
+- Before a mechanical `property: var(--token)` swap, verify the consumption property matches the token's value shape.
+- Name tokens by role (`--surface-canvas`, `--text-on-accent`), not by their current value.
+
+**Anti-patterns:**
+- Mapping both a background fill and on-fill text to one `--canvas` token
+- `font-size: var(--font-body)` where `--font-body` is a full `font` shorthand
+- Reusing a value's token in a second role because the color happens to match today
+
+### P-070. Optimistic Concurrent Edits: Field-Scoped Writes, Worst-First Status
+> Write only the field that changed, never a full-record snapshot (which replays stale copies of every other field). Derive a shared status worst-first — a later success must not clear another operation's unacknowledged failure.
+
+Two silent failure modes in optimistic multi-client editing. Full-snapshot save: writing the
+whole record on any field change lets one client's stale mirror clobber another client's
+concurrent edit to a different field; the fix is field-scoped updates. Status masking: when one
+indicator summarizes N independent async operations and each writes it unconditionally, a later
+success overwrites an earlier concurrent failure (false "Saved" over a lost edit); the fix is
+worst-first derivation. Last-write-wins gives no warning and no exception.
+
+**Rules:**
+- Optimistic autosave writes only the changed field (field-scoped update), never a full-record snapshot.
+- A status over N independent operations derives worst-first: any outstanding failure wins over any success; a per-stream success clears only its own stream's state.
+- Reconciliation of optimistic state must be independent of duplicate-frame dedup, and every optimistic feature gets an explicit reload-mid-flight test — mocked fresh-echo tests can't see the resync path.
+- State whose correctness must survive a component's conditional unmount (in-flight async keyed to it) belongs above that component or in a singleton, not inside it.
+
+**Anti-patterns:**
+- Saving all fields on every keystroke, replaying stale sibling fields over concurrent edits
+- Two async save streams both writing one "Saved/Error" status unconditionally
+- Gating reconciliation on the store's dedup return, so a reload-mid-flight leaves a stuck optimistic row

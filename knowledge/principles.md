@@ -148,6 +148,23 @@ check that prevents the old pattern from returning.
 - Pin dependency versions exactly; `>=` in manifests means no reproducibility.
 - The ratchet covers EVERY layer where the old pattern can re-enter — instruction strings, docs, conventions, reviewer prompts — not just code constants. Plans that move/rename code artifacts need an explicit code-trace round, because standard reviews check plan-text only and miss stale references in docstrings, comments, test descriptions, and log strings.
 
+#### P-017a. Validation Gates Exempt Their Own Sanctioned Instances
+A ratchet or validation rule that forbids a pattern must explicitly exempt the sanctioned
+instances of that pattern it also requires keeping — the allowlist is the gate's record of
+deliberate exceptions. A gate that can't pass the very source it mandates isn't a ratchet,
+it's a shipping blocker. Ship the forbid-rule and its exemption list in the same change;
+anchor exemptions to parsed syntax context and exact spans (not path/marker/substring
+matches) so they can't smuggle new instances; and include fixtures for known bypass shapes
+(a multiline or aliased composition of the forbidden pattern), not just a repository scan.
+
+#### P-017b. Filesystem-Scanning Ratchets Scope to Tracked Files
+A ratchet that greps the tree for a forbidden string or path must scope its scan to
+version-controlled files — honor ignore files and exclude nested worktrees/checkouts — or it
+passes in CI / a fresh clone but goes red on a live checkout by scanning ignored runtime state
+and sibling checkouts the tracked code never contains. Iterate the tracked-file set (e.g.
+`git ls-files`), not a raw tree walk; prefer AST-parsed path components over raw regex; and
+include fixtures for known bypass shapes.
+
 ### P-018. Cognitive Budget
 > If a reader cannot hold the entire file in working memory, they cannot reason about its behavior.
 
@@ -842,3 +859,178 @@ test-hermetic context leaves the production path with the original latent defect
 **Anti-patterns:**
 - Passing an explicit dependency in the test to make it pass while the production caller still relies on the implicit one
 - Closing a finding when only the hermetic test surface is fixed
+
+### P-059. Extend the Canonical Primitive, Don't Reinvent It
+> Before adding a queue, state machine, watchdog, or cache, find the primitive that already does this and extend it. A review that keeps saying "route through X" means the design chose the wrong abstraction.
+
+Behavioral corollary of P-002 (Canonical Source): a mechanism usually has one canonical
+implementation already in the tree. Adding a parallel one — a second queue, a bespoke retry
+loop, a new dedupe map — splits behavior across two surfaces that drift. The cost is highest
+in unfamiliar or external code, where the existing primitive is easy to miss.
+
+**Rules:**
+- Before building a new mechanism, grep for an existing one serving the same role; prefer extending it.
+- A review finding repeated across rounds — "use mechanism X" — signals the design picked the wrong abstraction, not that the code needs another patch.
+- In unfamiliar codebases, spend the survey budget before the build budget.
+- If the existing primitive genuinely can't be extended, say why in the PR before adding a parallel one.
+
+**Anti-patterns:**
+- A bespoke held-input buffer + watchdog beside an existing durable input queue
+- Reimplementing retry/backoff inline when a decorator/helper already exists
+- A second cache with different invalidation semantics next to the canonical one
+
+### P-061. Bound Untrusted-Input Work by Its Actual Cost Curve
+> A single character-length cap cannot bound work whose cost is structural or whose paths differ by orders of magnitude. Bound the expensive work directly, and never co-gate a legitimate capability's output path.
+
+Byte-length is a proxy for cost, and it breaks two ways. Structural blowup: a sub-cap body
+expands to a huge render tree (a short list-marker string repeated thousands of times becomes
+thousands of DOM nodes). Divergent path costs: syntax-highlight auto-detection can be many
+times slower than explicit-language highlighting of the same input, so one size cap can't both
+permit large labeled blocks and bound autodetect. Related to algorithmic-complexity / ReDoS attacks.
+
+**Rules:**
+- Untrusted-content render guards need a structural budget (line/block/AST-node count), not only a byte cap; fall back to raw text above it.
+- When a feature has two work paths with very different cost curves (explicit vs auto-detected, cached vs computed), give each its own cap or drop the expensive path.
+- A size/DoS bound gates only the expensive work it protects (decode/parse/highlight/render), never a legitimate capability's output path — bounding the wrong seam withholds valid output.
+- A reviewer suggestion to "bound earlier" can move the bound onto a capability gate; check what else that seam controls.
+
+**Anti-patterns:**
+- One character cap as the only defense against render-tree explosion
+- A shared highlight cap covering both explicit and autodetect paths
+- Placing a link-size bound on a shared render guard, regressing valid oversized links to no link
+
+### P-063. Never Truncate Aggregation Sources
+> A LIMIT on a query whose rows feed a total, count, or financial summary silently truncates data that downstream code treats as complete.
+
+When a query result is summed, counted, or aggregated, the aggregation is correct only if the
+query returned the full set. Adding a limit — for pagination, a "reasonable default," or to
+dodge a payload cap — makes the total quietly wrong while every row shown looks right. The
+failure is invisible on the total line.
+
+**Rules:**
+- Never add a row limit to a query whose results feed an aggregation (sum, count, average, financial total).
+- If a source query must be bounded for performance, aggregate in the database (`SELECT sum(...)`, `count(*)`) so the bound doesn't apply to the summed set.
+- User-facing pagination over an aggregated set carries an explicit total count queried separately from the page.
+- Audit every consumer before adding a limit — one aggregating consumer makes the limit a correctness bug.
+
+**Anti-patterns:**
+- `select(...).limit(1000)` then summing the rows
+- "It's just a sane default to cap the query" on a query feeding a dashboard total
+- A list footer count that equals the page size instead of the real total
+
+### P-064. Key Guards on the Protected Artifact, Not a Proxy
+> A guard, gate, or ratchet keys on the primary protected artifact itself — its bytes/content — not a secondary proxy (a companion hash, a pinned constant, a sibling file).
+
+When a guard consults a stand-in rather than the thing itself, two gaps open: unprotected
+siblings (artifacts of the same class not in the proxy) and obfuscation vectors (rewrite the
+proxy and the guard goes blind). Re-keying on the artifact's own bytes subsumes every escape
+and usually deletes the proxy-parsing code. This is the integrity-validation form of CI/CD
+artifact-integrity checks.
+
+**Rules:**
+- A content-integrity guard hashes/reads the protected artifact directly, not a companion record describing it.
+- If a guard consults a proxy, enumerate the siblings it omits and the ways it can be rewritten — both are live gaps.
+- Prefer the guard that needs no separate registry to maintain; the direct key is usually less code.
+- When a reviewer suggests keying on "the more canonical" value, confirm it's still the value the protected operation actually uses.
+
+**Anti-patterns:**
+- Gating "has this file been tampered with?" on a hand-maintained hash table instead of the file's bytes
+- A ratchet trusting a pinned constant an attacker can rewrite as a computed expression
+- Protecting file A via a checksum in file B, leaving A's unpinned siblings open
+
+### P-065. Distinguish Measured-Zero from No-Data in Fallbacks
+> A metric's no-data fallback must be neutral, not the optimistic pole — especially when the metric is inverted or penalized downstream.
+
+Absence of a signal is not evidence of a favorable outcome (absence of evidence is not
+evidence of absence). When a scoring metric has a fallback for missing inputs, routing "no
+data" to the value that maximizes the score inflates every sparse item and rewards ignorance.
+"We measured and found zero" is a real finding; "we have no data" is not the same thing and
+lands on a neutral default.
+
+**Rules:**
+- Fallback defaults for missing inputs are neutral (mid-scale), never the favorable or unfavorable extreme.
+- Reserve the favorable extreme for the measured-zero case, and make the code distinguish measured-zero from no-data explicitly (two branches).
+- Be strictest when the metric is inverted/penalized downstream — an optimistic no-data default there is a double error.
+- Test the empty-input path directly; it's the one most likely to reach the optimistic pole by accident.
+
+**Anti-patterns:**
+- Returning the best-case score for an empty input that means "no data," not "measured zero"
+- One code path collapsing measured-zero and no-data into the same return
+- A default that makes un-enriched items outscore enriched ones
+
+### P-066. Auto-Delete Only Provably-Untouched Rows
+> A guard that deletes a record because it "looks empty" must check every field that can hold intentional state, not just the obvious money or quantity column.
+
+Deciding a record is disposable from a single column destroys real data when the row carries
+intentional state elsewhere — a custom amount, notes, flags — with zero in the checked column.
+Re-creating the row resets it to defaults, so the deletion is lossy and silent.
+
+**Rules:**
+- An auto-delete guard checks every field that can hold user intent (amounts, notes, flags, relations), not just the triggering column.
+- Delete only a row provably at all-defaults (an untouched auto-created stub); anything else is keep-and-flag for human review.
+- Prefer soft-delete / flag over hard-delete when the row can carry intentional state you might not have enumerated.
+- Enumerate the intentional-state fields explicitly — an allowlist of "must be default," not a single-column check.
+
+**Anti-patterns:**
+- `if (row.paid === 0) delete(row)` on a row that can carry a custom amount + notes
+- Judging "empty" from the one column that triggered the cleanup
+- Hard-deleting an auto-created financial row instead of flagging it
+
+### P-067. Isolate Untrusted Agents by Capability, Not Sandboxing
+> Ring-fencing a less-trusted AI agent is capability-scoping, not sandbox-fencing. A permission allowlist on a shell-capable agent is UX, not a boundary. Anything the model can place in a tool-arg is untrusted for auth, audit, and egress.
+
+You cannot contain a full agent by sandboxing it while leaving it credentials and unmediated
+egress. The durable boundary is capability: the agent process holds no scoped credentials
+(they live in separate-OS-user tool processes it can't read), it reaches the outside world
+only through a trusted mediator (a brokered gateway + egress fence), and any actor identity or
+confirmation it could forge via tool-args is stamped out-of-band by that mediator. Aligns with
+prompt-injection defenses like the dual-LLM pattern.
+
+**Rules:**
+- No scoped credentials in the agent process — creds live in separate-OS-user tool/MCP processes the agent cannot read.
+- The agent reaches external systems only through a trusted broker (gateway + egress fence), not direct network access.
+- Actor identity, confirmations, and audit stamps are applied out-of-band by the broker; anything in a model-produced tool-arg is untrusted for auth/audit/egress.
+- A permission allowlist on a shell-capable agent is a UX affordance, not containment — don't represent it as a security boundary.
+
+**Anti-patterns:**
+- Handing an agent env-var credentials and relying on a prompt/allowlist to keep it in bounds
+- Trusting a `confirmed: true` or `actor: "operator"` field the model wrote into a tool call
+- "Sandboxing" a full shell-capable agent as the isolation story
+
+### P-068. Design Boundaries Against the Observed Workflow, Ship Them Soft
+> Design security and validation boundaries around how people actually work, not the ideal workflow — and ship restrictive guards in a soft/audit mode so tightening is a flag flip, not a rework.
+
+A guard hardened against an idealized workflow gets flipped off the moment it collides with
+real behavior, discarding the review rounds that built it. Study the real workflow before
+choosing where the boundary sits, and ship the guard with a soft/audit mode (log-and-allow) so
+that when reality demands a change it's a config flip. This is guarded-rollout / feature-flag
+discipline applied to boundaries whose "producers" are humans.
+
+**Rules:**
+- Before placing a hard boundary, observe the actual workflow it constrains — where do people really create/move/edit the protected thing?
+- Ship restrictive guards with a soft/audit mode first; flipping to enforce is a flag, and the audit log tells you whether enforcement is safe yet.
+- Quantify the boundary's benefit in the real workflow before building the complexity it requires.
+- When a guard is flipped off shortly after ship, treat it as a design signal (wrong boundary), not operator error.
+
+**Anti-patterns:**
+- Review rounds hardening a guard against a workflow people don't follow
+- A boundary with only hard-enforce and off, no audit mode between
+- Shipping the ideal-world constraint and discovering the real workflow in the incident channel
+
+### P-069. Never Squash-Merge Across a Diverged Base
+> A feature branch built off base A, squash-merged into a diverged base B, silently drops code: the merge keeps B's version of concurrently-edited files with no conflict.
+
+When a branch's base has diverged from the target it merges into, a squash merge can resolve
+concurrently-edited files in favor of the target and discard the branch's changes — no
+conflict, no warning. The PR looks merged; only some files (often just docs) actually landed.
+
+**Rules:**
+- A change that must land in two diverged bases is applied to each explicitly — cherry-pick onto each, don't squash-merge one branch across a diverged base.
+- After any merge across possibly-diverged bases, verify the actual code is present (grep the result), not just that the PR shows "merged."
+- Rebase the branch onto the true target base before merging so the diff is computed against the right base.
+- Treat "only the docs landed" as the signature of this failure and re-check the code files.
+
+**Anti-patterns:**
+- Squash-merging a branch based on one base into a target that has diverged
+- Trusting the "merged" badge without grepping the result for the intended change
+- Building a feature branch off a base that isn't its actual merge target
