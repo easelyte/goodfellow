@@ -12,6 +12,7 @@ is captured null-separated. Asserts the review-correctness contract:
 """
 
 import os
+import shutil
 import stat
 import subprocess
 import tempfile
@@ -367,6 +368,34 @@ def test_claude_fallback_empty_output_emits_sentinel():
         assert last.split()[2] == "empty-output"
         # No banner-bearing artifact path handed back on a failed review.
         assert "REVIEWER" not in r.stdout
+
+
+def test_stderr_mktemp_failure_classified_as_mktemp_not_codex():
+    """Second (stderr) mktemp failing must report mktemp-failed, not codex-exec."""
+    real_mktemp = shutil.which("mktemp")
+    assert real_mktemp, "mktemp not on PATH"
+    with tempfile.TemporaryDirectory() as d:
+        tmp = Path(d)
+        b = Bridge(tmp)
+        # Shadow mktemp: the OUTFILE allocation (no 'err' in the template)
+        # succeeds via the real binary; the STDERR_TMP allocation ('err' in the
+        # template) fails — exercising the classification boundary.
+        mktemp_stub = (
+            "#!/usr/bin/env bash\n"
+            'if [[ "$*" == *err* ]]; then\n'
+            '  echo "mktemp: cannot create" >&2\n'
+            "  exit 1\n"
+            "fi\n"
+            f'exec {real_mktemp} "$@"\n'
+        )
+        _write_stub(b.bindir / "mktemp", mktemp_stub)
+        r = b.run(["--kind", "diff", "--uncommitted"])
+        assert r.returncode != 0
+        last = _stdout_last_line(r)
+        assert last.startswith("REVIEW_FAILED "), r.stdout
+        assert last.split()[2] == "mktemp-failed"
+        # Codex review was never invoked (only --version during the check).
+        assert not b.codex_argv_file.exists()
 
 
 CLAUDE_STUB_FAILS = """#!/usr/bin/env bash

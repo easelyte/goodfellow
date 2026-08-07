@@ -144,12 +144,15 @@ run_codex() {
   local review_prompt
   review_prompt=$(build_review_prompt)
 
-  FAIL_CLASS="codex-exec-failed"
   # Capture the reviewer's STDOUT (the actual review) into $OUTFILE and its
   # STDERR (diagnostics) separately, so stderr-only noise can never masquerade as
   # review content and defeat the empty-output guard below. On failure the
   # captured stderr is surfaced for debugging.
+  # Classify a failure of THIS allocation as mktemp-failed, not codex-exec-failed
+  # (Codex has not run yet) — only switch to codex-exec-failed just before invoke.
+  FAIL_CLASS="mktemp-failed"
   STDERR_TMP=$(mktemp /tmp/goodfellow-review-err-XXXXXX)
+  FAIL_CLASS="codex-exec-failed"
   local rc=0
   if [[ -n "$FILE" ]]; then
     # --file mode has no codex scope flag; embed the file body into the prompt
