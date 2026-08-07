@@ -30,17 +30,24 @@ set -euo pipefail
 # bracketed class or unknown-failure.
 FAIL_CLASS=""
 _sentinel_emitted=0
+STDERR_TMP=""
 
 on_exit() {
   local rc=$?
-  # Best-effort cleanup of the temp artifact when the run failed (on success the
-  # caller owns/reads $OUTFILE, so leave it alone).
-  if [[ "$rc" -ne 0 && -n "${OUTFILE:-}" && -e "${OUTFILE:-}" ]]; then
-    rm -f "$OUTFILE"
-  fi
+  # Emit the sentinel FIRST — before any cleanup — so an artifact-removal error
+  # (rm failing under `set -e`) can never abort the trap ahead of the
+  # authoritative failure signal. Cleanup below is explicitly non-fatal.
   if [[ "$rc" -ne 0 && "$_sentinel_emitted" != "1" ]]; then
     _sentinel_emitted=1
     printf 'REVIEW_FAILED %s %s\n' "$rc" "${FAIL_CLASS:-unknown-failure}"
+  fi
+  # Best-effort cleanup of temp files when the run failed (on success the caller
+  # owns/reads $OUTFILE, so leave it alone). Must never alter the exit status.
+  if [[ "$rc" -ne 0 && -n "${OUTFILE:-}" && -e "${OUTFILE:-}" ]]; then
+    rm -f "$OUTFILE" >/dev/null 2>&1 || :
+  fi
+  if [[ -n "${STDERR_TMP:-}" && -e "${STDERR_TMP:-}" ]]; then
+    rm -f "$STDERR_TMP" >/dev/null 2>&1 || :
   fi
 }
 trap on_exit EXIT
@@ -138,6 +145,11 @@ run_codex() {
   review_prompt=$(build_review_prompt)
 
   FAIL_CLASS="codex-exec-failed"
+  # Capture the reviewer's STDOUT (the actual review) into $OUTFILE and its
+  # STDERR (diagnostics) separately, so stderr-only noise can never masquerade as
+  # review content and defeat the empty-output guard below. On failure the
+  # captured stderr is surfaced for debugging.
+  STDERR_TMP=$(mktemp /tmp/goodfellow-review-err-XXXXXX)
   local rc=0
   if [[ -n "$FILE" ]]; then
     # --file mode has no codex scope flag; embed the file body into the prompt
@@ -150,17 +162,20 @@ Here is the $KIND to review (file: $FILE):
 \`\`\`
 $context
 \`\`\`"
-    timeout 300 "${args[@]}" "$full_prompt" > "$OUTFILE" 2>&1 || rc=$?
+    timeout 300 "${args[@]}" "$full_prompt" > "$OUTFILE" 2>"$STDERR_TMP" || rc=$?
   elif [[ -n "$COMMIT" || -n "$BASE" || -n "$UNCOMMITTED" ]]; then
     # codex exec review: scope flags reject positional PROMPT — pipe via stdin
-    echo "$review_prompt" | timeout 300 "${args[@]}" - > "$OUTFILE" 2>&1 || rc=$?
+    echo "$review_prompt" | timeout 300 "${args[@]}" - > "$OUTFILE" 2>"$STDERR_TMP" || rc=$?
   else
-    timeout 300 "${args[@]}" "$review_prompt" > "$OUTFILE" 2>&1 || rc=$?
+    timeout 300 "${args[@]}" "$review_prompt" > "$OUTFILE" 2>"$STDERR_TMP" || rc=$?
   fi
   if [[ $rc -ne 0 ]]; then
     echo "ERROR: Codex review timed out or failed (exit $rc)" >&2
+    cat "$STDERR_TMP" >&2 2>/dev/null || :
     exit 1
   fi
+  rm -f "$STDERR_TMP" >/dev/null 2>&1 || :
+  STDERR_TMP=""
   FAIL_CLASS=""
 }
 
@@ -185,15 +200,25 @@ Output: ## Verdict / ## Blockers / ## Major / ## Minor. Per-finding: cite sectio
     FAIL_CLASS="no-reviewer-available"; exit 1
   fi
 
-  local rc=0
-  {
-    echo "--- REVIEWER (single-model fallback, model: $MODEL) ---"
-    echo "$full_prompt" | timeout 300 claude --print --model "$MODEL" 2>/dev/null
-  } > "$OUTFILE" || rc=$?
+  # Capture the reviewer's output FIRST and validate it has real content BEFORE
+  # writing the wrapper banner. Writing the banner into $OUTFILE up-front would
+  # make the artifact non-empty even when the reviewer produced nothing, which
+  # would defeat the empty-output guard (a banner-only artifact reads as a clean
+  # review == silent LGTM).
+  local rc=0 reviewer_out
+  reviewer_out=$(echo "$full_prompt" | timeout 300 claude --print --model "$MODEL" 2>/dev/null) || rc=$?
   if [[ $rc -ne 0 ]]; then
     echo "ERROR: Claude fallback reviewer failed" >&2
     FAIL_CLASS="claude-fallback-failed"; exit 1
   fi
+  if ! printf '%s' "$reviewer_out" | grep -q '[^[:space:]]'; then
+    echo "ERROR: Claude fallback reviewer produced empty output" >&2
+    FAIL_CLASS="empty-output"; exit 1
+  fi
+  {
+    echo "--- REVIEWER (single-model fallback, model: $MODEL) ---"
+    printf '%s\n' "$reviewer_out"
+  } > "$OUTFILE"
 }
 
 if has_codex; then

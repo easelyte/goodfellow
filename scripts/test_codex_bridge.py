@@ -63,6 +63,28 @@ cat >/dev/null 2>&1 || true
 exit 0
 """
 
+# Version check passes, review exits 0 but writes ONLY to stderr (diagnostics,
+# no actual review on stdout). Merging stderr into the artifact would let this
+# masquerade as review content — the bridge must keep stderr separate so the
+# empty-output guard still fires.
+CODEX_STUB_STDERR_ONLY = """#!/usr/bin/env bash
+if [[ "$1" == "--version" ]]; then
+  echo "codex-cli 0.121.0"
+  exit 0
+fi
+printf '%s\\0' "$@" > "$GF_CODEX_ARGV"
+cat >/dev/null 2>&1 || true
+echo "some diagnostic noise on stderr" >&2
+exit 0
+"""
+
+# Claude reviewer exits 0 but emits nothing.
+CLAUDE_STUB_EMPTY = """#!/usr/bin/env bash
+printf '%s\\0' "$@" > "$GF_CLAUDE_ARGV"
+cat >/dev/null 2>&1 || true
+exit 0
+"""
+
 
 def _write_stub(path: Path, body: str) -> None:
     path.write_text(body)
@@ -313,6 +335,38 @@ def test_empty_review_output_emits_sentinel():
         last = _stdout_last_line(r)
         assert last.startswith("REVIEW_FAILED "), r.stdout
         assert last.split()[2] == "empty-output"
+
+
+def test_codex_stderr_only_success_still_emits_empty_output_sentinel():
+    """Codex exits 0 with output only on stderr — must NOT read as a clean review."""
+    with tempfile.TemporaryDirectory() as d:
+        tmp = Path(d)
+        b = Bridge(tmp, codex_body=CODEX_STUB_STDERR_ONLY)
+        r = b.run(["--kind", "diff", "--uncommitted"])
+        assert r.returncode != 0
+        last = _stdout_last_line(r)
+        assert last.startswith("REVIEW_FAILED "), r.stdout
+        assert last.split()[2] == "empty-output"
+        # stderr diagnostics must NOT have leaked onto stdout as a "path".
+        assert "diagnostic noise" not in r.stdout
+
+
+def test_claude_fallback_empty_output_emits_sentinel():
+    """Fallback reviewer exits 0 with no content — banner alone must not pass."""
+    with tempfile.TemporaryDirectory() as d:
+        tmp = Path(d)
+        spec = _spec_file(tmp, "# Spec\nbody\n")
+        b = Bridge(tmp, claude_body=CLAUDE_STUB_EMPTY)
+        r = b.run(
+            ["--kind", "spec", "--file", str(spec)],
+            env={"GOODFELLOW_CODEX": "0"},
+        )
+        assert r.returncode != 0
+        last = _stdout_last_line(r)
+        assert last.startswith("REVIEW_FAILED "), r.stdout
+        assert last.split()[2] == "empty-output"
+        # No banner-bearing artifact path handed back on a failed review.
+        assert "REVIEWER" not in r.stdout
 
 
 CLAUDE_STUB_FAILS = """#!/usr/bin/env bash
