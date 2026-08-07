@@ -39,6 +39,30 @@ echo "STUB CLAUDE REVIEW OUTPUT"
 exit 0
 """
 
+# Version check passes, but the actual review invocation exits nonzero.
+CODEX_STUB_EXEC_FAILS = """#!/usr/bin/env bash
+if [[ "$1" == "--version" ]]; then
+  echo "codex-cli 0.121.0"
+  exit 0
+fi
+printf '%s\\0' "$@" > "$GF_CODEX_ARGV"
+cat >/dev/null 2>&1 || true
+echo "boom" >&2
+exit 7
+"""
+
+# Version check passes, review "succeeds" (exit 0) but emits NOTHING — the
+# empty-output guard must convert this into a failed review, not a clean one.
+CODEX_STUB_EMPTY = """#!/usr/bin/env bash
+if [[ "$1" == "--version" ]]; then
+  echo "codex-cli 0.121.0"
+  exit 0
+fi
+printf '%s\\0' "$@" > "$GF_CODEX_ARGV"
+cat >/dev/null 2>&1 || true
+exit 0
+"""
+
 
 def _write_stub(path: Path, body: str) -> None:
     path.write_text(body)
@@ -48,12 +72,14 @@ def _write_stub(path: Path, body: str) -> None:
 class Bridge:
     """One bridge invocation with stubbed codex/claude and captured argv."""
 
-    def __init__(self, tmp: Path):
+    def __init__(
+        self, tmp: Path, codex_body: str = CODEX_STUB, claude_body: str = CLAUDE_STUB
+    ):
         self.tmp = tmp
         self.bindir = tmp / "bin"
         self.bindir.mkdir()
-        _write_stub(self.bindir / "codex", CODEX_STUB)
-        _write_stub(self.bindir / "claude", CLAUDE_STUB)
+        _write_stub(self.bindir / "codex", codex_body)
+        _write_stub(self.bindir / "claude", claude_body)
         self.codex_argv_file = tmp / "codex_argv"
         self.claude_argv_file = tmp / "claude_argv"
 
@@ -202,3 +228,113 @@ def test_claude_fallback_receives_claude_model():
         assert argv[argv.index("--model") + 1] == "opus"
         # Codex must not have been invoked.
         assert not b.codex_argv_file.exists()
+
+
+# --- Silent-ship sentinel: failed review is un-ignorable, never a clean pass --
+#
+# On ANY nonzero exit the bridge must print exactly one stdout line
+#   REVIEW_FAILED <exit_code> <class>
+# where the artifact path normally goes — so a caller reading the last stdout
+# line gets a non-path token and hard-errors instead of proceeding with zero
+# findings under a false LGTM. The success path must stay byte-identical (only
+# the artifact path on stdout, no sentinel).
+
+
+def _stdout_last_line(r):
+    lines = [ln for ln in r.stdout.splitlines() if ln.strip()]
+    return lines[-1] if lines else ""
+
+
+def test_success_path_stdout_is_only_the_artifact_path():
+    """Clean run: last (and only) stdout line is a real file path, no sentinel."""
+    with tempfile.TemporaryDirectory() as d:
+        tmp = Path(d)
+        spec = _spec_file(tmp, "# Spec\nbody\n")
+        b = Bridge(tmp)
+        r = b.run(["--kind", "spec", "--file", str(spec)])
+        assert r.returncode == 0, r.stderr
+        out_lines = [ln for ln in r.stdout.splitlines() if ln.strip()]
+        assert len(out_lines) == 1, f"success stdout not single-line: {out_lines}"
+        path = out_lines[0]
+        assert not path.startswith("REVIEW_FAILED")
+        assert Path(path).is_file(), f"success stdout is not a real path: {path!r}"
+
+
+def test_bad_args_emit_sentinel_not_path():
+    with tempfile.TemporaryDirectory() as d:
+        tmp = Path(d)
+        b = Bridge(tmp)
+        r = b.run(["--kind", "diff", "--bogus-flag"])
+        assert r.returncode != 0
+        last = _stdout_last_line(r)
+        assert last.startswith("REVIEW_FAILED "), r.stdout
+        parts = last.split()
+        assert parts[0] == "REVIEW_FAILED"
+        assert parts[1] == str(r.returncode)
+        assert parts[2] == "bad-args"
+        # No path-like token anywhere on stdout.
+        assert "/" not in r.stdout
+
+
+def test_missing_file_emits_sentinel_bad_args():
+    with tempfile.TemporaryDirectory() as d:
+        tmp = Path(d)
+        b = Bridge(tmp)
+        r = b.run(["--kind", "spec", "--file", str(tmp / "nope.md")])
+        assert r.returncode != 0
+        last = _stdout_last_line(r)
+        assert last.startswith("REVIEW_FAILED ")
+        assert last.split()[2] == "bad-args"
+        assert "not found" in r.stderr.lower()
+
+
+def test_codex_exec_failure_emits_sentinel():
+    with tempfile.TemporaryDirectory() as d:
+        tmp = Path(d)
+        b = Bridge(tmp, codex_body=CODEX_STUB_EXEC_FAILS)
+        r = b.run(["--kind", "diff", "--uncommitted"])
+        assert r.returncode != 0
+        last = _stdout_last_line(r)
+        assert last.startswith("REVIEW_FAILED "), r.stdout
+        parts = last.split()
+        assert parts[1] == str(r.returncode)
+        assert parts[2] == "codex-exec-failed"
+        # The real artifact path must NOT be on stdout on a failed run.
+        assert "/tmp/goodfellow-review-" not in r.stdout
+
+
+def test_empty_review_output_emits_sentinel():
+    """codex exits 0 but produces nothing — must NOT read as a clean review."""
+    with tempfile.TemporaryDirectory() as d:
+        tmp = Path(d)
+        b = Bridge(tmp, codex_body=CODEX_STUB_EMPTY)
+        r = b.run(["--kind", "diff", "--uncommitted"])
+        assert r.returncode != 0
+        last = _stdout_last_line(r)
+        assert last.startswith("REVIEW_FAILED "), r.stdout
+        assert last.split()[2] == "empty-output"
+
+
+CLAUDE_STUB_FAILS = """#!/usr/bin/env bash
+printf '%s\\0' "$@" > "$GF_CLAUDE_ARGV"
+cat >/dev/null 2>&1 || true
+echo "claude boom" >&2
+exit 9
+"""
+
+
+def test_claude_fallback_failure_emits_sentinel():
+    """Codex off + the Claude reviewer errors → sentinel, not a path."""
+    with tempfile.TemporaryDirectory() as d:
+        tmp = Path(d)
+        spec = _spec_file(tmp, "# Spec\nbody\n")
+        # Bridge's stubbed claude (prepended to PATH) shadows any real claude.
+        b = Bridge(tmp, claude_body=CLAUDE_STUB_FAILS)
+        r = b.run(
+            ["--kind", "spec", "--file", str(spec)],
+            env={"GOODFELLOW_CODEX": "0"},
+        )
+        assert r.returncode != 0
+        last = _stdout_last_line(r)
+        assert last.startswith("REVIEW_FAILED "), r.stdout
+        assert last.split()[2] == "claude-fallback-failed"

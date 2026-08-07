@@ -76,6 +76,8 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/codex-bridge.sh" --kind spec --file <spec-pa
 
 If Codex is absent, the bridge falls back to a single Claude reviewer automatically — but because the lens is passed via `-- <prompt>`, that fallback reviewer still runs the correctness lens. So in no-Codex fallback mode (both reviewers are Claude) the two lenses still apply, preserving lens diversity even without model diversity.
 
+**Failed-review contract:** on success the bridge prints an artifact path on stdout; if it exits nonzero it prints `REVIEW_FAILED <code> <class>` instead. Treat that as a FAILED review round, never clean/LGTM — reject the `REVIEW_FAILED` prefix before any read, surface it, and stop the round rather than counting an empty result as convergence.
+
 ## 1.5 Research injection (between round 1 and round 2 only)
 
 After round 1 findings return, extract load-bearing factual claims:

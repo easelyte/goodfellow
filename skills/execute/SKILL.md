@@ -109,6 +109,8 @@ At the end of each phase, optionally run a quick review:
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/codex-bridge.sh" --kind diff --uncommitted
 ```
 
+**Failed-review contract:** if the bridge exits nonzero it prints `REVIEW_FAILED <code> <class>` instead of an artifact path. Treat that as a FAILED review, never clean/LGTM — reject the `REVIEW_FAILED` prefix before any read, surface it, and stop; do not treat a failed review as a clean phase boundary.
+
 Surface any findings. Fix blockers before proceeding to next phase.
 
 In interactive mode, pause briefly: "Phase N complete. M tasks done. Continuing to Phase N+1."

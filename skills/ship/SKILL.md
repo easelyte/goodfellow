@@ -37,6 +37,8 @@ Multi-round adversarial review on the diff. Same convergence algorithm as spec-r
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/codex-bridge.sh" --kind diff --uncommitted
 ```
 
+**Failed-review contract:** if the bridge exits nonzero it prints `REVIEW_FAILED <code> <class>` instead of an artifact path. Treat that as a FAILED review, never clean/LGTM — reject the `REVIEW_FAILED` prefix before any read, surface it, and stop (do NOT proceed to PR/merge). A failed review is not a passed one.
+
 ### Quick mode (`--quick`)
 Single-round review for diffs <50 net changed lines. Safety-critical findings in quick mode still block PR and get filed as loops.
 
