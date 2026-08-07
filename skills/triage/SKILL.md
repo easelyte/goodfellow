@@ -38,6 +38,8 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/codex-bridge.sh" --kind diff --uncommitted -
 
 Both reviewers are independent — neither sees the other's output. Collect both verdicts per loop, then reconcile each loop with the table in §3 (reconciliation is unchanged; it is still per-loop).
 
+**Failed-review contract (Reviewer 2):** on success the bridge prints an artifact path on stdout; if it exits nonzero it prints `REVIEW_FAILED <code> <class>` instead. Treat that as a FAILED assessment, never clean/LGTM — reject the `REVIEW_FAILED` prefix before any read, surface it, and skip that loop's Reviewer-2 verdict (fall back to Reviewer 1 / re-run) rather than recording an empty result as a verdict.
+
 ## 3. Reconciliation
 
 | Reviewer 1 + Reviewer 2 | Result | Confidence |
