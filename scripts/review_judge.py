@@ -82,7 +82,10 @@ class GeneratorFinding:
 
     @property
     def severity(self) -> str:
-        return str(self.block.get("severity", "")).lower()
+        # Normalize before compare: a generator that emits `"blocker "` (trailing
+        # whitespace) or `"Blocker"` must NOT slip past is_blocker into a Tier-2
+        # drop — the blocker-retention guarantee depends on this comparison.
+        return str(self.block.get("severity", "")).strip().lower()
 
     @property
     def is_blocker(self) -> bool:

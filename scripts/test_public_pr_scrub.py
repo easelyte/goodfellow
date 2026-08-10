@@ -103,3 +103,35 @@ def test_resolve_precedence_explicit_over_env(tmp_path, monkeypatch):
     monkeypatch.setenv("GOODFELLOW_INTERNAL_DENYLIST", str(tmp_path / "env.txt"))
     resolved = gate.resolve_denylist_path(str(explicit), tmp_path)
     assert resolved == explicit
+
+
+# --- Fail-closed on an uncomputable diff (B1) -------------------------------
+# A security gate must NEVER report clean when it scanned nothing. An invalid /
+# unknown base makes `git diff <base>...HEAD` fail; the gate must exit 2
+# (fail-closed), not scan empty stdout and exit 0.
+def test_invalid_base_fails_closed(tmp_path):
+    repo = _repo(tmp_path)
+    _feature_commit(repo, "b.txt", "leak: ACME-INTERNAL host\n")
+    dl = _denylist(tmp_path, "ACME-INTERNAL")
+    rc = gate.main(
+        ["--workdir", str(repo), "--base", "DOES_NOT_EXIST_REF", "--denylist", str(dl)]
+    )
+    assert rc == 2  # NOT 0 — the diff could not be built, so nothing was scanned
+
+
+def test_added_lines_raises_on_bad_base(tmp_path):
+    repo = _repo(tmp_path)
+    _feature_commit(repo, "b.txt", "anything\n")
+    import pytest
+
+    with pytest.raises(gate.ScrubError):
+        gate.added_lines(repo, "NO_SUCH_REF")
+
+
+def test_non_repo_workdir_fails_closed(tmp_path):
+    # A non-repository workdir → git diff errors → fail-closed, never clean.
+    plain = tmp_path / "not_a_repo"
+    plain.mkdir()
+    dl = _denylist(tmp_path, "ACME-INTERNAL")
+    rc = gate.main(["--workdir", str(plain), "--base", "main", "--denylist", str(dl)])
+    assert rc == 2

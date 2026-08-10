@@ -685,6 +685,39 @@ def test_decision_removes_conjunction_orphan_prose():
     assert rj.drop_leaves_orphan_prose(text, findings, decisions) is True
 
 
+# --------------------------- severity normalization (B3) ----------------------
+# A generator that emits a malformed severity (trailing whitespace / mixed case)
+# must NOT slip a real blocker into a Tier-2 drop: is_blocker normalizes before
+# comparing, so blocker retention holds regardless of formatting.
+@pytest.mark.parametrize(
+    "sev", ["blocker ", " blocker", "Blocker", "BLOCKER", "blocker\t"]
+)
+def test_whitespace_or_case_severity_is_blocker(sev):
+    f = rj.GeneratorFinding("F1", {"finding_id": "F1", "severity": sev}, "", 0, 0)
+    assert f.severity == "blocker"
+    assert f.is_blocker is True
+
+
+def test_malformed_blocker_severity_retained_not_dropped():
+    """A blocker whose severity carries trailing whitespace, dropped by the judge
+    below-threshold, must be RETAIN-ANNOTATED (never silently dropped as Tier-2)."""
+    text = _gen(_block("F1", "blocker ", normalized_text="Real blocker."))
+    _, findings, _ = rj.check_generator_contract(text)
+    decisions = [
+        {
+            "finding_id": "F1",
+            "decision": "drop",
+            "judge_score": 2,
+            "drop_reason": "below-threshold",
+            "reclassified_to": None,
+        }
+    ]
+    validate_decisions(decisions, ["F1"])
+    res = rj.reconcile(text, findings, decisions)
+    assert '"finding_id": "F1"' in res.reconciled_text  # blocker never lost
+    assert res.audit_rows[0]["decision"] == "retain-annotated"
+
+
 # --------------------------- strict validation --------------------------------
 @pytest.mark.parametrize(
     "bad",

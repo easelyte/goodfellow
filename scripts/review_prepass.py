@@ -346,22 +346,33 @@ def _invocation(
             *[str(base_dir / f) for f in target_files],
         ]
     if analyzer.name == "semgrep":
+        # `--json` → machine-readable {"results": [...]} on stdout, which
+        # _parse_semgrep consumes. Without it semgrep prints a human-readable
+        # report the parser cannot read, silently dropping every finding.
         return [
             "semgrep",
             "--config",
             str(PINNED_SEMGREP_CONFIG),
+            "--json",
             "--metrics=off",
             "--disable-version-check",
             *[str(base_dir / f) for f in target_files],
         ]
     if analyzer.name == "gitleaks":
         # Modern non-deprecated invocation; NEVER `detect` / `protect --staged`.
+        # `--report-format json --report-path /dev/stdout` emits the JSON array
+        # _parse_gitleaks consumes on stdout; without it gitleaks writes only a
+        # human log to stderr, so real leaks never reach the digest.
         return [
             "gitleaks",
             "git",
             f"--log-opts={history_log_opts or ''}",
             "--config",
             str(PINNED_GITLEAKS_CONFIG),
+            "--report-format",
+            "json",
+            "--report-path",
+            "/dev/stdout",
             "--no-banner",
         ]
     if analyzer.name == "eslint":

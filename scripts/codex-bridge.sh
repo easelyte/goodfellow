@@ -116,6 +116,28 @@ check_version() {
 # boundary WITHOUT the enrichment (D2 full files / D1 digest) that CTX_TMP gains.
 build_context() {
   : > "$HUNKS_TMP"
+
+  # --- Primary-context capture (FAIL-CLOSED for --commit / --base) ------------
+  # The diff/commit IS the review's ground truth. `git diff`/`git show` return
+  # nonzero ONLY on error (bad/unknown ref, shallow history with no merge-base,
+  # non-repo) — a non-empty diff still exits 0 — so a nonzero code means the
+  # requested change could not be captured. We must NOT fall back to "reviewing"
+  # a `(could not diff …)` error string and returning exit 0: a ship caller reads
+  # exit 0 as a passed gate. Fail LOUD via the REVIEW_FAILED sentinel instead.
+  # D1/D2 enrichment (enrich_context) stays best-effort — its failure is
+  # non-fatal and degrades to the plain diff, per its own contract.
+  if [[ -n "$COMMIT" ]]; then
+    if ! git show --no-ext-diff "$COMMIT" > "$HUNKS_TMP" 2>>"$LOG"; then
+      echo "ERROR: could not read commit '$COMMIT' (bad ref / shallow history)" >&2
+      FAIL_CLASS="bad-review-target"; exit 7
+    fi
+  elif [[ -n "$BASE" ]]; then
+    if ! git diff --no-ext-diff "$BASE"...HEAD > "$HUNKS_TMP" 2>>"$LOG"; then
+      echo "ERROR: could not diff against '$BASE' (bad ref / shallow history / no merge-base)" >&2
+      FAIL_CLASS="bad-review-target"; exit 7
+    fi
+  fi
+
   {
     if [[ -n "$FILE" ]]; then
       echo "**Mode:** single file review — \`$FILE\`"
@@ -126,14 +148,12 @@ build_context() {
     elif [[ -n "$COMMIT" ]]; then
       echo "**Mode:** single commit \`$COMMIT\`"
       echo ""
-      git show --no-ext-diff "$COMMIT" > "$HUNKS_TMP" 2>/dev/null || echo "(could not read commit $COMMIT)" > "$HUNKS_TMP"
       echo '```diff'
       cat "$HUNKS_TMP"
       echo '```'
     elif [[ -n "$BASE" ]]; then
       echo "**Mode:** branch diff against \`$BASE\`"
       echo ""
-      git diff --no-ext-diff "$BASE"...HEAD > "$HUNKS_TMP" 2>/dev/null || echo "(could not diff against $BASE)" > "$HUNKS_TMP"
       echo '```diff'
       cat "$HUNKS_TMP"
       echo '```'

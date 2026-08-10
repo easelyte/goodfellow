@@ -23,7 +23,9 @@ and absolute paths, internal ticket/PR-number forms, internal rule-id citation
 forms, anything that should never ship to a public repo.
 
 Exit codes: 0 clean (or no denylist and not --require-denylist); 1 hits found
-(BLOCK the PR); 2 usage / no denylist while --require-denylist.
+(BLOCK the PR); 2 fail-closed — usage, no denylist while --require-denylist, OR
+the diff could not be computed (bad/unknown base, shallow clone, non-repo) so
+nothing was actually scanned.
 """
 
 from __future__ import annotations
@@ -56,6 +58,17 @@ def resolve_denylist_path(
     return None
 
 
+class ScrubError(RuntimeError):
+    """The diff to scan could not be computed — the gate must fail CLOSED.
+
+    A security gate that reports 'clean' when it in fact scanned NOTHING (an
+    invalid/unknown base, shallow history with no merge-base, a non-repo) is
+    worse than useless: it authorizes publishing without inspection. Raising
+    this drives the CLI to the same fail-closed exit code (2) as a missing
+    denylist under --require-denylist.
+    """
+
+
 def _git(workdir: Path, args: List[str]) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["git", "-C", str(workdir), *args], capture_output=True, text=True
@@ -74,8 +87,19 @@ def default_base(workdir: Path) -> str:
 
 
 def added_lines(workdir: Path, base: str) -> str:
-    """The '+' added lines of `git diff <base>...HEAD` (leading '+' stripped)."""
+    """The '+' added lines of `git diff <base>...HEAD` (leading '+' stripped).
+
+    FAIL-CLOSED: `git diff` returns nonzero ONLY on error (a bad/unknown base, a
+    shallow clone with no merge-base, a non-repo) — a non-empty diff still exits
+    0. So a nonzero return code means the scan target could not be built; raise
+    ScrubError rather than scan the (empty) stdout and falsely report clean.
+    """
     proc = _git(workdir, ["diff", f"{base}...HEAD"])
+    if proc.returncode != 0:
+        raise ScrubError(
+            f"git diff against {base!r} failed (rc={proc.returncode}): "
+            f"{proc.stderr.strip() or 'unknown git error'}"
+        )
     out: List[str] = []
     for line in proc.stdout.splitlines():
         if line.startswith("+") and not line.startswith("+++"):
@@ -120,7 +144,15 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     denylist = load_denylist(Path(dl_path))
     base = args.base or default_base(workdir)
-    hits = scan_diff(workdir, base, denylist)
+    try:
+        hits = scan_diff(workdir, base, denylist)
+    except ScrubError as exc:
+        # Fail CLOSED: never report clean when the diff could not be computed.
+        print(f"BLOCK: {exc}", file=sys.stderr)
+        return 2
+    except OSError as exc:
+        print(f"BLOCK: could not run git ({exc})", file=sys.stderr)
+        return 2
     if hits:
         print(f"INTERNAL-REF HITS in the diff vs {base} (denylist {dl_path}):")
         for h in hits:
