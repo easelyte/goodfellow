@@ -16,35 +16,20 @@ principle prose ("review", "store", "view") untouched.
 """
 
 import pathlib
-import re
+
+from egress_scan import load_denylist, phrase_hits as _phrase_hits
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
-# PB2: parse LINE-BY-LINE (phrase-preserving), NOT .split() — otherwise
-# "loop store" / "mission control" tokenize to "store"/"control" and false-positive
-# on legit words (e.g. source P-048 "Authoritative Store Beats Local Mirror").
-DENY = [
-    l.strip()
-    for l in (ROOT / "scripts" / "egress_denylist.txt").read_text().splitlines()
-    if l.strip() and not l.startswith("#")
-]
+# The word-boundary matcher + line-by-line denylist parser are shared with the
+# public-PR scrub gate (scripts/egress_scan.py) — ONE mechanism, two callers.
+DENY = load_denylist(ROOT / "scripts" / "egress_denylist.txt")
 
 
 def _principle_text():
     return "\n".join(
         p.read_text() for p in sorted((ROOT / "knowledge").glob("principles*.md"))
     )
-
-
-def _phrase_hits(phrase, text):
-    """Case-insensitive denylist match. Word-boundary aware ONLY on edges that are
-    word characters: 'VIE' matches 'VIE'/'VIE.' but not 'review'/'viewport'.
-    Path-like entries whose edge is a non-word char (e.g. '/root/') get NO boundary
-    on that side, so '/root/' correctly matches '/root/workspace' — a word-boundary
-    lookahead there would fail on the following 'w' and let the path leak (R4 fix)."""
-    left = r"(?<![\w-])" if re.match(r"[\w-]", phrase) else ""
-    right = r"(?![\w-])" if re.search(r"[\w-]\Z", phrase) else ""
-    return re.search(left + re.escape(phrase) + right, text, re.IGNORECASE) is not None
 
 
 def test_no_denylisted_phrases_in_seed():
@@ -96,11 +81,7 @@ def test_root_path_prefix_is_caught(tmp_path):
 # preserved tooling is not red-gated.
 # ---------------------------------------------------------------------------
 
-CODE_DENY = [
-    l.strip()
-    for l in (ROOT / "scripts" / "egress_denylist_code.txt").read_text().splitlines()
-    if l.strip() and not l.startswith("#")
-]
+CODE_DENY = load_denylist(ROOT / "scripts" / "egress_denylist_code.txt")
 
 
 def _code_files():

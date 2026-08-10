@@ -103,6 +103,16 @@ Soft cap check: if >15 active loops, warn "loop backlog growing — consider /go
 
 ## 6. Create PR
 
+**Public / not-solely-owned target?** If this PR targets a repo you do not solely
+control (a fork → upstream, an OSS contribution, any public repo), run the
+`public-pr` gate FIRST — it scrubs the diff against your internal-ref denylist and
+gives the correct cross-fork `gh pr create` mechanics. Skip it for your own repo.
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/public_pr_scrub.py" --base "$BASE" || {
+  echo "internal-ref scrub failed — do not open the public PR" >&2; exit 1; }
+```
+
 Create the PR with convergence and verifier stats in the description:
 
 ```
