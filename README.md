@@ -219,6 +219,50 @@ The [Codex CLI](https://github.com/openai/codex) is where the real adversarial v
 
 These are practical recommendations from daily use, not formal benchmarks.
 
+### Why Codex specifically: cost
+
+A second, *independent* model reviewing the change beats one model reviewing its
+own work — it catches the failures the author's model rationalized away. The
+reason to make that second model Codex is **cost**:
+
+- **Near-zero marginal cost.** Run direct via the Codex API, per-token pricing is
+  low; run it through a Codex CLI subscription, the included limits are generous
+  enough that an adversarial pass on every change is effectively free at the
+  margin. You are not paying premium-model rates to review every diff.
+- **A different model family** from the one writing the code, so its blind spots
+  differ — the whole point of an adversarial second opinion.
+- **The result:** adversarial review you can afford to run on *every* change, plus
+  a second grounding pass (below) that drops the reviewer's own weak findings, at
+  the same near-zero marginal cost.
+
+### Two-stage generator + judge
+
+On the Codex path, `codex-review` (and the review step of `execute`/`ship`) runs
+two passes: a **generator** emits structured per-finding blocks, then a **judge**
+grounds-or-drops each one (evidence + confidence threshold + diff-boundary scope).
+A real blocker is never silently dropped — any judge/validation problem fails OPEN
+to the unjudged findings plus a degradation banner. The final review carries a
+`## Judge audit` table. The single-Claude fallback path is UNJUDGED and says so.
+
+### Optional static-analysis pre-pass (D1)
+
+For `--commit` and `--base` code reviews the bridge can prepend a deterministic
+static-analysis digest (as corroborating signal, not the finding list). Every
+analyzer is **optional and auto-detected** — if the binary is not installed the
+pre-pass skips it with a note and the review proceeds. Install whichever you want:
+
+| Tool | Detects | Runs by default |
+|---|---|---|
+| [`ruff`](https://github.com/astral-sh/ruff) | Python lint (`--isolated`, no repo config) | Yes, if installed |
+| [`shellcheck`](https://www.shellcheck.net/) | Shell lint (`--norc`, no repo config) | Yes, if installed |
+| [`gitleaks`](https://github.com/gitleaks/gitleaks) | Secrets in the reviewed history | Yes, if installed (uses the vendored `configs/gitleaks.toml`) |
+| [`semgrep`](https://github.com/semgrep/semgrep) | Generic footguns (vendored local ruleset, never `--config auto`) | Yes, if installed |
+| `eslint` / `tsc` / `mypy` | JS/TS/Python (executing analyzers) | Only with `GOODFELLOW_TRUST_ANALYZERS=1` |
+
+Executing analyzers (`eslint`/`tsc`/`mypy`) stay OFF by default — they load
+project config and execute in the repo; opt in with `GOODFELLOW_TRUST_ANALYZERS=1`
+only for repos you trust.
+
 ```bash
 # Force-disable Codex even when installed
 GOODFELLOW_CODEX=0
@@ -254,7 +298,10 @@ GOODFELLOW_REVIEW_MODEL=haiku   # Quick passes on small diffs
 |---|---|---|
 | `GOODFELLOW_AUTOPILOT` | unset | `1` for full auto, `dry-run` for observe mode |
 | `GOODFELLOW_CODEX` | `1` | `0` to force-disable Codex |
-| `GOODFELLOW_REVIEW_MODEL` | `sonnet` | Claude reviewer model: `sonnet`, `opus`, `haiku` |
+| `GOODFELLOW_CODEX_MODEL` | unset | GPT model id for the Codex path only (unset → codex default). Never receives a Claude model name. |
+| `GOODFELLOW_REVIEW_MODEL` | `sonnet` | Claude reviewer model: `sonnet`, `opus`, `haiku` (Claude fallback only) |
+| `GOODFELLOW_TRUST_ANALYZERS` | unset | `1` enables the executing D1 analyzers (`eslint`/`tsc`/`mypy`) — only for trusted repos |
+| `GOODFELLOW_CODEX_STAGE_TIMEOUT` | `300` | Per-stage Codex timeout (seconds). The pipeline runs Codex twice (generator + judge), so total wall-clock is up to 2×. |
 | `GOODFELLOW_TAVILY_KEY` | unset | Tavily API key for batch research verification (optional — falls back to WebSearch) |
 | `GOODFELLOW_TRIAGE_RETENTION_DAYS` | `90` | Days to keep closed-loop triage entries |
 | `GOODFELLOW_RUNS_RETENTION_DAYS` | `90` | Days to keep autopilot run logs |

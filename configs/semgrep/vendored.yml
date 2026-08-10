@@ -1,0 +1,37 @@
+# Vendored, pinned semgrep ruleset for the codex adversarial-review D1 pre-pass.
+#
+# Why vendored: D1 must run semgrep with a pinned local ruleset and NEVER
+# `--config auto` (which downloads + executes registry rules over the network —
+# an untrusted-diff execution/egress hazard). This directory is the only
+# `--config` target (`semgrep --config configs/semgrep/ --metrics=off`).
+#
+# semgrep is an OPTIONAL analyzer — tool-present-gated. If semgrep is not
+# installed, the pre-pass skips it gracefully with a note. The seed set below is
+# intentionally small + generic (language-agnostic footguns); expand it as you
+# like — the rules are your own local ruleset, no registry required.
+
+rules:
+  - id: python-eval-call
+    languages: [python]
+    severity: WARNING
+    message: >-
+      Use of eval() on a runtime value can execute arbitrary code. Prefer
+      ast.literal_eval or an explicit parser.
+    pattern: eval(...)
+
+  - id: python-subprocess-shell-true
+    languages: [python]
+    severity: WARNING
+    message: >-
+      subprocess call with shell=True can enable shell injection if any argument
+      is attacker-influenced. Pass an argv list and shell=False.
+    patterns:
+      - pattern: subprocess.$FN(..., shell=True, ...)
+
+  - id: js-inner-html-assignment
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: >-
+      Assigning to innerHTML with a non-literal can introduce XSS. Use
+      textContent or a sanitizer.
+    pattern: $EL.innerHTML = $X

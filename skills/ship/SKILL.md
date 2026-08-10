@@ -34,7 +34,12 @@ Multi-round adversarial review on the diff. Same convergence algorithm as spec-r
 - Hard cap 6 rounds
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/codex-bridge.sh" --kind diff --uncommitted
+OUT=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/codex-bridge.sh" --kind diff --uncommitted) || {
+  echo "review bridge failed: $OUT" >&2; exit 1; }
+case "$OUT" in REVIEW_FAILED\ *) echo "review bridge failed: $OUT" >&2; exit 1 ;; esac
+# On success $OUT is the review-artifact path; the Codex path is judged (see its
+# `## Judge audit` section). Reject the REVIEW_FAILED sentinel before reading —
+# never treat a failed review as an empty (zero-findings) pass.
 ```
 
 **Failed-review contract:** if the bridge exits nonzero it prints `REVIEW_FAILED <code> <class>` instead of an artifact path. Treat that as a FAILED review, never clean/LGTM — reject the `REVIEW_FAILED` prefix before any read, surface it, and stop (do NOT proceed to PR/merge). A failed review is not a passed one.
@@ -97,6 +102,16 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/loop_store.py" --root . add "<title>" --p
 Soft cap check: if >15 active loops, warn "loop backlog growing — consider /goodfellow:triage".
 
 ## 6. Create PR
+
+**Public / not-solely-owned target?** If this PR targets a repo you do not solely
+control (a fork → upstream, an OSS contribution, any public repo), run the
+`public-pr` gate FIRST — it scrubs the diff against your internal-ref denylist and
+gives the correct cross-fork `gh pr create` mechanics. Skip it for your own repo.
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/public_pr_scrub.py" --base "$BASE" || {
+  echo "internal-ref scrub failed — do not open the public PR" >&2; exit 1; }
+```
 
 Create the PR with convergence and verifier stats in the description:
 
