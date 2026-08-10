@@ -1,0 +1,36 @@
+# Egress denylist for shipped code + skills + configs (public repo).
+#
+# SEPARATE from egress_denylist.txt (which guards knowledge/principles*.md). This
+# list is scanned over scripts/ (non-test), skills/, configs/, and README.md — the
+# surface the codex-review port lands on. It lists ONLY upstream-INTERNAL terms.
+#
+# It deliberately EXCLUDES goodfellow's own sanctioned vocabulary that the
+# knowledge denylist blocks — e.g. `loop store` / `loop_store`: goodfellow
+# legitimately HAS a loop store (scripts/loop_store.py, skills/ship). Reusing the
+# knowledge denylist here would red-gate goodfellow's own tooling. `/root/` is
+# likewise omitted here (it appears only in the knowledge-egress test's own
+# fixtures, which this scan does not cover).
+#
+# One phrase per line. Lines starting with # are comments. Matching is
+# whole-word/phrase, case-insensitive (see test_seed_egress.py).
+son-of-anton
+Son of Anton
+matron
+matron-bridge
+MATRON_
+OPERATOR_BRIDGE
+MATRON_CODEX_SINK
+SNAFU
+snafu-studio
+vladfilms
+nipple-pie
+mission control
+VIE
+.openclaw
+/opt/matron
+vmi3096107
+217.216
+100.127
+RULES.md
+universal-design-principles
+gpt-5.6-sol

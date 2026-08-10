@@ -1,0 +1,17 @@
+# Vendored, pinned gitleaks config for the codex adversarial-review D1 pre-pass.
+#
+# Why vendored: the D1 pre-pass must never load a branch-controlled
+# `.gitleaks.toml` from the reviewed diff (that config can redirect rules /
+# allowlists). This file is the ONLY config gitleaks is pointed at
+# (`gitleaks git --log-opts=... --config <this> --no-banner`). It extends
+# gitleaks' built-in default ruleset (no network fetch) so the standard secret
+# detectors apply without trusting the branch.
+#
+# gitleaks is an OPTIONAL analyzer — it is tool-present-gated. If gitleaks is not
+# installed, the pre-pass skips it gracefully with a note; it is never required.
+
+title = "goodfellow vendored gitleaks config (codex review pre-pass)"
+
+[extend]
+# Pull in gitleaks' embedded default rules without any network/registry fetch.
+useDefault = true

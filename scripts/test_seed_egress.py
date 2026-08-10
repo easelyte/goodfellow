@@ -84,3 +84,58 @@ def test_root_path_prefix_is_caught(tmp_path):
     assert any(
         _phrase_hits(phrase, "leak: /root/workspace/goodfellow/x") for phrase in DENY
     )
+
+
+# ---------------------------------------------------------------------------
+# Code / skills / configs egress scan (separate, narrower denylist).
+#
+# The knowledge denylist above guards knowledge/principles*.md. This second scan
+# guards the SHIPPED code surface (scripts/ non-test, skills/, configs/,
+# README.md) against upstream-internal leakage, using a denylist that EXCLUDES
+# goodfellow's own sanctioned vocabulary (e.g. loop_store) so the port's own
+# preserved tooling is not red-gated.
+# ---------------------------------------------------------------------------
+
+CODE_DENY = [
+    l.strip()
+    for l in (ROOT / "scripts" / "egress_denylist_code.txt").read_text().splitlines()
+    if l.strip() and not l.startswith("#")
+]
+
+
+def _code_files():
+    files = []
+    # scripts/: shipped .py (NOT test_*.py — tests carry deliberate negative-
+    # assertion tokens) + .sh
+    for p in sorted((ROOT / "scripts").glob("*.py")):
+        if not p.name.startswith("test_"):
+            files.append(p)
+    files.extend(sorted((ROOT / "scripts").glob("*.sh")))
+    files.extend(sorted((ROOT / "skills").rglob("*.md")))
+    files.extend(sorted((ROOT / "configs").rglob("*")))
+    readme = ROOT / "README.md"
+    if readme.exists():
+        files.append(readme)
+    return [p for p in files if p.is_file()]
+
+
+def test_no_internal_refs_in_shipped_code():
+    leaks = []
+    for path in _code_files():
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        for phrase in CODE_DENY:
+            if _phrase_hits(phrase, text):
+                leaks.append(f"{path.relative_to(ROOT)}: {phrase}")
+    assert not leaks, f"internal-ref leak in shipped code: {leaks}"
+
+
+def test_code_denylist_excludes_goodfellow_own_vocab():
+    # goodfellow's own tooling nouns must NOT be in the code denylist, or the scan
+    # red-gates the port's preserved loop-store references.
+    lowered = [d.lower() for d in CODE_DENY]
+    assert "loop store" not in lowered
+    assert "loop_store" not in lowered
+
+
+def test_code_scan_catches_a_known_internal_string():
+    assert any(_phrase_hits(p, "wired into the matron bridge sink") for p in CODE_DENY)
