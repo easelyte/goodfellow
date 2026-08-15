@@ -131,18 +131,34 @@ Only `real` findings proceed to fix. Stale/noise get noted but not fixed.
 
 Declare convergence when new findings drop from safety-critical to polish-tier.
 
-**Hard cap:** 6 rounds. At hard cap:
-- Safety-critical findings remain → halt, recommend rewrite
-- Only non-blocking findings → declare convergence, note deferred findings
-- No findings → converge
+**Hard cap:** 6 rounds. The cap is a terminal state, `resolved | limit_reached` — reaching it
+is a limit, never convergence (P-079). At hard cap:
+- Safety-critical findings remain → `limit_reached`: halt, recommend rewrite
+- Only non-blocking findings → `limit_reached`: stop the loop, note deferred findings; §6
+  reports this as a limit, NOT convergence
+- No findings → `resolved` (genuine convergence)
 
 **Confidence promotion:** if spec-review resolves all architecture-changing unresolved_questions, update `confidence:` in spec frontmatter from `low` to `medium` or `high`.
 
 ## 6. After convergence
 
-Summarize: "Spec converged at round N. Key changes: {bullets}."
+Summarize honestly (P-079 — reaching a limit is not success): if convergence was genuine
+(findings resolved to polish-tier or none), "Spec converged at round N. Key changes:
+{bullets}." If round N was the hard cap with findings still deferred, report the limit as a
+limit instead — "Spec review halted at hard cap (round N); deferred: {bullets}" — never
+present a cap-halt as full resolution.
 
-Deferred findings: discard (spec-review doesn't file loops — unresolved findings are addressed in the next chain stage).
+**Terminal safety gate (P-079).** If §5 ended in a safety-critical cap-halt — round 6
+reached with unresolved safety-critical findings — STOP here. A cap-halt is a limit-halt,
+not convergence, so this step's cascade does not apply: do NOT discard the findings and do
+NOT auto-dispatch plan. Surface the unresolved safety-critical findings to the operator and
+recommend a spec rewrite. Under autopilot, append `{"event": "spec_review_halt", "reason":
+"safety-critical findings remain at hard cap", "spec": "<spec-path>"}` to `$RUN_LOG` and
+stop the chain. A known-unsafe spec must not advance to plan.
+
+Otherwise (genuine convergence, or a cap-halt with only non-blocking findings), continue:
+
+Deferred findings: discard (spec-review doesn't file loops — unresolved non-blocking findings are addressed in the next chain stage).
 
 **Halt gate — check before cascading.** Re-read the reviewed spec's frontmatter. If it declares `next_action: halt-after-spec-review`, do NOT auto-dispatch plan. HALT and surface to the operator instead:
 

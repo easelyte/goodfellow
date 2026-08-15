@@ -113,7 +113,9 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/public_pr_scrub.py" --base "$BASE" || {
   echo "internal-ref scrub failed — do not open the public PR" >&2; exit 1; }
 ```
 
-Create the PR with convergence and verifier stats in the description:
+Create the PR with convergence and verifier stats in the description. State the review
+exit honestly (P-079 — reaching a limit is not success): if round N was the hard cap with
+findings still deferred, write "Halted at hard cap (round N)", not "Converged at round N".
 
 ```
 ## Summary
@@ -121,6 +123,7 @@ Create the PR with convergence and verifier stats in the description:
 
 ## Review stats
 - Converged at round N, M findings resolved, K knowledge entries referenced
+  (or: Halted at hard cap (round N) with D deferred findings — limit reached, not full resolution)
 - Verifier: X findings verified, Y filtered (A stale, B noise)
 - Knowledge: C new entries added ([pending])
 - Loops: D follow-ups filed
