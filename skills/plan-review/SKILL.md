@@ -117,10 +117,33 @@ Before fixing, dispatch a **single batched verifier** subagent that receives **a
 
 ## 5. Convergence
 
-Same rules as spec-review. Hard cap 6. Deferred findings: discard (plan-review doesn't file loops).
+Same rules as spec-review. Hard cap 6 — a terminal state `resolved | limit_reached`; reaching
+the cap is a limit, never convergence (P-079). At hard cap:
+- Safety-critical findings remain → `limit_reached`: halt, recommend plan revision
+- Only non-blocking findings → `limit_reached`: stop the loop, note deferred findings; §6
+  reports this as a limit, NOT convergence
+- No findings → `resolved` (genuine convergence)
+
+On convergence (or a non-blocking cap-halt), deferred non-blocking findings: discard
+(plan-review doesn't file loops). On a safety-critical cap-halt, do NOT discard — the
+terminal safety gate in §6 preserves and surfaces them.
 
 ## 6. After convergence
 
-Summarize: "Plan converged at round N. Research found supporting sources for X/Y claims (relevance-matched, not adjudicated), Z with no clear source." (The Tavily adapter has no refutation path and ✓ is relevance only — never report a "verified" or "refuted" count.)
+Summarize honestly (P-079 — reaching a limit is not success): if convergence was genuine,
+"Plan converged at round N. Research found supporting sources for X/Y claims
+(relevance-matched, not adjudicated), Z with no clear source." (The Tavily adapter has no
+refutation path and ✓ is relevance only — never report a "verified" or "refuted" count.)
+If round N was the hard cap with findings still deferred, report the limit as a limit —
+"Plan review halted at hard cap (round N); deferred: {bullets}" — never present a cap-halt
+as full resolution.
 
-Auto-dispatch `/goodfellow:execute <plan-path>`.
+**Terminal safety gate (P-079).** If §5 ended in a safety-critical cap-halt — round 6
+reached with unresolved safety-critical findings — STOP here: do NOT discard the findings
+and do NOT auto-dispatch execute. Surface the unresolved safety-critical findings to the
+operator and recommend a plan revision. Under autopilot, append `{"event":
+"plan_review_halt", "reason": "safety-critical findings remain at hard cap", "plan":
+"<plan-path>"}` to `$RUN_LOG` and stop the chain. A plan that exhausted its review budget
+with safety-critical findings must not advance to execution.
+
+Otherwise (genuine convergence, or a cap-halt with only non-blocking findings) auto-dispatch `/goodfellow:execute <plan-path>`.

@@ -1034,3 +1034,26 @@ conflict, no warning. The PR looks merged; only some files (often just docs) act
 - Squash-merging a branch based on one base into a target that has diverged
 - Trusting the "merged" badge without grepping the result for the intended change
 - Building a feature branch off a base that isn't its actual merge target
+
+### P-079. Reaching a Limit Is Not Success
+> Stopping because a cap, budget, or timeout was hit says nothing about whether the task was accomplished. Report the limit as a limit, never as completion.
+
+An agent or loop that terminates on a limit — a round cap, a token/time budget, a retry
+ceiling, a truncated tool result — has learned only that it ran out of allowance, not that
+the work is done. Conflating the two produces false "complete" / "converged" / "passed"
+claims that hide unresolved findings, skipped verification, and partial work. The two exit
+reasons are distinct states and must stay distinct in both data and operator-facing prose.
+
+This generalizes P-036 (which scopes the idea to review-loop caps) to every kind of limit.
+
+**Rules:**
+- Distinguish "resolved" (the terminating condition was the work finishing) from "limit reached" (the terminating condition was a cap/budget/timeout). Carry the distinction as an explicit flag, not just a prose reason.
+- A limit-halt summary names what remains unresolved: deferred findings, unrun verification, incomplete tasks. It never claims success it did not verify.
+- When a limit is reached with unresolved safety-critical work, halt and surface it — do not downgrade to "complete with deferred items."
+- Only assert "verification passed" when verification actually ran and passed; otherwise state that it was skipped or incomplete.
+
+**Anti-patterns:**
+- "Converged at round 6" when round 6 was the hard cap and blocking findings remain
+- "Execution complete. Verification passed." emitted unconditionally, whether or not verification ran
+- Treating a truncated / rate-limited / timed-out tool result as evidence the underlying task succeeded
+- A `converged=True` signal that a caller cannot tell apart from a cap-halt

@@ -121,6 +121,20 @@ In interactive mode, pause briefly: "Phase N complete. M tasks done. Continuing 
 
 ## 4. After all tasks
 
-Summarize: "Execution complete. N tasks across M phases. Verification passed."
+Summarize honestly (P-079 — reaching a limit is not success). Reaching the end of the task
+list is not the same as completing the work, so the *whole* summary is conditional — do not
+lead with a success claim you then walk back:
 
-Auto-dispatch `/goodfellow:ship`.
+- **Success path** — every task completed AND all required verification ran and passed:
+  "Execution complete. N tasks across M phases. Verification passed."
+- **Partial/halted path** — any task stopped at a blocker or limit, or any verification was
+  skipped, partial, or failing: "Execution halted after K of N tasks." Enumerate the
+  remaining tasks and any unrun/failed verification (e.g. "Stopped at T-x.y: <reason>";
+  "Verification skipped for T-x.y"). Never emit "Execution complete" on this path.
+
+**Terminal gate before shipping (P-079).** Dispatch ship ONLY on the success path above. On
+the partial/halted path, do NOT auto-dispatch ship — HALT and surface the incomplete state
+to the operator. Under autopilot, stop the chain here rather than cascading; do not ship
+partial or unverified work. Filing the gaps as follow-ups is not a substitute for the halt.
+
+Otherwise (success path) auto-dispatch `/goodfellow:ship`.
