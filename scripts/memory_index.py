@@ -6,7 +6,24 @@ Canonical layout (gf_root = the `.goodfellow/` ROOT directory):
 - index:       gf_root/MEMORY.md            (top-level, regenerated; never hand-edited)
 - registries:  gf_root/memory/domains/<domain>.md
 - sentinels:   gf_root/memory/.dirty, gf_root/memory/.migrating
+- journal:     gf_root/memory/.journal.jsonl (append-only mutation log; rollback)
 - lock:        gf_root/memory/.lock         (flock, per-fd, NON-reentrant)
+
+Each public mutation (write/promote/delete) journals its reversible intent (pre-image
++ post-image hash) BEFORE touching the fact, under the held lock; `rollback()` restores
+a fact to its pre-image (compare-and-swap on the post-image) and regenerates. Facts may
+also carry an optional `evidence:` provenance pointer.
+
+Deferred WAL-completeness limits (tracked as a follow-up, not data-loss):
+- rollback applies the fact op then journals its own `rollback` record; if that final
+  append fails, the fact is correctly restored but the forward entry stays "unreverted"
+  and a retry surfaces a CAS conflict (fail-loud, single fact) rather than silently
+  wedging. A two-phase rollback-intent/committed marker would remove the manual
+  reconcile.
+- retention bounds the journal by count + total bytes, but a single pre-image larger
+  than the byte budget cannot be evicted below one entry (facts are soft-capped far
+  below the 1 MiB default, so this is not reachable in practice). Out-of-line/compressed
+  pre-image storage would make the byte cap a hard invariant.
 
 Writes are atomic (same-dir temp + fsync + os.replace), serialized by a single
 `memory_lock(gf_root)` acquired ONCE at the top of each mutation. flock is per-fd
@@ -17,10 +34,13 @@ Diagnostics go to STDERR; data (read-index) goes to STDOUT — so a skill readin
 the index never mixes WARN lines into memory content (V7).
 """
 
+import hashlib
+import json
 import os
 import re
 import sys
 import pathlib
+from datetime import datetime, timezone
 
 try:
     import fcntl
@@ -36,6 +56,16 @@ DOMAIN_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 # CB1: fact names are filename components — reject anything that could escape memory/
 # (path separators, dot segments, absolute paths). Same charset as migration slugs.
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+# Any line separator str.splitlines() recognizes — a frontmatter value must contain
+# NONE of these, else _parse_frontmatter (which uses splitlines) would split it into an
+# extra line and inject/overwrite a field (P8). A bare `\n` check is not enough.
+_LINE_SEP_RE = re.compile(r"[\n\r\v\f\x1c\x1d\x1e\x85  ]")
+
+
+def _content_hash(text):
+    """Stable hash of a fact file's content, for rollback compare-and-swap."""
+    return hashlib.sha256(text.encode()).hexdigest()
+
 
 _TYPE_HEADINGS = [
     ("principle", "## Principles"),
@@ -261,6 +291,7 @@ class MemoryStore:
         self.index_path = self.gf_root / "MEMORY.md"
         self.dirty_path = self.memory_dir / ".dirty"
         self.migrating_path = self.memory_dir / ".migrating"
+        self.journal_path = self.memory_dir / ".journal.jsonl"
         self.knowledge_path = self.gf_root / "knowledge.md"
 
     # -- internal: regenerate + publish under a held lock ------------------- #
@@ -285,9 +316,21 @@ class MemoryStore:
                 pass
         return text
 
-    def _write_fact_file(
-        self, *, name, description, type, status, opened, domain=None, body=""
+    def _prepare_fact_file(
+        self,
+        *,
+        name,
+        description,
+        type,
+        status,
+        opened,
+        domain=None,
+        evidence=None,
+        body="",
     ):
+        """Validate + assemble a fact WITHOUT writing it. Returns (final_name, text).
+        The caller journals the intent (write-ahead) before publishing the file, so
+        this is pure compute — no filesystem mutation."""
         if not NAME_RE.match(name or ""):
             raise ValueError(f"name must match {NAME_RE.pattern} (got: {name!r})")
         if type not in TYPES:
@@ -296,11 +339,15 @@ class MemoryStore:
             raise ValueError(f"status must be one of {STATUS} (got: {status!r})")
         if domain is not None and domain != "" and not DOMAIN_RE.match(domain):
             raise ValueError(f"domain must match {DOMAIN_RE.pattern} (got: {domain!r})")
-        # Frontmatter values are single-line: a newline (or a bare `---`) in a value
-        # would produce a malformed file that regenerate() silently skips while
-        # write-fact still exits 0 -> the learning vanishes. Reject at write time.
-        for _k, _v in (("description", description), ("opened", opened)):
-            if "\n" in str(_v) or str(_v).strip() == "---":
+        # Frontmatter values are single-line: ANY line separator (_parse_frontmatter uses
+        # splitlines, which also splits on \r, \v, \f, NEL, LS, PS...) or a bare `---`
+        # would produce a malformed / injected file that regenerate() silently skips
+        # while write-fact still exits 0 -> the learning vanishes. Reject at write time.
+        _single_line_checks = [("description", description), ("opened", opened)]
+        if evidence is not None and evidence != "":
+            _single_line_checks.append(("evidence", evidence))
+        for _k, _v in _single_line_checks:
+            if _LINE_SEP_RE.search(str(_v)) or str(_v).strip() == "---":
                 raise ValueError(
                     f"{_k} must be a single line without '---' (got: {_v!r})"
                 )
@@ -311,6 +358,9 @@ class MemoryStore:
             "status": status,
             "opened": opened,
         }
+        if evidence:
+            # Provenance pointer (PR/commit/finding-id/url) — optional, single-line.
+            fm["evidence"] = evidence
         if domain:
             fm["domain"] = domain
         # CB1 (R3): never silently overwrite an existing fact. On the first rich write
@@ -318,7 +368,7 @@ class MemoryStore:
         # slug, overwriting would drop the migrated legacy learning (silent loss). Also
         # guards same-name reuse within a session. Allocate a deterministic suffix like
         # migration does; skills discover actual on-disk names (they iterate the dir), so
-        # the suffix is safe. Returns the final name written.
+        # the suffix is safe.
         final = name
         if (self.memory_dir / f"{final}.md").exists():
             i = 2
@@ -328,42 +378,71 @@ class MemoryStore:
             fm["name"] = final
         fm_text = "\n".join(f"{k}: {v}" for k, v in fm.items())
         text = f"---\n{fm_text}\n---\n{body}\n"
-        _atomic_write(self.memory_dir / f"{final}.md", text)
-        return final
+        return final, text
 
     # -- public mutations (each acquires the lock ONCE) --------------------- #
     def write_fact(
-        self, *, name, description, type, status, opened, domain=None, body=""
+        self,
+        *,
+        name,
+        description,
+        type,
+        status,
+        opened,
+        domain=None,
+        evidence=None,
+        body="",
     ):
-        warn_kb()  # P-019 preflight: validate abort-capable config BEFORE mutating,
-        # else a bad GOODFELLOW_MEMORY_WARN_KB throws only at regenerate() — after the
-        # fact is on disk — and a retry would suffix a duplicate (CB R4).
+        self._preflight()  # P-019: validate abort-capable config BEFORE mutating,
+        # else a bad env var throws only at regenerate() — after the fact is on disk —
+        # and a retry would suffix a duplicate (CB R4).
         with memory_lock(self.gf_root):
             self._maybe_auto_migrate_locked()
-            self._write_fact_file(
+            final, text = self._prepare_fact_file(
                 name=name,
                 description=description,
                 type=type,
                 status=status,
                 opened=opened,
                 domain=domain,
+                evidence=evidence,
                 body=body,
             )
+            # Write-ahead: journal the reversible intent (pre-image None for a new file,
+            # post-image hash for compare-and-swap) BEFORE the fact lands. If journaling
+            # fails nothing is written; if the write then fails, rollback's CAS refuses to
+            # act on a fact that doesn't match the recorded post-image.
+            self._mark_dirty_locked()
+            self._journal_locked("write", final, None, post_hash=_content_hash(text))
+            _atomic_write(self.memory_dir / f"{final}.md", text)
             self._regenerate_locked()
 
     def promote(self, name):
         """Flip status: pending -> confirmed for a per-fact file."""
         if not NAME_RE.match(name or ""):
             raise ValueError(f"name must match {NAME_RE.pattern} (got: {name!r})")
-        warn_kb()  # P-019 preflight (see write_fact)
+        self._preflight()  # P-019 preflight (see write_fact)
         with memory_lock(self.gf_root):
             path = self.memory_dir / f"{name}.md"
             text = path.read_text()
+            # P54: only a real transition belongs in the journal. Promoting an already-
+            # confirmed fact would rewrite an identical file and journal a no-op that a
+            # later default rollback would "succeed" on while masking the real mutation.
+            fm = _parse_frontmatter(path)
+            if not fm or fm.get("status") != "pending":
+                raise ValueError(
+                    f"cannot promote {name!r}: status is not pending "
+                    f"(got: {fm.get('status') if fm else None!r})"
+                )
             # count=1: only the FIRST (frontmatter) status line — never a `status: pending`
             # line that happens to appear in the body (which would corrupt content).
             new = re.sub(
                 r"(?m)^status:\s*pending\s*$", "status: confirmed", text, count=1
             )
+            # Write-ahead: journal (pre-image = pending text, post-image hash) BEFORE the
+            # rewrite, so a failed rewrite leaves a durable, reversible record.
+            self._mark_dirty_locked()
+            self._journal_locked("promote", name, text, post_hash=_content_hash(new))
             _atomic_write(path, new)
             self._regenerate_locked()
 
@@ -373,18 +452,248 @@ class MemoryStore:
         (a just-written fact could be removed and a regenerate publish without it)."""
         if not NAME_RE.match(name or ""):
             raise ValueError(f"name must match {NAME_RE.pattern} (got: {name!r})")
-        warn_kb()  # P-019 preflight (see write_fact)
+        self._preflight()  # P-019 preflight (see write_fact)
         with memory_lock(self.gf_root):
             path = self.memory_dir / f"{name}.md"
             if not path.exists():
                 # surface a typo'd name rather than a silent no-op (parity with promote)
                 raise FileNotFoundError(f"no such fact: {path}")
+            pre = path.read_text()  # capture pre-image before removing, for rollback
+            # Write-ahead: durably journal the pre-image (post-image None — the fact is
+            # absent after delete) BEFORE the destructive unlink. If journaling fails the
+            # fact is NOT unlinked, so the learning is never lost.
+            self._mark_dirty_locked()
+            self._journal_locked("delete", name, pre, post_hash=None)
             path.unlink()
             self._regenerate_locked()
 
     def regenerate(self):
         with memory_lock(self.gf_root):
             return self._regenerate_locked()
+
+    # -- rollback journal (each mutation records a reversible pre-image) ----- #
+    _FORWARD_OPS = ("write", "promote", "delete")
+
+    def _journal_retention(self):
+        """Rollback window: the journal keeps at most this many entries (declared at
+        write-one, P53). unset/empty -> 100; positive int -> that; else ConfigError.
+        Bounds storage + the per-mutation reparse to O(window)."""
+        raw = os.environ.get("GOODFELLOW_JOURNAL_RETENTION")
+        if raw is None or raw == "":
+            return 100
+        if raw.isdigit() and int(raw) > 0:
+            return int(raw)
+        raise ConfigError(
+            f"GOODFELLOW_JOURNAL_RETENTION must be a positive integer (got: {raw!r})"
+        )
+
+    def _preflight(self):
+        """P-019: validate every abort-capable config BEFORE mutating, so a bad env
+        var throws before a fact is on disk (a mid-mutation throw + retry would
+        otherwise suffix a duplicate)."""
+        warn_kb()
+        self._journal_retention()
+        self._journal_byte_budget()
+
+    def _mark_dirty_locked(self):
+        """Write-ahead: mark the index dirty BEFORE changing a fact, so a mid-mutation
+        failure (fact changed, but journal or regenerate did not complete) is recovered
+        on the next read — closing the delete-then-journal-fails staleness gap.
+        _regenerate_locked clears it only after the index is republished."""
+        try:
+            self.dirty_path.write_text("")
+        except OSError:
+            pass
+
+    def _safe_fact_path(self, name):
+        """Resolve a fact path from a name that came off the journal (an input
+        boundary). Enforce NAME_RE + containment so a crafted entry like
+        ``../../README`` cannot unlink/overwrite outside memory/ (P33)."""
+        if not isinstance(name, str) or not NAME_RE.match(name):
+            raise ValueError(f"invalid fact name in journal: {name!r}")
+        path = self.memory_dir / f"{name}.md"
+        if path.resolve().parent != self.memory_dir.resolve():
+            raise ValueError(f"journal name escapes memory dir: {name!r}")
+        return path
+
+    class JournalCorruption(ValueError):
+        """An interior journal line failed to parse — history is incomplete, so
+        rollback's reverted/conflict computation cannot be trusted (P3 fail visible)."""
+
+    @staticmethod
+    def _valid_entry_shape(obj):
+        """A journal line must parse to an object with an int seq and str op — else
+        downstream code (which does obj.get(...)) would raise on e.g. a bare `[]`. Bool
+        is excluded (bool is an int subclass) so `true` is not read as a sequence."""
+        return (
+            isinstance(obj, dict)
+            and isinstance(obj.get("seq"), int)
+            and not isinstance(obj.get("seq"), bool)
+            and isinstance(obj.get("op"), str)
+        )
+
+    def read_journal(self):
+        """Return the mutation journal as a list of entries. ONLY a demonstrably
+        incomplete FINAL line (a torn last append) is tolerated; an unparseable OR
+        wrong-shaped interior line means lost/forged history and raises
+        JournalCorruption rather than silently dropping — or crashing on — an entry a
+        later rollback relies on (P3 / P33)."""
+        if not self.journal_path.exists():
+            return []
+        raw = [ln for ln in self.journal_path.read_text().splitlines() if ln.strip()]
+        entries = []
+        for idx, line in enumerate(raw):
+            is_final = idx == len(raw) - 1
+            try:
+                obj = json.loads(line.strip())
+            except json.JSONDecodeError:
+                if is_final:
+                    break  # torn final append — tolerated
+                raise self.JournalCorruption(
+                    f"corrupt interior journal line {idx + 1} in {self.journal_path}"
+                )
+            if not self._valid_entry_shape(obj):
+                if is_final:
+                    break  # garbage final line (e.g. torn write that parsed) — tolerated
+                raise self.JournalCorruption(
+                    f"malformed interior journal entry at line {idx + 1} in "
+                    f"{self.journal_path}"
+                )
+            entries.append(obj)
+        return entries
+
+    def _journal_locked(self, op, name, pre_image, post_hash=None, target_seq=None):
+        """Record one journal entry, capped to the retention window by BOTH entry count
+        and total bytes (a single huge pre-image can't bloat the log unbounded — P53).
+        Caller MUST hold memory_lock. Seqs stay monotonic across truncation because we
+        keep the newest (highest-seq) entries, so max(seq)+1 is preserved. Always keeps
+        at least the entry just recorded."""
+        entries = self.read_journal()
+        seq = max((e.get("seq", 0) for e in entries), default=0) + 1
+        entry = {
+            "seq": seq,
+            "op": op,
+            "name": name,
+            "pre_image": pre_image,
+            "post_hash": post_hash,
+            "ts": datetime.now(timezone.utc).isoformat(),
+        }
+        if target_seq is not None:
+            entry["target_seq"] = target_seq
+        entries.append(entry)
+
+        cap = self._journal_retention()
+        if len(entries) > cap:
+            entries = entries[-cap:]  # keep newest; older mutations exit the window
+        byte_budget = self._journal_byte_budget()
+
+        def _serialize(items):
+            return "".join(json.dumps(e) + "\n" for e in items)
+
+        while len(entries) > 1 and len(_serialize(entries).encode()) > byte_budget:
+            entries = entries[1:]  # drop oldest until under budget (never below 1)
+        _atomic_write(self.journal_path, _serialize(entries))
+        return entry
+
+    def _journal_byte_budget(self):
+        """Max journal size in bytes (GOODFELLOW_JOURNAL_MAX_BYTES, default 1 MiB).
+        Bounds a pathologically large pre-image from growing the log without limit."""
+        raw = os.environ.get("GOODFELLOW_JOURNAL_MAX_BYTES")
+        if raw is None or raw == "":
+            return 1024 * 1024
+        if raw.isdigit() and int(raw) > 0:
+            return int(raw)
+        raise ConfigError(
+            f"GOODFELLOW_JOURNAL_MAX_BYTES must be a positive integer (got: {raw!r})"
+        )
+
+    def rollback(self, seq=None):
+        """Undo a journaled mutation: restore the affected fact to its pre-image
+        (delete it if it was newly created), regenerate the index, and journal the
+        rollback so it is itself auditable. ``seq=None`` targets the most recent
+        forward mutation not already rolled back.
+
+        Only the LATEST unreverted mutation of a given fact may be rolled back — a
+        newer unreverted change to the same name would otherwise be clobbered (P19).
+        Raises ValueError if there is no eligible entry, the seq is already reverted,
+        or a later same-name mutation must be rolled back first."""
+        self._preflight()
+        with memory_lock(self.gf_root):
+            entries = self.read_journal()
+            reverted = {
+                e.get("target_seq") for e in entries if e.get("op") == "rollback"
+            }
+            target = None
+            if seq is None:
+                for e in reversed(entries):
+                    if (
+                        e.get("op") in self._FORWARD_OPS
+                        and e.get("seq") not in reverted
+                    ):
+                        target = e
+                        break
+                if target is None:
+                    raise ValueError("no journaled mutation to roll back")
+            else:
+                for e in entries:
+                    if e.get("seq") == seq and e.get("op") in self._FORWARD_OPS:
+                        target = e
+                        break
+                if target is None:
+                    raise ValueError(f"no forward mutation at journal seq {seq}")
+                if target["seq"] in reverted:
+                    raise ValueError(f"journal seq {seq} already rolled back")
+
+            # P19 check-act: refuse to clobber a newer unreverted change to this fact.
+            later = [
+                e
+                for e in entries
+                if e.get("op") in self._FORWARD_OPS
+                and e.get("name") == target.get("name")
+                and e.get("seq", 0) > target["seq"]
+                and e.get("seq") not in reverted
+            ]
+            if later:
+                raise ValueError(
+                    f"cannot roll back seq {target['seq']} for {target.get('name')!r}: "
+                    f"a later mutation (seq {min(x['seq'] for x in later)}) must be "
+                    "rolled back first"
+                )
+
+            path = self._safe_fact_path(target.get("name"))  # NAME_RE + containment
+            pre = target.get("pre_image")
+            if pre is not None and not isinstance(pre, str):
+                raise ValueError(f"invalid pre_image in journal seq {target['seq']}")
+            current = path.read_text() if path.exists() else None
+
+            # P19 compare-and-swap: the fact must still hold the state this mutation
+            # PRODUCED (its post-image). If a non-journaled edit (or an incomplete
+            # mutation) changed it, refuse rather than silently clobber newer content.
+            expected = target.get("post_hash")
+            actual = _content_hash(current) if current is not None else None
+            if expected != actual:
+                raise ValueError(
+                    f"rollback conflict for {target.get('name')!r}: the fact changed "
+                    "since the recorded mutation (non-journaled edit?); reconcile manually"
+                )
+
+            self._mark_dirty_locked()  # write-ahead before touching the fact
+            if pre is None:
+                if path.exists():
+                    path.unlink()
+            else:
+                _atomic_write(path, pre)
+            # Journal the rollback with the state it overwrote + the post-image it left,
+            # so it too is reversible and CAS-checkable.
+            self._journal_locked(
+                "rollback",
+                target["name"],
+                current,
+                post_hash=_content_hash(pre) if pre is not None else None,
+                target_seq=target["seq"],
+            )
+            self._regenerate_locked()
+            return target["seq"]
 
     def _maybe_auto_migrate_locked(self):
         """Auto-migrate flat knowledge.md -> rich facts on the first rich write
@@ -457,7 +766,6 @@ class MemoryStore:
 # idempotent, auto on first rich write (T-2.6).
 # --------------------------------------------------------------------------- #
 import datetime as _dt
-import hashlib
 
 _SECTION_TYPE = {
     "principles": "principle",
@@ -656,6 +964,11 @@ def _build_parser():
     wf.add_argument("--status", required=True)
     wf.add_argument("--opened", required=True)
     wf.add_argument("--domain", default=None)
+    wf.add_argument(
+        "--evidence",
+        default=None,
+        help="optional provenance pointer (PR/commit/finding-id/url), single line",
+    )
     wf.add_argument("--body", default="")
 
     sub.add_parser("read-index")
@@ -669,6 +982,15 @@ def _build_parser():
     sub.add_parser("regenerate")
 
     sub.add_parser("migrate")
+
+    rb = sub.add_parser(
+        "rollback", help="undo the last (or a given) journaled mutation"
+    )
+    rb.add_argument(
+        "--seq", type=int, default=None, help="journal seq to undo (default: last)"
+    )
+
+    sub.add_parser("journal", help="print the mutation journal (JSONL) to stdout")
     return p
 
 
@@ -685,6 +1007,7 @@ def main(argv=None):
                 status=args.status,
                 opened=args.opened,
                 domain=args.domain,
+                evidence=args.evidence,
                 body=args.body,
             )
         elif args.cmd == "read-index":
@@ -698,6 +1021,12 @@ def main(argv=None):
             store.regenerate()
         elif args.cmd == "migrate":
             migrate(args.root)
+        elif args.cmd == "rollback":
+            seq = store.rollback(args.seq)
+            print(f"rolled back journal seq {seq}", file=sys.stderr, flush=True)
+        elif args.cmd == "journal":
+            for entry in store.read_journal():
+                sys.stdout.write(json.dumps(entry) + "\n")
     except (ConfigError, SchemaError, ValueError, FileNotFoundError) as e:
         print(str(e), file=sys.stderr, flush=True)
         return 1
