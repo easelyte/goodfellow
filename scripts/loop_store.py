@@ -17,6 +17,7 @@ import json
 import os
 import sys
 import tempfile
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -101,6 +102,12 @@ def add_loop(
     loop_id = store["next_id"]
     loop = {
         "id": loop_id,
+        # Durable, globally-unique identity. `id` is a per-store monotonic int
+        # that restarts at 1 on any store reset (loops.json deleted/recreated or
+        # a fresh project), so it aliases across store incarnations. `uuid` never
+        # aliases — external references (e.g. triage-log joins) key on it to stay
+        # collision-proof, while `id` remains the human-friendly UX handle.
+        "uuid": uuid.uuid4().hex,
         "title": title,
         "status": "open",
         "priority": priority,
