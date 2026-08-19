@@ -30,8 +30,8 @@ Adversarial review at every stage. Knowledge that compounds. Nothing that slips.
 ## Why Goodfellow?
 
 Every chain run extracts what you learned and feeds it into the next one.
-Safety-critical deferred findings become tracked loops — triaged, not forgotten.
-Polish-tier findings go to your knowledge file as gotchas.
+Safety-critical and major deferred findings become tracked loops — triaged, not forgotten.
+Polish-tier (minor) findings go to your knowledge file as gotchas.
 Your 50th feature ships with the wisdom of the first 49.
 
 **What's different:**
@@ -41,7 +41,7 @@ Your 50th feature ships with the wisdom of the first 49.
 - **Knowledge compounding** — `.goodfellow/knowledge.md` accumulates principles, patterns, and gotchas across chain runs
 - **Seeded principles out of the box** — ships with curated, battle-tested universal design principles so a fresh install starts smart, not empty (see Memory backends below)
 - **Pluggable memory** — keep the zero-config flat knowledge file, or opt into a rich per-fact backend with a regenerated index and crash-safe migration
-- **Follow-up tracking** — safety-critical deferred findings become loops in `.goodfellow/loops.json`, triaged with a two-reviewer system; polish-tier goes to knowledge gotchas
+- **Follow-up tracking** — safety-critical and major deferred findings become loops in `.goodfellow/loops.json`, triaged with a two-reviewer system; polish-tier (minor) goes to knowledge gotchas
 
 ## Install
 
@@ -116,10 +116,11 @@ Switching is safe and reversible — `flat` is never modified, and the rich path
 
 ## Follow-Up Tracking
 
-At ship time, deferred review findings are routed by severity:
-- **Safety-critical (blocker/security/data-loss):** blocks PR creation. Must be fixed or explicitly waived by the operator. Filing as a loop is not sufficient.
-- **Non-blocking deferred findings:** filed as loops in `.goodfellow/loops.json` for follow-up.
-- **Polish-tier:** added to the knowledge file as gotchas (not filed as loops).
+At ship time, deferred review findings are routed by their severity tier
+(`blocker` > `major` > `minor`):
+- **Safety-critical / blocker (security/data-loss/correctness):** blocks PR creation. Must be fixed or explicitly waived by the operator — filing as a loop is not sufficient, so a blocker is resolved at ship time rather than deferred.
+- **Major:** does **not** block the PR, but is filed as a loop in `.goodfellow/loops.json` for follow-up. Substantive work, never dropped and never downgraded to a gotcha.
+- **Polish-tier / minor:** added to the knowledge file as gotchas (not filed as loops).
 
 Spec-review and plan-review don't file loops — their unresolved findings carry forward to the next chain stage.
 
@@ -140,7 +141,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/loop_store.py" list
 **Priority scale:** p1 = critical, p2 = high, p3 = medium (default), p4 = low (round 4+ findings).
 
 **Anti-whack-a-mole design:**
-- Only safety-critical findings become loops; polish goes to knowledge gotchas
+- Blocker (safety-critical) and major findings become loops; polish-tier (minor) goes to knowledge gotchas
 - Round 4+ findings file at lowest priority (except safety-critical)
 - Soft cap warning at 15 active loops
 - Triage has a 3-cycle hard cap on "still unclear" — forces a decision
