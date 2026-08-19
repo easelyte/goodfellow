@@ -17,6 +17,7 @@ if _HERE not in sys.path:
 
 import pytest  # noqa: E402
 
+import memory_index  # noqa: E402
 from memory_index import MemoryStore, migrate, validate_fact  # noqa: E402
 
 
@@ -389,6 +390,127 @@ def test_journal_byte_budget_drops_oldest(tmp_path, monkeypatch):
     journal = store.read_journal()
     assert 1 <= len(journal) < 5  # bounded well below the count cap by the byte budget
     assert len(store.journal_path.read_text().encode()) <= 400 or len(journal) == 1
+
+
+# ---- two-phase WAL: crash recovery (PART A) ------------------------------
+
+
+def test_crash_between_intent_and_fact_write_recovers_cleanly(tmp_path, monkeypatch):
+    """PART A: a crash BETWEEN the intent journal append and the fact write leaves a
+    dangling intent (committed:false) whose recorded post_hash does NOT match on-disk
+    state (the fact never landed). On single-phase code rollback() surfaces this as an
+    unrecoverable 'reconcile manually' CAS conflict. Two-phase recovery must resolve it
+    cleanly: the write never landed, so it is rolled back (fact stays absent)."""
+    gf = _root(tmp_path)
+    store = MemoryStore(gf)
+    fact_path = gf / "memory" / "wal.md"
+
+    real_atomic = memory_index._atomic_write
+
+    def crashing_atomic(path, text):
+        if str(path) == str(fact_path):
+            raise RuntimeError("simulated crash before the fact lands")
+        return real_atomic(path, text)
+
+    monkeypatch.setattr(memory_index, "_atomic_write", crashing_atomic)
+    with pytest.raises(RuntimeError):
+        _fact(store, "wal")
+    monkeypatch.undo()  # crash is over; a fresh process restarts
+
+    # Dangling intent recorded, but the fact never landed.
+    j = store.read_journal()
+    assert any(e["op"] == "write" and e.get("committed") is False for e in j)
+    assert not fact_path.exists()
+
+    # Recovery on read must NOT raise and must NOT resurrect a half-written fact.
+    store2 = MemoryStore(gf)
+    idx = store2.read_index_recovering_stale()
+    assert "wal" not in idx
+
+    # An explicit rollback must resolve to the benign 'nothing to roll back' — NOT the
+    # unrecoverable CAS 'reconcile manually' conflict single-phase code raises here.
+    with pytest.raises(ValueError) as ei:
+        store2.rollback()
+    assert "reconcile manually" not in str(ei.value)
+    assert "no journaled mutation" in str(ei.value)
+
+
+def test_crash_after_fact_before_commit_rolls_forward(tmp_path, monkeypatch):
+    """PART A: a crash AFTER the fact + index land but BEFORE the commit marker leaves a
+    dangling intent whose post_hash MATCHES on-disk state. Recovery must roll it FORWARD
+    (mark committed, keep the fact), never delete a fact that actually landed."""
+    gf = _root(tmp_path)
+    store = MemoryStore(gf)
+
+    def crash_commit(self, seq):
+        raise RuntimeError("simulated crash before the commit marker")
+
+    monkeypatch.setattr(MemoryStore, "_mark_committed_locked", crash_commit)
+    with pytest.raises(RuntimeError):
+        _fact(store, "landed", status="confirmed")
+    monkeypatch.undo()
+
+    fact_path = gf / "memory" / "landed.md"
+    assert fact_path.exists()  # the fact DID land + index regenerated
+    j = store.read_journal()
+    assert any(
+        e["op"] == "write" and e["name"] == "landed" and e.get("committed") is False
+        for e in j
+    )
+
+    store2 = MemoryStore(gf)
+    store2.recover()
+    w = [
+        e for e in store2.read_journal() if e["op"] == "write" and e["name"] == "landed"
+    ]
+    assert w and w[0].get("committed") is True  # rolled forward -> committed
+    assert fact_path.exists()  # fact preserved, never clobbered
+
+
+# ---- two-phase WAL: byte budget (PART B) --------------------------------
+
+
+def test_byte_budget_two_phase_keeps_in_flight_committed(tmp_path, monkeypatch):
+    """PART B: under a tiny byte budget, truncation drops the OLDEST entries but always
+    retains the newest in-flight record — and a completed mutation's record carries its
+    commit marker (committed:true). Seqs stay monotonic across truncation."""
+    monkeypatch.setenv("GOODFELLOW_JOURNAL_MAX_BYTES", "400")
+    monkeypatch.setenv("GOODFELLOW_JOURNAL_RETENTION", "100")
+    gf = _root(tmp_path)
+    store = MemoryStore(gf)
+    prev = 0
+    for n in ("a", "b", "c", "d", "e"):
+        _fact(store, n)
+        j = store.read_journal()
+        assert j, "journal never dropped below one entry"
+        newest = j[-1]
+        # the just-written mutation's record survives truncation AND is committed
+        assert newest["op"] == "write"
+        assert newest.get("committed") is True
+        # seqs strictly increase across truncation (max(seq)+1 preserved)
+        assert newest["seq"] > prev
+        prev = newest["seq"]
+    # budget meaningfully enforced (well under the count cap of 100)
+    assert len(store.read_journal()) < 5
+
+
+def test_byte_budget_single_huge_preimage_is_kept(tmp_path, monkeypatch):
+    """PART B documented exception: if a SINGLE entry's pre_image alone exceeds the byte
+    budget we still KEEP it — losing it would forfeit the ability to recover the mutation
+    in flight. Facts are soft-capped far below the default budget, so this is the
+    pathological corner, deliberately resolved in favour of durability over the bound."""
+    gf = _root(tmp_path)
+    store = MemoryStore(gf)
+    huge = "y" * 5000
+    _fact(store, "big", status="confirmed", body=huge)
+    monkeypatch.setenv(
+        "GOODFELLOW_JOURNAL_MAX_BYTES", "500"
+    )  # smaller than the pre_image
+    store.delete_fact("big")  # pre_image (the whole fact incl. huge body) > 500 bytes
+    j = store.read_journal()
+    assert j, "the in-flight delete record must not be evicted below one entry"
+    assert j[-1]["op"] == "delete"
+    assert huge in (j[-1]["pre_image"] or "")  # huge pre_image retained intact
 
 
 def test_cli_write_evidence_and_rollback(tmp_path):

@@ -9,21 +9,38 @@ Canonical layout (gf_root = the `.goodfellow/` ROOT directory):
 - journal:     gf_root/memory/.journal.jsonl (append-only mutation log; rollback)
 - lock:        gf_root/memory/.lock         (flock, per-fd, NON-reentrant)
 
-Each public mutation (write/promote/delete) journals its reversible intent (pre-image
-+ post-image hash) BEFORE touching the fact, under the held lock; `rollback()` restores
-a fact to its pre-image (compare-and-swap on the post-image) and regenerates. Facts may
-also carry an optional `evidence:` provenance pointer.
+Each public mutation (write/promote/delete) uses a TWO-PHASE write-ahead log. Phase 1
+journals the reversible intent (pre-image + post-image hash) with ``committed: false``
+BEFORE touching the fact, under the held lock. Phase 2 flips that entry to
+``committed: true`` (in place — no new entry) AFTER the fact + regenerated index have
+durably landed. A crash anywhere in between leaves a *dangling intent* (a forward entry
+still ``committed: false`` with no matching rollback); `recover()` (also run on
+lock-acquiring reads/mutations/rollbacks) resolves it deterministically:
+  - fact matches the recorded post-image -> the mutation DID land -> roll FORWARD (mark
+    committed);
+  - fact is still at the pre-image (write never landed / promote-or-delete never
+    applied) -> roll BACK (the fact is already at pre-image, so record a rollback
+    marker; no fact op needed);
+  - fact is in a third state (a genuine non-journaled edit after the crash) -> leave it
+    ``committed: false`` so an explicit `rollback()` surfaces the CAS conflict
+    (fail-visible), never silently clobbering newer content.
+`rollback()` restores a fact to its pre-image (compare-and-swap on the post-image) and
+regenerates. Facts may also carry an optional `evidence:` provenance pointer.
 
-Deferred WAL-completeness limits (tracked as a follow-up, not data-loss):
-- rollback applies the fact op then journals its own `rollback` record; if that final
-  append fails, the fact is correctly restored but the forward entry stays "unreverted"
-  and a retry surfaces a CAS conflict (fail-loud, single fact) rather than silently
-  wedging. A two-phase rollback-intent/committed marker would remove the manual
-  reconcile.
-- retention bounds the journal by count + total bytes, but a single pre-image larger
-  than the byte budget cannot be evicted below one entry (facts are soft-capped far
-  below the 1 MiB default, so this is not reachable in practice). Out-of-line/compressed
-  pre-image storage would make the byte cap a hard invariant.
+Backward compatibility: a pre-existing journal predates two-phase, so its forward
+entries have NO ``committed`` field. Such entries are treated as **committed** (they
+already completed before this code shipped) — only an explicit ``committed: false`` is a
+dangling intent. The on-disk schema change is purely additive (one optional field), so
+existing `.goodfellow` journals load and behave unchanged.
+
+Byte budget (retention): the journal is bounded by entry count AND total bytes, keeping
+the NEWEST entries (a suffix). Suffix-keep guarantees the record of the mutation in
+flight — always the newest entry — is never dropped, and a rollback marker (always newer
+than the forward entry it resolves) is never retained while its forward entry is dropped
+in the direction that would resurrect the forward entry as un-resolved. DOCUMENTED
+EXCEPTION: a single newest entry whose pre-image alone exceeds the byte budget is still
+kept — durability of the in-flight record wins over the bound (facts are soft-capped far
+below the 1 MiB default, so this corner is not reachable in normal operation).
 
 Writes are atomic (same-dir temp + fsync + os.replace), serialized by a single
 `memory_lock(gf_root)` acquired ONCE at the top of each mutation. flock is per-fd
@@ -397,6 +414,7 @@ class MemoryStore:
         # else a bad env var throws only at regenerate() — after the fact is on disk —
         # and a retry would suffix a duplicate (CB R4).
         with memory_lock(self.gf_root):
+            self._recover_locked()  # drain a dangling intent from a prior crash first
             self._maybe_auto_migrate_locked()
             final, text = self._prepare_fact_file(
                 name=name,
@@ -408,14 +426,19 @@ class MemoryStore:
                 evidence=evidence,
                 body=body,
             )
-            # Write-ahead: journal the reversible intent (pre-image None for a new file,
-            # post-image hash for compare-and-swap) BEFORE the fact lands. If journaling
-            # fails nothing is written; if the write then fails, rollback's CAS refuses to
-            # act on a fact that doesn't match the recorded post-image.
+            # Two-phase WAL. Phase 1: journal the reversible INTENT (pre-image None for a
+            # new file, post-image hash for compare-and-swap) with committed:false BEFORE
+            # the fact lands. If journaling fails nothing is written; if the write then
+            # fails, the dangling intent is resolved by recovery (rolled back — the fact
+            # never landed) instead of wedging on a CAS conflict.
             self._mark_dirty_locked()
-            self._journal_locked("write", final, None, post_hash=_content_hash(text))
+            intent = self._journal_locked(
+                "write", final, None, post_hash=_content_hash(text), committed=False
+            )
             _atomic_write(self.memory_dir / f"{final}.md", text)
             self._regenerate_locked()
+            # Phase 2: fact + index durably landed -> mark the intent committed.
+            self._mark_committed_locked(intent["seq"])
 
     def promote(self, name):
         """Flip status: pending -> confirmed for a per-fact file."""
@@ -423,6 +446,7 @@ class MemoryStore:
             raise ValueError(f"name must match {NAME_RE.pattern} (got: {name!r})")
         self._preflight()  # P-019 preflight (see write_fact)
         with memory_lock(self.gf_root):
+            self._recover_locked()  # drain a dangling intent from a prior crash first
             path = self.memory_dir / f"{name}.md"
             text = path.read_text()
             # P54: only a real transition belongs in the journal. Promoting an already-
@@ -439,12 +463,15 @@ class MemoryStore:
             new = re.sub(
                 r"(?m)^status:\s*pending\s*$", "status: confirmed", text, count=1
             )
-            # Write-ahead: journal (pre-image = pending text, post-image hash) BEFORE the
-            # rewrite, so a failed rewrite leaves a durable, reversible record.
+            # Two-phase WAL (see write_fact). Phase 1: journal the intent (pre-image =
+            # pending text, post-image hash) with committed:false BEFORE the rewrite.
             self._mark_dirty_locked()
-            self._journal_locked("promote", name, text, post_hash=_content_hash(new))
+            intent = self._journal_locked(
+                "promote", name, text, post_hash=_content_hash(new), committed=False
+            )
             _atomic_write(path, new)
             self._regenerate_locked()
+            self._mark_committed_locked(intent["seq"])  # Phase 2
 
     def delete_fact(self, name):
         """Locked delete + regenerate (CB2). Invalidation must NOT be a raw `rm`
@@ -454,18 +481,23 @@ class MemoryStore:
             raise ValueError(f"name must match {NAME_RE.pattern} (got: {name!r})")
         self._preflight()  # P-019 preflight (see write_fact)
         with memory_lock(self.gf_root):
+            self._recover_locked()  # drain a dangling intent from a prior crash first
             path = self.memory_dir / f"{name}.md"
             if not path.exists():
                 # surface a typo'd name rather than a silent no-op (parity with promote)
                 raise FileNotFoundError(f"no such fact: {path}")
             pre = path.read_text()  # capture pre-image before removing, for rollback
-            # Write-ahead: durably journal the pre-image (post-image None — the fact is
-            # absent after delete) BEFORE the destructive unlink. If journaling fails the
-            # fact is NOT unlinked, so the learning is never lost.
+            # Two-phase WAL (see write_fact). Phase 1: durably journal the pre-image
+            # (post-image None — the fact is absent after delete) with committed:false
+            # BEFORE the destructive unlink. If journaling fails the fact is NOT unlinked,
+            # so the learning is never lost.
             self._mark_dirty_locked()
-            self._journal_locked("delete", name, pre, post_hash=None)
+            intent = self._journal_locked(
+                "delete", name, pre, post_hash=None, committed=False
+            )
             path.unlink()
             self._regenerate_locked()
+            self._mark_committed_locked(intent["seq"])  # Phase 2
 
     def regenerate(self):
         with memory_lock(self.gf_root):
@@ -562,12 +594,19 @@ class MemoryStore:
             entries.append(obj)
         return entries
 
-    def _journal_locked(self, op, name, pre_image, post_hash=None, target_seq=None):
+    def _journal_locked(
+        self, op, name, pre_image, post_hash=None, target_seq=None, committed=None
+    ):
         """Record one journal entry, capped to the retention window by BOTH entry count
         and total bytes (a single huge pre-image can't bloat the log unbounded — P53).
         Caller MUST hold memory_lock. Seqs stay monotonic across truncation because we
         keep the newest (highest-seq) entries, so max(seq)+1 is preserved. Always keeps
-        at least the entry just recorded."""
+        at least the entry just recorded.
+
+        ``committed`` is the two-phase WAL flag: a forward-mutation INTENT is recorded
+        with ``committed=False`` and flipped to ``True`` by `_mark_committed_locked`
+        after the fact lands. Non-forward records (rollback markers) pass ``None`` and
+        carry no flag; a legacy entry with no flag is treated as committed on read."""
         entries = self.read_journal()
         seq = max((e.get("seq", 0) for e in entries), default=0) + 1
         entry = {
@@ -580,8 +619,26 @@ class MemoryStore:
         }
         if target_seq is not None:
             entry["target_seq"] = target_seq
+        if committed is not None:
+            entry["committed"] = committed
         entries.append(entry)
+        entries, serialized = self._truncate_to_budget(entries)
+        _atomic_write(self.journal_path, serialized)
+        return entry
 
+    def _truncate_to_budget(self, entries):
+        """Bound the journal by entry count AND total bytes, keeping the NEWEST entries
+        (a suffix); returns ``(kept_entries, serialized_text)``. Suffix-keep guarantees:
+        (1) the record of the mutation currently in flight — always the newest entry — is
+        never dropped, so recovery can always resolve it; (2) a rollback marker (always
+        NEWER than the forward entry it resolves) is never kept while its forward entry is
+        dropped in the direction that would resurrect the forward entry as un-resolved —
+        keeping any entry keeps everything newer, including its marker. There is no
+        intent/commit *pair* to split: the commit is an in-place flag flip on the same
+        entry (`_mark_committed_locked`), not a separate record. Seqs stay monotonic
+        (max(seq) preserved). DOCUMENTED EXCEPTION: if the single newest entry alone
+        exceeds the byte budget (a pathologically large pre_image) it is STILL kept —
+        losing it would forfeit recovery of the in-flight mutation."""
         cap = self._journal_retention()
         if len(entries) > cap:
             entries = entries[-cap:]  # keep newest; older mutations exit the window
@@ -591,9 +648,28 @@ class MemoryStore:
             return "".join(json.dumps(e) + "\n" for e in items)
 
         while len(entries) > 1 and len(_serialize(entries).encode()) > byte_budget:
-            entries = entries[1:]  # drop oldest until under budget (never below 1)
-        _atomic_write(self.journal_path, _serialize(entries))
-        return entry
+            entries = entries[
+                1:
+            ]  # drop OLDEST; never below the newest in-flight record
+        return entries, _serialize(entries)
+
+    def _mark_committed_locked(self, seq):
+        """Two-phase WAL Phase 2: after the fact + regenerated index have durably landed,
+        flip the intent entry ``seq`` to ``committed: true``. Rewrites the journal in
+        place (no NEW entry, so seq/entry-count contracts are unchanged). Idempotent —
+        re-flipping an already-committed entry is a no-op. A crash before this flip leaves
+        the entry ``committed: false`` (a dangling intent) which recovery resolves."""
+        entries = self.read_journal()
+        for e in entries:
+            if e.get("seq") == seq:
+                if e.get("committed") is True:
+                    return  # already committed — nothing to do
+                e["committed"] = True
+                break
+        else:
+            return  # intent aged out (cannot happen for a just-recorded newest entry)
+        _, serialized = self._truncate_to_budget(entries)
+        _atomic_write(self.journal_path, serialized)
 
     def _journal_byte_budget(self):
         """Max journal size in bytes (GOODFELLOW_JOURNAL_MAX_BYTES, default 1 MiB).
@@ -607,6 +683,77 @@ class MemoryStore:
             f"GOODFELLOW_JOURNAL_MAX_BYTES must be a positive integer (got: {raw!r})"
         )
 
+    def _recover_locked(self):
+        """Resolve dangling two-phase intents (crash between the intent journal and the
+        commit flip). Caller MUST hold memory_lock. Returns True if anything changed.
+
+        A dangling intent is a forward entry with ``committed is False`` and no matching
+        rollback marker. For each (oldest first):
+          - fact matches the recorded post-image  -> roll FORWARD (mark committed);
+          - fact still at the pre-image            -> roll BACK (record a rollback
+            marker; the fact is already at pre-image so no fact op is needed);
+          - fact in a third state (a genuine non-journaled edit after the crash) -> leave
+            it committed:false so an explicit rollback() surfaces the CAS conflict.
+        Legacy entries (no ``committed`` field) predate two-phase and are treated as
+        committed — never dangling."""
+        entries = self.read_journal()
+        reverted = {e.get("target_seq") for e in entries if e.get("op") == "rollback"}
+        danglers = [
+            e
+            for e in entries
+            if e.get("op") in self._FORWARD_OPS
+            and e.get("committed") is False
+            and e.get("seq") not in reverted
+        ]
+        changed = False
+        for intent in danglers:
+            name = intent.get("name")
+            try:
+                path = self._safe_fact_path(name)  # NAME_RE + containment (P33)
+            except ValueError:
+                continue  # crafted/invalid name — cannot act safely; leave it
+            pre = intent.get("pre_image")
+            if pre is not None and not isinstance(pre, str):
+                continue  # malformed pre-image — leave for manual reconcile
+            post_hash = intent.get("post_hash")
+            actual = _content_hash(path.read_text()) if path.exists() else None
+            if actual == post_hash:
+                # the mutation landed in its produced state -> roll FORWARD
+                self._mark_committed_locked(intent["seq"])
+                changed = True
+            elif (pre is None and actual is None) or (
+                pre is not None and actual == _content_hash(pre)
+            ):
+                # the fact is still at the pre-image -> the mutation never landed -> roll
+                # BACK. The fact already holds the pre-image, so no fact op is needed;
+                # record a rollback marker so the abandoned intent is auditable and not
+                # re-detected (its seq joins the reverted set).
+                self._mark_dirty_locked()
+                current = path.read_text() if path.exists() else None
+                self._journal_locked(
+                    "rollback",
+                    name,
+                    current,
+                    post_hash=_content_hash(pre) if pre is not None else None,
+                    target_seq=intent["seq"],
+                )
+                changed = True
+            else:
+                # third state: a genuine non-journaled edit after the crash. Cannot auto-
+                # resolve without clobbering; leave committed:false so an explicit
+                # rollback() fails loud (P3/P19) rather than silently overwriting.
+                continue
+        return changed
+
+    def recover(self):
+        """Resolve any dangling two-phase intents and republish the index if anything
+        changed. Safe to call anytime; a no-op on a clean journal. Also run implicitly on
+        lock-acquiring reads (when stale/dirty), mutations, and rollbacks."""
+        self._preflight()
+        with memory_lock(self.gf_root):
+            if self._recover_locked():
+                self._regenerate_locked()
+
     def rollback(self, seq=None):
         """Undo a journaled mutation: restore the affected fact to its pre-image
         (delete it if it was newly created), regenerate the index, and journal the
@@ -619,6 +766,9 @@ class MemoryStore:
         or a later same-name mutation must be rolled back first."""
         self._preflight()
         with memory_lock(self.gf_root):
+            # Resolve any dangling intent first, so an in-flight incomplete mutation is
+            # rolled forward/back cleanly instead of surfacing as a spurious CAS conflict.
+            self._recover_locked()
             entries = self.read_journal()
             reverted = {
                 e.get("target_seq") for e in entries if e.get("op") == "rollback"
@@ -753,6 +903,10 @@ class MemoryStore:
                 return self._read_knowledge_fallback()
             if self.index_path.exists() and not self._is_stale():
                 return self.index_path.read_text()
+            # We only reach here because the index is absent/dirty/stale — which is also
+            # exactly the state a crash mid-mutation leaves. Resolve any dangling intent
+            # before regenerating so the recovered index reflects the true fact state.
+            self._recover_locked()
             return self._regenerate_locked()
 
     def _read_knowledge_fallback(self):
@@ -991,6 +1145,10 @@ def _build_parser():
     )
 
     sub.add_parser("journal", help="print the mutation journal (JSONL) to stdout")
+
+    sub.add_parser(
+        "recover", help="resolve any dangling two-phase intents (crash recovery)"
+    )
     return p
 
 
@@ -1027,6 +1185,9 @@ def main(argv=None):
         elif args.cmd == "journal":
             for entry in store.read_journal():
                 sys.stdout.write(json.dumps(entry) + "\n")
+        elif args.cmd == "recover":
+            store.recover()
+            print("recovery complete", file=sys.stderr, flush=True)
     except (ConfigError, SchemaError, ValueError, FileNotFoundError) as e:
         print(str(e), file=sys.stderr, flush=True)
         return 1
