@@ -37,12 +37,14 @@ collide across rows (the documented Windows-concurrency corruption in loop_store
 are QUARANTINED — every colliding row is excluded from attribution and surfaced,
 so a corrupted identity never yields a suggestion.
 
-Known gap (deferred, see caveats): the join keys on `loop_id` across two
-independently-durable stores. If `loops.json` is reset or restored while
-`triage-log.jsonl` survives, new loops reuse old ids and can inherit unrelated
-historical decisions — there is no cross-generation identity today. The durable
-fix (an immutable loop UUID / store epoch on both stores) is a producer-side
-change beyond this read-only MVP and is tracked as a follow-up.
+Cross-generation identity: the join keys on the DURABLE loop identity — the
+immutable `uuid` minted per loop by loop_store — rather than the per-store
+integer `loop_id`. If `loops.json` is reset or restored while `triage-log.jsonl`
+survives, a new loop reusing an old integer id carries a fresh uuid, so it no
+longer inherits the historical decision recorded against the old incarnation.
+Residual (legacy only): triage records written BEFORE uuids existed carry no
+`loop_uuid`, so they still fall back to `loop_id` and can alias across a reset —
+records written after the durable-identity change are collision-proof.
 
 Read-only and side-effect-free: it never edits lens prose or writes state.
 """
@@ -106,10 +108,12 @@ CAVEATS = [
     "operator_override is a direction-less boolean: it flags reviewer/operator "
     "disagreement on a source's findings, not proven noise. A non-boolean value is "
     "ignored (never a disagreement signal) and counted as invalid_override.",
-    "The join keys on loop_id across two independently-durable stores. If loops.json is "
-    "reset or restored while triage-log.jsonl survives, new loops reuse old ids and can "
-    "inherit unrelated historical decisions — treat results as unreliable after any "
-    "loops.json loss/restore (durable UUID/epoch identity is a tracked follow-up).",
+    "The join keys on the durable loop uuid (minted per loop by loop_store), not the "
+    "per-store integer loop_id. After a loops.json reset/restore while triage-log.jsonl "
+    "survives, a new loop reusing an old integer id carries a fresh uuid and no longer "
+    "inherits the historical decision. Residual: legacy triage records written before "
+    "uuids existed carry no loop_uuid and still fall back to loop_id, so they can alias "
+    "across a reset — records written after this change are collision-proof.",
     "A source with no surviving triage decisions is reported as N/A (no data), never as a "
     "measured 0% — absent evidence is not a clean result.",
     "Attribution is at review-`source` granularity, NOT per-lens: a review runs multiple "
@@ -180,19 +184,35 @@ def load_outcomes(project_root: str = ".") -> tuple[list[dict], list[dict]]:
     return loops, triage
 
 
+def loop_join_key(loop: dict):
+    """Durable join key for a loop row: its immutable ``uuid`` when present, else
+    the per-store integer ``id`` (legacy loops minted before uuids existed).
+
+    Keying on the uuid makes the loops.json <-> triage-log join collision-proof
+    across a loops.json reset: the integer ``id`` restarts at 1 on a reset, so a
+    new loop can reuse an old id, but it carries a fresh uuid and therefore no
+    longer inherits the historical decision recorded against the old incarnation.
+    Legacy rows (no uuid) fall back to the integer id — unchanged behaviour."""
+    u = loop.get("uuid")
+    return u if u else loop.get("id")
+
+
 def find_duplicate_loop_ids(loops: list[dict]) -> set:
-    """Loop ids that appear on more than one loop row. loop_store documents that
-    concurrent Windows writers can mint colliding ids; a collision would let one
-    triage decision be counted against several loops, so callers surface it."""
+    """Durable join keys that appear on more than one loop row. loop_store
+    documents that concurrent Windows writers can mint colliding integer ids; a
+    collision would let one triage decision be counted against several loops, so
+    callers surface it. Keys are compared on the durable identity (uuid when
+    present) — two loops that share an integer id but carry distinct uuids are
+    NOT ambiguous and are not quarantined."""
     seen: set = set()
     dups: set = set()
     for loop in loops:
-        lid = loop.get("id")
-        if lid is None:
+        key = loop_join_key(loop)
+        if key is None:
             continue
-        if lid in seen:
-            dups.add(lid)
-        seen.add(lid)
+        if key in seen:
+            dups.add(key)
+        seen.add(key)
     return dups
 
 
@@ -211,12 +231,21 @@ def attribute_by_source(
       boolean True; any other non-null value is ignored and counted as
       `invalid_override`, while the record's valid decision still counts.
     """
-    latest: dict[object, dict] = {}
+    # Two indices so post-fix records are collision-proof while legacy records
+    # still attach. A record that CARRIES a loop_uuid is reachable ONLY by that
+    # uuid — never by its integer loop_id — so a new loop that reused an old id
+    # after a reset cannot inherit it. A record lacking loop_uuid (written before
+    # uuids existed) is keyed by loop_id, the legacy path. Both are last-write-wins.
+    by_uuid: dict[object, dict] = {}
+    by_id: dict[object, dict] = {}
     for rec in triage:
-        lid = rec.get("loop_id")
-        if lid is None:
-            continue
-        latest[lid] = rec  # last write wins (chronological append order)
+        u = rec.get("loop_uuid")
+        if u:
+            by_uuid[u] = rec
+        else:
+            lid = rec.get("loop_id")
+            if lid is not None:
+                by_id[lid] = rec
 
     quarantined = find_duplicate_loop_ids(loops)
     stats: dict[str, SourceStats] = {}
@@ -224,12 +253,18 @@ def attribute_by_source(
         source = loop.get("source")
         if not source:
             continue
-        lid = loop.get("id")
-        if lid in quarantined:
+        key = loop_join_key(loop)
+        if key in quarantined:
             continue  # corrupted identity — attribute to nothing (never guess a source)
         s = stats.setdefault(source, SourceStats(source=source))
         s.total += 1
-        rec = latest.get(lid)
+        # Match on the durable uuid first; fall back to the integer id only for
+        # legacy (uuid-less) records, which cannot themselves alias across a reset.
+        u = loop.get("uuid")
+        if u and u in by_uuid:
+            rec = by_uuid[u]
+        else:
+            rec = by_id.get(loop.get("id"))
         if rec is None:
             continue
         dec = rec.get("decision")
@@ -331,7 +366,7 @@ def render_report(
     duplicate_ids: set | None = None,
     as_json: bool = False,
 ) -> str:
-    dups = sorted(duplicate_ids) if duplicate_ids else []
+    dups = sorted(duplicate_ids, key=str) if duplicate_ids else []
     if as_json:
         return json.dumps(
             {

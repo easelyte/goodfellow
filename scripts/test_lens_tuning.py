@@ -361,6 +361,121 @@ def test_duplicate_loop_ids_are_quarantined_not_guessed():
     assert "QUARANTINED" in report
 
 
+def test_join_prefers_durable_uuid_over_integer_id():
+    """The loops.json<->triage-log join keys on the durable uuid, not loop_id: a
+    record with the matching uuid but a mismatched integer id still attaches."""
+    loops = [
+        {
+            "id": 1,
+            "uuid": "aaaa",
+            "title": "t",
+            "source": "ship-review-r1",
+            "status": "closed",
+        }
+    ]
+    triage = [
+        {
+            "loop_id": 999,  # deliberately mismatched integer id
+            "loop_uuid": "aaaa",
+            "decision": "not-a-defect",
+            "operator_override": False,
+        }
+    ]
+    r1 = lens_tuning.attribute_by_source(loops, triage)["ship-review-r1"]
+    assert r1.total == 1
+    assert r1.triaged == 1
+    assert r1.not_a_defect == 1
+
+
+def test_reset_does_not_alias_triage_decision():
+    """Cross-generation aliasing repro at the join: a historical triage record
+    (uuid A, integer id 1) must NOT attach to a NEW loop that reused integer id 1
+    after a loops.json reset (uuid B)."""
+    new_loop = {
+        "id": 1,
+        "uuid": "bbbb",
+        "title": "new",
+        "source": "ship-review-r1",
+        "status": "open",
+    }
+    historical = {
+        "loop_id": 1,
+        "loop_uuid": "aaaa",
+        "decision": "not-a-defect",
+        "operator_override": False,
+    }
+    r1 = lens_tuning.attribute_by_source([new_loop], [historical])["ship-review-r1"]
+    assert r1.total == 1
+    assert r1.triaged == 0  # historical decision NOT attributed to the new loop
+    assert r1.not_a_defect == 0
+    assert r1.rejection_ratio is None
+
+
+def test_uuid_disambiguates_shared_integer_id_no_quarantine():
+    """Two loops sharing an integer id but carrying distinct uuids are NOT
+    ambiguous — the uuid disambiguates, so neither is quarantined."""
+    loops = [
+        {
+            "id": 1,
+            "uuid": "aaaa",
+            "title": "a",
+            "source": "ship-review-r1",
+            "status": "closed",
+        },
+        {
+            "id": 1,
+            "uuid": "bbbb",
+            "title": "b",
+            "source": "ship-review-r2",
+            "status": "closed",
+        },
+    ]
+    triage = [
+        {"loop_id": 1, "loop_uuid": "aaaa", "decision": "not-a-defect"},
+        {"loop_id": 1, "loop_uuid": "bbbb", "decision": "real-defect"},
+    ]
+    assert lens_tuning.find_duplicate_loop_ids(loops) == set()
+    stats = lens_tuning.attribute_by_source(loops, triage)
+    assert stats["ship-review-r1"].not_a_defect == 1
+    assert stats["ship-review-r2"].real_defect == 1
+
+
+def test_legacy_records_without_uuid_join_on_loop_id():
+    """Backward compat: legacy loops + records with no uuid still join on loop_id."""
+    loops = [
+        {"id": 5, "title": "legacy", "source": "ship-review-r1", "status": "closed"}
+    ]
+    triage = [{"loop_id": 5, "decision": "not-a-defect"}]
+    assert (
+        lens_tuning.attribute_by_source(loops, triage)["ship-review-r1"].not_a_defect
+        == 1
+    )
+
+
+def test_reset_aliasing_end_to_end_through_real_stores(tmp_path):
+    """Full producer->consumer repro: preserve triage-log.jsonl across a loops.json
+    reset and prove the surviving historical decision is not attributed to the new
+    loop that reused the integer id."""
+    root = str(tmp_path)
+    lid = loop_store.add_loop("orig", source="ship-review-r1", project_root=root)
+    orig_uuid = loop_store.get_loop(lid, project_root=root)["uuid"]
+    triage_helper.log_decision(
+        {"loop_id": lid, "loop_uuid": orig_uuid, "decision": "not-a-defect"},
+        project_root=root,
+    )
+    # Reset loops.json only; the triage log survives.
+    loop_store._loops_path(root).unlink()
+    lid2 = loop_store.add_loop("reused-id", source="ship-review-r1", project_root=root)
+    assert lid2 == lid == 1  # integer id collided across the reset
+    assert loop_store.get_loop(lid2, project_root=root)["uuid"] != orig_uuid
+
+    loops, triage = lens_tuning.load_outcomes(project_root=root)
+    stats = lens_tuning.attribute_by_source(loops, triage)
+    # The surviving historical not-a-defect must NOT attach to the new loop.
+    assert stats["ship-review-r1"].total == 1
+    assert stats["ship-review-r1"].triaged == 0
+
+
 def test_cli_rejects_out_of_domain_gate_values():
     """F4/P33: reject min_sample < 1 and thresholds outside [0,1] / non-finite."""
     import pytest
