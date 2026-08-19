@@ -37,12 +37,16 @@ collide across rows (the documented Windows-concurrency corruption in loop_store
 are QUARANTINED — every colliding row is excluded from attribution and surfaced,
 so a corrupted identity never yields a suggestion.
 
-Known gap (deferred, see caveats): the join keys on `loop_id` across two
-independently-durable stores. If `loops.json` is reset or restored while
-`triage-log.jsonl` survives, new loops reuse old ids and can inherit unrelated
-historical decisions — there is no cross-generation identity today. The durable
-fix (an immutable loop UUID / store epoch on both stores) is a producer-side
-change beyond this read-only MVP and is tracked as a follow-up.
+Cross-generation identity: the join keys on the DURABLE loop identity — the
+immutable `uuid` minted per loop by loop_store — rather than the per-store
+integer `loop_id`. If `loops.json` is reset or restored while `triage-log.jsonl`
+survives, a new loop reusing an old integer id carries a fresh uuid, so it no
+longer inherits the historical decision recorded against the old incarnation.
+Residual (narrow): a legacy loop that predates the uuid field only gains one on
+the store's next WRITE (loop_store backfills lazily under the lock). So a legacy
+loop that is never mutated after upgrade and is triaged without a store write can
+still alias across a reset. Any loop that has been added/closed/re-triaged since
+the upgrade carries a uuid, and its triage record is collision-proof.
 
 Read-only and side-effect-free: it never edits lens prose or writes state.
 """
@@ -106,10 +110,13 @@ CAVEATS = [
     "operator_override is a direction-less boolean: it flags reviewer/operator "
     "disagreement on a source's findings, not proven noise. A non-boolean value is "
     "ignored (never a disagreement signal) and counted as invalid_override.",
-    "The join keys on loop_id across two independently-durable stores. If loops.json is "
-    "reset or restored while triage-log.jsonl survives, new loops reuse old ids and can "
-    "inherit unrelated historical decisions — treat results as unreliable after any "
-    "loops.json loss/restore (durable UUID/epoch identity is a tracked follow-up).",
+    "The join keys on the durable loop uuid (minted per loop by loop_store), not the "
+    "per-store integer loop_id. After a loops.json reset/restore while triage-log.jsonl "
+    "survives, a new loop reusing an old integer id carries a fresh uuid and no longer "
+    "inherits the historical decision. Residual: legacy loops gain a uuid only on the "
+    "store's next write (loop_store backfills lazily under the lock), so a legacy loop "
+    "never mutated after upgrade and triaged without a store write can still alias across "
+    "a reset; any loop touched since upgrade is collision-proof.",
     "A source with no surviving triage decisions is reported as N/A (no data), never as a "
     "measured 0% — absent evidence is not a clean result.",
     "Attribution is at review-`source` granularity, NOT per-lens: a review runs multiple "
@@ -181,9 +188,16 @@ def load_outcomes(project_root: str = ".") -> tuple[list[dict], list[dict]]:
 
 
 def find_duplicate_loop_ids(loops: list[dict]) -> set:
-    """Loop ids that appear on more than one loop row. loop_store documents that
-    concurrent Windows writers can mint colliding ids; a collision would let one
-    triage decision be counted against several loops, so callers surface it."""
+    """Integer loop ids that appear on more than one loop row. loop_store
+    documents that concurrent Windows writers can mint colliding integer ids, and
+    the operational mutation surface (CLI ``close``/``update-triage``, triage
+    skill) still addresses loops by that integer id — so a collision is a genuine
+    hazard (a decision, close, or update could hit the wrong loop). Callers
+    quarantine every colliding row from attribution and surface the warning.
+
+    Deliberately keyed on the raw integer id, NOT the durable uuid: even when the
+    colliding rows carry distinct uuids, the id-addressed mutation surface remains
+    ambiguous, so the operator warning must still fire."""
     seen: set = set()
     dups: set = set()
     for loop in loops:
@@ -211,12 +225,23 @@ def attribute_by_source(
       boolean True; any other non-null value is ignored and counted as
       `invalid_override`, while the record's valid decision still counts.
     """
-    latest: dict[object, dict] = {}
-    for rec in triage:
-        lid = rec.get("loop_id")
-        if lid is None:
-            continue
-        latest[lid] = rec  # last write wins (chronological append order)
+    # Two indices so post-fix records are collision-proof while legacy records
+    # still attach. A record that CARRIES a loop_uuid is reachable ONLY by that
+    # uuid — never by its integer loop_id — so a new loop that reused an old id
+    # after a reset cannot inherit it. A record lacking loop_uuid (written before
+    # uuids existed) is keyed by loop_id, the legacy path. Each entry stores its
+    # append ordinal so last-write-wins holds ACROSS the two namespaces (a newer
+    # legacy record must beat an older uuid record for the same loop).
+    by_uuid: dict[object, tuple[int, dict]] = {}
+    by_id: dict[object, tuple[int, dict]] = {}
+    for i, rec in enumerate(triage):
+        u = rec.get("loop_uuid")
+        if u:
+            by_uuid[u] = (i, rec)
+        else:
+            lid = rec.get("loop_id")
+            if lid is not None:
+                by_id[lid] = (i, rec)
 
     quarantined = find_duplicate_loop_ids(loops)
     stats: dict[str, SourceStats] = {}
@@ -224,12 +249,20 @@ def attribute_by_source(
         source = loop.get("source")
         if not source:
             continue
-        lid = loop.get("id")
-        if lid in quarantined:
-            continue  # corrupted identity — attribute to nothing (never guess a source)
+        if loop.get("id") in quarantined:
+            continue  # ambiguous integer id — attribute to nothing (never guess a source)
         s = stats.setdefault(source, SourceStats(source=source))
         s.total += 1
-        rec = latest.get(lid)
+        # Candidate decisions: the loop's durable uuid match and its legacy
+        # integer-id match. Pick whichever was appended LAST (true last-write-wins).
+        candidates = []
+        u = loop.get("uuid")
+        if u and u in by_uuid:
+            candidates.append(by_uuid[u])
+        id_match = by_id.get(loop.get("id"))
+        if id_match is not None:
+            candidates.append(id_match)
+        rec = max(candidates, key=lambda t: t[0])[1] if candidates else None
         if rec is None:
             continue
         dec = rec.get("decision")
@@ -331,7 +364,7 @@ def render_report(
     duplicate_ids: set | None = None,
     as_json: bool = False,
 ) -> str:
-    dups = sorted(duplicate_ids) if duplicate_ids else []
+    dups = sorted(duplicate_ids, key=str) if duplicate_ids else []
     if as_json:
         return json.dumps(
             {

@@ -86,6 +86,108 @@ def test_corrupt_json_raises():
             assert "Corrupt" in str(e)
 
 
+def test_add_loop_mints_uuid():
+    with tempfile.TemporaryDirectory() as d:
+        lid = loop_store.add_loop("Has uuid", project_root=d)
+        loop = loop_store.get_loop(lid, project_root=d)
+        u = loop["uuid"]
+        # uuid4 hex is 32 lowercase hex chars.
+        assert isinstance(u, str) and len(u) == 32
+        int(u, 16)  # parses as hex or raises
+
+
+def test_uuids_unique_within_store():
+    with tempfile.TemporaryDirectory() as d:
+        for _ in range(10):
+            loop_store.add_loop("dup title", project_root=d)
+        uuids = {l["uuid"] for l in loop_store.list_loops(project_root=d)}
+        assert len(uuids) == 10
+
+
+def test_reset_store_ids_dont_alias():
+    """Aliasing repro: after a store reset the sequential id restarts at 1, but
+    the durable uuid must differ so a reference to the first loop is never
+    silently satisfied by the second incarnation."""
+    with tempfile.TemporaryDirectory() as d:
+        lid1 = loop_store.add_loop("First incarnation", project_root=d)
+        uuid1 = loop_store.get_loop(lid1, project_root=d)["uuid"]
+
+        # Reset the store: delete loops.json so next_id restarts at 1.
+        loop_store._loops_path(d).unlink()
+
+        lid2 = loop_store.add_loop("Second incarnation", project_root=d)
+        uuid2 = loop_store.get_loop(lid2, project_root=d)["uuid"]
+
+        # Sequential ids collide across the reset...
+        assert lid1 == lid2 == 1
+        # ...but the durable identities must not.
+        assert uuid1 != uuid2
+
+
+def test_old_loops_json_without_uuid_still_loads():
+    with tempfile.TemporaryDirectory() as d:
+        path = Path(d) / ".goodfellow" / "loops.json"
+        path.parent.mkdir(parents=True)
+        # Legacy store shape: no "uuid" on the loop.
+        legacy = {
+            "loops": [
+                {
+                    "id": 1,
+                    "title": "Legacy loop",
+                    "status": "open",
+                    "priority": "p3",
+                    "source": None,
+                    "opened": "2020-01-01",
+                    "description": "",
+                    "tags": [],
+                    "owner": "operator",
+                    "next_action": "",
+                    "triage_count": 0,
+                    "last_triaged": None,
+                }
+            ],
+            "next_id": 2,
+        }
+        path.write_text(json.dumps(legacy))
+        loops = loop_store.list_loops(project_root=d)
+        assert len(loops) == 1
+        assert loops[0]["title"] == "Legacy loop"
+        assert loop_store.get_loop(1, project_root=d)["title"] == "Legacy loop"
+        # A new loop added alongside legacy ones still gets a durable uuid.
+        lid = loop_store.add_loop("New alongside legacy", project_root=d)
+        assert "uuid" in loop_store.get_loop(lid, project_root=d)
+
+
+def test_write_backfills_uuid_on_legacy_loops():
+    """Lazy migration: a legacy loop without a uuid gains one on the store's next
+    write (here, adding another loop), so the store self-heals."""
+    with tempfile.TemporaryDirectory() as d:
+        path = Path(d) / ".goodfellow" / "loops.json"
+        path.parent.mkdir(parents=True)
+        legacy = {
+            "loops": [
+                {
+                    "id": 1,
+                    "title": "Legacy",
+                    "status": "open",
+                    "priority": "p3",
+                    "opened": "2020-01-01",
+                    "tags": [],
+                    "owner": "operator",
+                    "triage_count": 0,
+                    "last_triaged": None,
+                }
+            ],
+            "next_id": 2,
+        }
+        path.write_text(json.dumps(legacy))
+        assert "uuid" not in loop_store.get_loop(1, project_root=d)
+        # Any write path heals the store.
+        loop_store.close_loop(1, project_root=d)
+        healed = loop_store.get_loop(1, project_root=d)
+        assert "uuid" in healed and len(healed["uuid"]) == 32
+
+
 def test_concurrent_add_distinct_ids():
     with tempfile.TemporaryDirectory() as d:
         script = f"""
