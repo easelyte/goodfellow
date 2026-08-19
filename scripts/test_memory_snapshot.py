@@ -513,6 +513,101 @@ def test_byte_budget_single_huge_preimage_is_kept(tmp_path, monkeypatch):
     assert huge in (j[-1]["pre_image"] or "")  # huge pre_image retained intact
 
 
+# ---- two-phase WAL: rollback is itself crash-safe (review F2) --------------
+
+
+def test_rollback_crash_before_fact_op_recovery_reapplies(tmp_path, monkeypatch):
+    """Review F2: rollback is TWO-PHASE. A crash BETWEEN the rollback intent journal and
+    its fact op leaves a dangling rollback intent; recovery re-applies the fact op
+    (restores the deleted fact, re-derived from the forward entry) and commits — never a
+    wedged half-rollback surfacing as a CAS conflict on retry."""
+    gf = _root(tmp_path)
+    store = MemoryStore(gf)
+    _fact(store, "d", status="confirmed")
+    original = (gf / "memory" / "d.md").read_text()
+    store.delete_fact("d")
+    assert not (gf / "memory" / "d.md").exists()
+
+    fact_path = gf / "memory" / "d.md"
+    real_atomic = memory_index._atomic_write
+
+    def crashing(path, text):
+        if str(path) == str(fact_path):
+            raise RuntimeError("crash before the restore lands")
+        return real_atomic(path, text)
+
+    monkeypatch.setattr(memory_index, "_atomic_write", crashing)
+    with pytest.raises(RuntimeError):
+        store.rollback()  # roll back the delete -> restore d; crashes on the restore write
+    monkeypatch.undo()
+
+    assert not fact_path.exists()  # restore never landed
+    assert any(
+        e["op"] == "rollback" and e.get("committed") is False
+        for e in store.read_journal()
+    )
+
+    unresolved = MemoryStore(gf).recover()
+    assert unresolved == []
+    assert fact_path.exists()  # rollback re-applied -> d restored
+    assert fact_path.read_text() == original
+    rb = [e for e in store.read_journal() if e["op"] == "rollback"]
+    assert rb and rb[-1].get("committed") is True  # committed after recovery
+
+
+# ---- fail-visible recovery of an unresolvable dangler (review F3) -----------
+
+
+def test_recovery_reports_unresolved_third_state_and_blocks_mutations(tmp_path):
+    """Review F3: a dangling intent whose fact was changed OUTSIDE the journal during the
+    crash window (third state) cannot be auto-resolved. Recovery must NOT claim success —
+    it reports the seq unresolved, never clobbers the fact, the CLI exits non-zero, and
+    later mutations FAIL CLOSED until reconciled (R700 / P3 fail-visible)."""
+    import subprocess
+
+    gf = _root(tmp_path)
+    store = MemoryStore(gf)
+    _fact(store, "t", status="confirmed")
+    ondisk = (gf / "memory" / "t.md").read_text()
+    # Inject a dangling promote intent whose recorded post_hash AND pre_image both differ
+    # from the on-disk fact (a genuine third-state edit during the crash window).
+    with open(store.journal_path, "a") as f:
+        f.write(
+            json.dumps(
+                {
+                    "seq": 500,
+                    "op": "promote",
+                    "name": "t",
+                    "pre_image": "totally-different-preimage",
+                    "post_hash": "0" * 64,
+                    "committed": False,
+                }
+            )
+            + "\n"
+        )
+
+    unresolved = store.recover()
+    assert unresolved == [500]  # reported, not silently 'complete'
+    assert (gf / "memory" / "t.md").read_text() == ondisk  # never clobbered
+
+    with pytest.raises(MemoryStore.UnresolvedRecovery):
+        _fact(store, "another")  # mutations fail closed until reconciled
+
+    r = subprocess.run(
+        [
+            sys.executable,
+            str(pathlib.Path(_HERE) / "memory_index.py"),
+            "--root",
+            str(gf),
+            "recover",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert r.returncode == 1  # CLI fails visibly
+    assert "500" in r.stderr
+
+
 def test_cli_write_evidence_and_rollback(tmp_path):
     import subprocess
 
