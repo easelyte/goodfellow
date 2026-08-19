@@ -34,6 +34,22 @@ def _empty_store():
     return {"loops": [], "next_id": 1}
 
 
+def _ensure_uuids(store):
+    """Lazy migration: mint a durable uuid for any loop that predates the field.
+
+    Called only from write paths (already holding the lock and about to persist),
+    so the store self-heals on its next mutation without turning read paths into
+    writers. A legacy loop that is never mutated after upgrade keeps aliasing on
+    the integer id until then — the read path stays tolerant of the missing field.
+    Returns True if any uuid was minted."""
+    changed = False
+    for loop in store.get("loops", []):
+        if not loop.get("uuid"):
+            loop["uuid"] = uuid.uuid4().hex
+            changed = True
+    return changed
+
+
 def _read_store(path):
     if not path.exists():
         return _empty_store()
@@ -99,6 +115,7 @@ def add_loop(
         )
     path = _loops_path(project_root)
     store = _read_store(path)
+    _ensure_uuids(store)  # backfill any legacy loops while we hold the lock
     loop_id = store["next_id"]
     loop = {
         "id": loop_id,
@@ -133,6 +150,7 @@ def close_loop(loop_id, project_root="."):
     for loop in store["loops"]:
         if loop["id"] == loop_id:
             loop["status"] = "closed"
+            _ensure_uuids(store)  # backfill legacy loops on this write
             _write_atomic(path, store)
             return True
     return False
@@ -148,6 +166,7 @@ def update_triage(loop_id, triage_count=None, last_triaged=None, project_root=".
                 loop["triage_count"] = triage_count
             if last_triaged is not None:
                 loop["last_triaged"] = last_triaged
+            _ensure_uuids(store)  # backfill legacy loops on this write
             _write_atomic(path, store)
             return True
     return False

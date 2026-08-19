@@ -158,6 +158,36 @@ def test_old_loops_json_without_uuid_still_loads():
         assert "uuid" in loop_store.get_loop(lid, project_root=d)
 
 
+def test_write_backfills_uuid_on_legacy_loops():
+    """Lazy migration: a legacy loop without a uuid gains one on the store's next
+    write (here, adding another loop), so the store self-heals."""
+    with tempfile.TemporaryDirectory() as d:
+        path = Path(d) / ".goodfellow" / "loops.json"
+        path.parent.mkdir(parents=True)
+        legacy = {
+            "loops": [
+                {
+                    "id": 1,
+                    "title": "Legacy",
+                    "status": "open",
+                    "priority": "p3",
+                    "opened": "2020-01-01",
+                    "tags": [],
+                    "owner": "operator",
+                    "triage_count": 0,
+                    "last_triaged": None,
+                }
+            ],
+            "next_id": 2,
+        }
+        path.write_text(json.dumps(legacy))
+        assert "uuid" not in loop_store.get_loop(1, project_root=d)
+        # Any write path heals the store.
+        loop_store.close_loop(1, project_root=d)
+        healed = loop_store.get_loop(1, project_root=d)
+        assert "uuid" in healed and len(healed["uuid"]) == 32
+
+
 def test_concurrent_add_distinct_ids():
     with tempfile.TemporaryDirectory() as d:
         script = f"""

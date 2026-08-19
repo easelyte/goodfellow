@@ -411,9 +411,11 @@ def test_reset_does_not_alias_triage_decision():
     assert r1.rejection_ratio is None
 
 
-def test_uuid_disambiguates_shared_integer_id_no_quarantine():
-    """Two loops sharing an integer id but carrying distinct uuids are NOT
-    ambiguous — the uuid disambiguates, so neither is quarantined."""
+def test_shared_integer_id_quarantined_even_with_distinct_uuids():
+    """The operational mutation surface (CLI close/update, triage skill) still
+    addresses loops by the integer id, so an integer-id collision stays a hazard
+    and is quarantined even when the colliding rows carry distinct uuids — the
+    join uses the uuid, but the operator warning must still fire."""
     loops = [
         {
             "id": 1,
@@ -434,10 +436,29 @@ def test_uuid_disambiguates_shared_integer_id_no_quarantine():
         {"loop_id": 1, "loop_uuid": "aaaa", "decision": "not-a-defect"},
         {"loop_id": 1, "loop_uuid": "bbbb", "decision": "real-defect"},
     ]
-    assert lens_tuning.find_duplicate_loop_ids(loops) == set()
+    assert lens_tuning.find_duplicate_loop_ids(loops) == {1}
     stats = lens_tuning.attribute_by_source(loops, triage)
-    assert stats["ship-review-r1"].not_a_defect == 1
-    assert stats["ship-review-r2"].real_defect == 1
+    assert "ship-review-r1" not in stats
+    assert "ship-review-r2" not in stats
+
+
+def test_newer_legacy_record_beats_older_uuid_record():
+    """Last-write-wins holds ACROSS the uuid/id namespaces: for a uuid-bearing
+    loop, a newer uuid-less record must beat an older uuid-bearing one."""
+    loop = {
+        "id": 1,
+        "uuid": "aaaa",
+        "title": "t",
+        "source": "ship-review-r1",
+        "status": "open",
+    }
+    triage = [
+        {"loop_id": 1, "loop_uuid": "aaaa", "decision": "real-defect"},  # older
+        {"loop_id": 1, "decision": "not-a-defect"},  # newer, legacy-shaped
+    ]
+    r1 = lens_tuning.attribute_by_source([loop], triage)["ship-review-r1"]
+    assert r1.real_defect == 0
+    assert r1.not_a_defect == 1  # newer decision wins
 
 
 def test_legacy_records_without_uuid_join_on_loop_id():
