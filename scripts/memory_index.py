@@ -642,8 +642,17 @@ class MemoryStore:
             entries.append(obj)
         return entries
 
+    _UNSET = object()  # sentinel: distinguishes an omitted `restore` from restore=None
+
     def _journal_locked(
-        self, op, name, pre_image, post_hash=None, target_seq=None, committed=None
+        self,
+        op,
+        name,
+        pre_image,
+        post_hash=None,
+        target_seq=None,
+        committed=None,
+        restore=_UNSET,
     ):
         """Record one journal entry, capped to the retention window by BOTH entry count
         and total bytes (a single huge pre-image can't bloat the log unbounded — P53).
@@ -654,7 +663,12 @@ class MemoryStore:
         ``committed`` is the two-phase WAL flag: a forward-mutation INTENT is recorded
         with ``committed=False`` and flipped to ``True`` by `_mark_committed_locked`
         after the fact lands. Non-forward records (rollback markers) pass ``None`` and
-        carry no flag; a legacy entry with no flag is treated as committed on read."""
+        carry no flag; a legacy entry with no flag is treated as committed on read.
+
+        ``restore`` (when provided) embeds the exact value a rollback intent must write
+        back, so recovery is SELF-CONTAINED and never depends on the forward entry still
+        being in the retention window (F2). ``None`` is a legitimate restore value (undo
+        of a create -> delete), so a sentinel distinguishes 'not provided'."""
         entries = self.read_journal()
         seq = max((e.get("seq", 0) for e in entries), default=0) + 1
         entry = {
@@ -669,6 +683,8 @@ class MemoryStore:
             entry["target_seq"] = target_seq
         if committed is not None:
             entry["committed"] = committed
+        if restore is not self._UNSET:
+            entry["restore"] = restore
         entries.append(entry)
         entries, serialized = self._truncate_to_budget(entries)
         _atomic_write(self.journal_path, serialized)
@@ -742,6 +758,49 @@ class MemoryStore:
             if e.get("op") == "rollback" and e.get("committed", True) is not False
         }
 
+    @staticmethod
+    def _is_content_hash(v):
+        """A recorded post-image hash must be a 64-char sha256 hex string. Guards the
+        recovery comparison from a malformed intent where the field is missing (None) —
+        without this, a write with no post_hash and an absent fact would satisfy
+        ``None == None`` and be falsely committed (F1)."""
+        return (
+            isinstance(v, str)
+            and len(v) == 64
+            and all(c in "0123456789abcdef" for c in v)
+        )
+
+    def _dangling_invariants_ok(self, intent):
+        """Op-specific schema a committed:false intent MUST satisfy BEFORE recovery
+        compares hashes. A malformed dangling entry (e.g. a write with no post_hash) is
+        NOT silently treated as a completed mutation — it stays UNRESOLVED (F1 / R700 /
+        P3 Fail Visible). ``_valid_entry_shape`` only guarantees seq+op, so recovery must
+        enforce the rest itself."""
+        op = intent.get("op")
+        pre = intent.get("pre_image")
+        post = intent.get("post_hash")
+        if op == "write":  # produces content from nothing
+            return self._is_content_hash(post) and pre is None
+        if op == "promote":  # rewrites existing content
+            return self._is_content_hash(post) and isinstance(pre, str)
+        if op == "delete":  # leaves the fact absent
+            return post is None and isinstance(pre, str)
+        if op == "rollback":  # restores content or deletes
+            tgt = intent.get("target_seq")
+            if not isinstance(tgt, int) or isinstance(tgt, bool):
+                return False
+            if not (post is None or self._is_content_hash(post)):
+                return False
+            if pre is not None and not isinstance(pre, str):
+                return False
+            if "restore" in intent:  # self-contained: restore value must be well-typed
+                r = intent.get("restore")
+                return r is None or isinstance(r, str)
+            return (
+                True  # legacy rollback intent -> restore re-derived from forward entry
+            )
+        return False  # unknown op with committed:false
+
     def _recover_locked(self):
         """Resolve dangling two-phase intents (a crash between the intent journal and the
         commit flip). Caller MUST hold memory_lock. Returns ``(changed, unresolved)``
@@ -755,13 +814,18 @@ class MemoryStore:
             landed -> roll BACK (record a committed rollback marker; the fact is already
             at the pre-image so no fact op is needed);
           - rollback intent whose fact is still at the pre-rollback state -> re-apply the
-            rollback's fact op (restore the forward's pre-image / delete) then commit —
-            the restore target is re-derived from the forward entry and verified against
-            the recorded post-image before any write, so a genuine third-state edit is
-            never clobbered;
-          - anything else (third-state non-journaled edit, or evidence
-            truncated/malformed) -> leave committed:false and report the seq as
-            UNRESOLVED so it surfaces fail-visibly instead of silently proceeding."""
+            rollback's fact op (restore the embedded restore value / delete) then commit —
+            the restore value is taken from the intent itself (self-contained, so
+            retention evicting the forward entry cannot wedge recovery) and verified
+            against the recorded post-image before any write, so a genuine third-state
+            edit is never clobbered;
+          - anything else (third-state non-journaled edit, malformed op-specific evidence,
+            or a legacy rollback whose forward entry was evicted) -> leave committed:false
+            and report the seq as UNRESOLVED so it surfaces fail-visibly (P3 / R700)
+            instead of silently proceeding. Each dangler is op-schema-validated
+            (`_dangling_invariants_ok`) BEFORE any hash comparison, so a malformed intent
+            (e.g. a write with no post_hash) can never be mistaken for a completed
+            mutation."""
         entries = self.read_journal()
         by_seq = {e.get("seq"): e for e in entries}
         reverted = self._committed_reverts_locked(entries)
@@ -781,6 +845,11 @@ class MemoryStore:
                 path = self._safe_fact_path(intent.get("name"))  # NAME_RE + containment
             except ValueError:
                 unresolved.append(seq)  # crafted/invalid name — cannot act safely
+                continue
+            if not self._dangling_invariants_ok(intent):
+                # malformed evidence (e.g. a write with no post_hash) — NEVER treat it as
+                # a completed mutation; keep it unresolved so it fails visibly (F1).
+                unresolved.append(seq)
                 continue
             post_hash = intent.get("post_hash")
             actual = _content_hash(path.read_text()) if path.exists() else None
@@ -831,11 +900,18 @@ class MemoryStore:
                 if not at_pre_rollback:
                     unresolved.append(seq)  # third state — refuse to clobber
                     continue
-                fwd = by_seq.get(intent.get("target_seq"))
-                if fwd is None:
-                    unresolved.append(seq)  # forward evidence evicted — cannot recover
-                    continue
-                restore = fwd.get("pre_image")
+                # Self-contained recovery (F2): prefer the restore value EMBEDDED in the
+                # rollback intent, so retention evicting the forward entry cannot wedge
+                # recovery. Fall back to the forward entry only for a legacy rollback
+                # intent recorded before `restore` was embedded.
+                if "restore" in intent:
+                    restore = intent.get("restore")
+                else:
+                    fwd = by_seq.get(intent.get("target_seq"))
+                    if fwd is None:
+                        unresolved.append(seq)  # forward evicted, no embedded restore
+                        continue
+                    restore = fwd.get("pre_image")
                 if restore is not None and not isinstance(restore, str):
                     unresolved.append(seq)
                     continue
@@ -882,7 +958,12 @@ class MemoryStore:
         self._preflight()
         with memory_lock(self.gf_root):
             changed, unresolved = self._recover_locked()
-            if changed:
+            # Regenerate if recovery changed state OR a prior interrupted recovery left
+            # .dirty set (F3): a recovery that mutated the fact + committed the intent but
+            # then failed to regenerate must NOT be reported 'complete' on retry just
+            # because the intent is already committed. _regenerate_locked clears .dirty
+            # only on success, so success is not claimed until the index is durable.
+            if changed or self.dirty_path.exists():
                 self._regenerate_locked()
             return unresolved
 
@@ -965,7 +1046,9 @@ class MemoryStore:
 
             self._mark_dirty_locked()  # write-ahead before touching the fact
             # Phase 1: journal the rollback INTENT (committed:false) BEFORE the fact op,
-            # recording the state it overwrites (current) + the post-image it will leave.
+            # recording the state it overwrites (current), the post-image it will leave,
+            # AND the exact restore value embedded — so recovery is self-contained even if
+            # retention evicts the forward entry (F2).
             rb_intent = self._journal_locked(
                 "rollback",
                 target["name"],
@@ -973,6 +1056,7 @@ class MemoryStore:
                 post_hash=_content_hash(pre) if pre is not None else None,
                 target_seq=target["seq"],
                 committed=False,
+                restore=pre,
             )
             if pre is None:
                 if path.exists():

@@ -608,6 +608,100 @@ def test_recovery_reports_unresolved_third_state_and_blocks_mutations(tmp_path):
     assert "500" in r.stderr
 
 
+# ---- review round 2: malformed evidence / retention / regen ordering -------
+
+
+def test_malformed_dangling_write_intent_stays_unresolved(tmp_path):
+    """Review-2 F1: a dangling write intent with NO post_hash must not be mistaken for a
+    completed mutation just because the fact is absent (None == None). Op-schema
+    validation keeps it UNRESOLVED (fail-visible) — never falsely committed."""
+    gf = _root(tmp_path)
+    store = MemoryStore(gf)
+    _fact(store, "seed")  # real memory dir + journal
+    with open(store.journal_path, "a") as f:
+        f.write(
+            json.dumps({"seq": 700, "op": "write", "name": "lost", "committed": False})
+            + "\n"
+        )
+    assert store.recover() == [700]
+    assert not (gf / "memory" / "lost.md").exists()  # no phantom fact
+    lost = [e for e in store.read_journal() if e.get("seq") == 700][0]
+    assert lost.get("committed") is False  # NOT flipped committed
+
+
+def test_rollback_recovery_self_contained_under_retention_1(tmp_path, monkeypatch):
+    """Review-2 F2: with GOODFELLOW_JOURNAL_RETENTION=1 the forward entry is evicted the
+    moment the rollback intent is appended. Recovery must still complete from the restore
+    value EMBEDDED in the rollback intent — never wedge on the missing forward entry."""
+    monkeypatch.setenv("GOODFELLOW_JOURNAL_RETENTION", "1")
+    gf = _root(tmp_path)
+    store = MemoryStore(gf)
+    _fact(store, "d", status="confirmed")
+    original = (gf / "memory" / "d.md").read_text()
+    store.delete_fact("d")
+    fact_path = gf / "memory" / "d.md"
+
+    real_atomic = memory_index._atomic_write
+
+    def crashing(path, text):
+        if str(path) == str(fact_path):
+            raise RuntimeError("crash before restore lands")
+        return real_atomic(path, text)
+
+    monkeypatch.setattr(memory_index, "_atomic_write", crashing)
+    with pytest.raises(RuntimeError):
+        store.rollback()  # restore d; crashes on the restore write
+    monkeypatch.undo()
+
+    j = store.read_journal()
+    assert (
+        len(j) == 1 and j[0]["op"] == "rollback"
+    )  # forward entry evicted by retention
+    assert "restore" in j[0]  # ...but the restore value travels with the intent
+    assert MemoryStore(gf).recover() == []
+    assert fact_path.read_text() == original  # self-healed despite the eviction
+
+
+def test_recovery_regen_failure_not_falsely_reported_complete(tmp_path, monkeypatch):
+    """Review-2 F3: if recovery commits an intent but then fails to regenerate the index,
+    a retry must NOT claim success while .dirty persists — it regenerates whenever dirty
+    is set and only clears it once the index is durable."""
+    gf = _root(tmp_path)
+    store = MemoryStore(gf)
+    _fact(store, "d", status="confirmed")
+    original = (gf / "memory" / "d.md").read_text()
+    store.delete_fact("d")
+    fact_path = gf / "memory" / "d.md"
+
+    real_atomic = memory_index._atomic_write
+
+    def crash_restore(path, text):
+        if str(path) == str(fact_path):
+            raise RuntimeError("crash before restore lands")
+        return real_atomic(path, text)
+
+    monkeypatch.setattr(memory_index, "_atomic_write", crash_restore)
+    with pytest.raises(RuntimeError):
+        store.rollback()  # -> dangling rollback intent, fact absent
+    monkeypatch.undo()
+
+    def boom_regen(*a, **k):
+        raise RuntimeError("regen storage full")
+
+    monkeypatch.setattr(memory_index, "regenerate", boom_regen)
+    with pytest.raises(RuntimeError):
+        MemoryStore(gf).recover()  # re-applies + commits, then regen fails -> raises
+    monkeypatch.undo()
+    assert fact_path.read_text() == original  # fact restored + committed
+    assert store.dirty_path.exists()  # but the index is NOT durable yet
+
+    # Retry: intent already committed (changed would be False), but the dirty marker
+    # forces a regenerate; success is only reported once .dirty clears.
+    assert MemoryStore(gf).recover() == []
+    assert not store.dirty_path.exists()
+    assert "d" in (gf / "MEMORY.md").read_text()
+
+
 def test_cli_write_evidence_and_rollback(tmp_path):
     import subprocess
 
