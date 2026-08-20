@@ -41,9 +41,16 @@ journal rename / fact change that the crash-recovery ordering depends on survive
 
 Backward compatibility: a pre-existing journal predates two-phase, so its forward
 entries have NO ``committed`` field. Such entries are treated as **committed** (they
-already completed before this code shipped) — only an explicit ``committed: false`` is a
-dangling intent. The on-disk schema change is purely additive (one optional field), so
-existing `.goodfellow` journals load and behave unchanged.
+already completed before this code shipped) — with ONE exception: the SINGLE NEWEST entry,
+if it is a legacy forward op, is run through the same crash-recovery inference (F1). A
+pre-two-phase version could have crashed mid single-phase mutation, and the newest slot is
+the only place such an interrupted mutation can survive (every older entry is proven
+completed by the next lock acquisition); leaving it "committed" would let `recover` report
+success while journal and fact disagree, later CAS-conflict a rollback, and let retention
+evict the evidence (P17 Ratchet Every Migration). Legacy ROLLBACK markers are always
+committed (old rollbacks applied the fact op before journaling). The on-disk schema change
+is purely additive (one optional field), so existing `.goodfellow` journals load and — for
+a cleanly-completed newest mutation — recover to a no-op committed mark.
 
 Byte budget (retention): the journal is bounded by entry count AND total bytes, keeping
 the NEWEST entries (a suffix). Suffix-keep guarantees the record of the mutation in
@@ -63,6 +70,7 @@ Diagnostics go to STDERR; data (read-index) goes to STDOUT — so a skill readin
 the index never mixes WARN lines into memory content (V7).
 """
 
+import errno
 import hashlib
 import json
 import os
@@ -128,20 +136,34 @@ def warn_kb():
 # --------------------------------------------------------------------------- #
 # Atomic write — same-dir temp + fsync + os.replace (V5 / MN-R6-1)
 # --------------------------------------------------------------------------- #
+# errnos that mean "this platform/filesystem cannot fsync a directory fd" (unsupported,
+# not a real IO failure) — skipped best-effort. Any other errno is propagated.
+_DIR_FSYNC_UNSUPPORTED = frozenset(
+    getattr(errno, n) for n in ("EINVAL", "ENOTSUP", "EOPNOTSUPP") if hasattr(errno, n)
+)
+
+
 def _fsync_dir(dirpath):
     """fsync a directory so a rename/unlink WITHIN it is durable across a host crash.
     os.replace/os.unlink guarantee atomicity but NOT that the new directory entry has
     reached stable storage — without this a power/kernel crash can lose the journal
     rename (dropping a mutation's recovery evidence) while keeping the fact write, or
-    resurrect a committed delete. Best-effort: platforms without directory fds skip."""
+    resurrect a committed delete. Best-effort ONLY for genuinely unsupported platforms
+    (no directory fds, or a filesystem that rejects directory fsync with EINVAL/ENOTSUP);
+    a REAL durability failure (EIO, ENOSPC, ...) is PROPAGATED so the mutation fails loud
+    rather than falsely claiming host-crash durability (F2 / P3 Fail Visible)."""
     try:
         dfd = os.open(str(dirpath), os.O_RDONLY)
     except (OSError, ValueError):
-        return
+        return  # platform without directory fds (e.g. Windows) — best-effort skip
     try:
         os.fsync(dfd)
-    except OSError:
-        pass
+    except OSError as e:
+        # EINVAL/ENOTSUP == this filesystem cannot fsync a directory fd (genuinely
+        # unsupported, parity with the os.open guard) -> skip. Any OTHER errno is a real
+        # durability failure the WAL's crash-recovery ordering depends on -> re-raise.
+        if e.errno not in _DIR_FSYNC_UNSUPPORTED:
+            raise
     finally:
         os.close(dfd)
 
@@ -265,8 +287,17 @@ def _write_domain_registries(facts, memory_dir):
     # must NOT leave a registry file behind (rich reads auto-pull domain bodies, so a
     # stale registry would re-surface an invalidated learning). Rebuild the dir each regen.
     if domains_dir.exists():
+        purged = False
         for stale in domains_dir.glob("*.md"):
             stale.unlink()
+            purged = True
+        # F3: fsync the dir so a registry REMOVAL is durable across a host crash — else
+        # deleting the last domain-tagged fact returns success but a power loss can
+        # resurrect the stale registry and re-surface an invalidated learning through the
+        # rich domain-recall path (P57 Behavioral Safety Parity). Parity with the durable
+        # unlink used for facts; the rewrite branch below already fsyncs via _atomic_write.
+        if purged:
+            _fsync_dir(domains_dir)
     if not by_domain:
         return
     domains_dir.mkdir(parents=True, exist_ok=True)
@@ -801,6 +832,32 @@ class MemoryStore:
             )
         return False  # unknown op with committed:false
 
+    def _is_dangling(self, intent, newest_seq):
+        """Whether a journal entry still needs recovery. True for:
+          - ANY entry explicitly ``committed: false`` — a new-format two-phase intent
+            whose commit flip never landed (forward OR rollback, at any position);
+          - the SINGLE NEWEST entry when it is a LEGACY forward op (no ``committed``
+            field). A pre-two-phase version could have crashed mid single-phase mutation,
+            and the newest slot is the ONLY place such an interrupted mutation can survive
+            — every older entry is proven completed by the next lock acquisition (F1 /
+            P17 Ratchet Every Migration). A legacy forward that actually completed simply
+            recovers as ``actual == post_hash -> commit`` (a harmless mark); only one that
+            never landed is rolled back.
+        Legacy ROLLBACK markers are NEVER dangling: old rollbacks applied the fact op
+        BEFORE journaling their record, so a legacy rollback entry proves completion.
+        Older legacy forward entries likewise default to committed (see above)."""
+        committed = intent.get("committed")
+        if committed is False:
+            return True
+        if (
+            committed is None
+        ):  # legacy entry (field absent) — only the newest can dangle
+            return (
+                intent.get("seq") == newest_seq
+                and intent.get("op") in self._FORWARD_OPS
+            )
+        return False  # committed is True -> already resolved
+
     def _recover_locked(self):
         """Resolve dangling two-phase intents (a crash between the intent journal and the
         commit flip). Caller MUST hold memory_lock. Returns ``(changed, unresolved)``
@@ -829,11 +886,15 @@ class MemoryStore:
         entries = self.read_journal()
         by_seq = {e.get("seq"): e for e in entries}
         reverted = self._committed_reverts_locked(entries)
+        # newest entry: the ONLY position a legacy (pre-two-phase) journal could hold an
+        # interrupted single-phase mutation — a subsequent lock acquisition proves every
+        # OLDER entry's mutation returned. See _is_dangling / F1.
+        newest_seq = max((e.get("seq", 0) for e in entries), default=0)
         changed = False
         unresolved = []
         for intent in entries:
-            if intent.get("committed") is not False:
-                continue  # committed or legacy(no field) -> not dangling
+            if not self._is_dangling(intent, newest_seq):
+                continue
             seq = intent.get("seq")
             if seq in reverted:
                 # a forward intent already rolled back by a committed marker (its own

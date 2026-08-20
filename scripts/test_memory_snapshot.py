@@ -6,6 +6,7 @@ the affected fact to its pre-image (deleting it if it was newly created) and
 regenerates. Facts may carry an optional single-line `evidence:` provenance field.
 """
 
+import errno
 import json
 import multiprocessing
 import pathlib
@@ -742,3 +743,133 @@ def test_cli_write_evidence_and_rollback(tmp_path):
     rb = subprocess.run(base + ["rollback"], capture_output=True, text=True)
     assert rb.returncode == 0, rb.stderr
     assert not (gf / "memory" / "cli-fact.md").exists()
+
+
+# ---- review round 3: F1 legacy-journal upgrade across a crash --------------
+
+
+def test_legacy_interrupted_newest_forward_is_rolled_back(tmp_path):
+    """Review-3 F1: a PRE-two-phase version crashed after journaling a forward write but
+    before the fact landed, then the install upgrades. The legacy entry has NO ``committed``
+    field; treating it as committed would let recovery report success while journal and
+    fact disagree (later CAS conflict + retention evicting the evidence). It is the NEWEST
+    entry, so recovery must infer state: the fact never landed -> roll it back, resolved."""
+    gf = _root(tmp_path)
+    store = MemoryStore(gf)
+    _fact(store, "seed")  # a real memory dir + a committed journal entry
+    j = store.read_journal()
+    next_seq = max(e["seq"] for e in j) + 1
+    legacy = {  # single-phase forward entry: no ``committed`` key
+        "seq": next_seq,
+        "op": "write",
+        "name": "lost",
+        "pre_image": None,
+        "post_hash": memory_index._content_hash("a body that never landed\n"),
+        "ts": "2026-01-01T00:00:00+00:00",
+    }
+    with store.journal_path.open("a") as f:
+        f.write(json.dumps(legacy) + "\n")
+    assert not (gf / "memory" / "lost.md").exists()
+
+    store2 = MemoryStore(gf)
+    assert store2.recover() == []  # resolved, NOT reported unresolved
+    assert not (gf / "memory" / "lost.md").exists()  # never resurrected
+    rb = [
+        e
+        for e in store2.read_journal()
+        if e["op"] == "rollback" and e.get("target_seq") == next_seq
+    ]
+    assert rb and rb[-1].get("committed") is True  # rolled back via a committed marker
+    _fact(store2, "after")  # mutations no longer fail closed
+
+
+def test_legacy_journal_completed_recovers_clean_and_older_entries_ignored(tmp_path):
+    """Review-3 F1 (no false-positive): a healthy pre-two-phase journal — every entry
+    lacks ``committed`` — must recover to a benign no-op. The newest legacy forward whose
+    fact IS present rolls forward (committed mark); an OLDER legacy entry whose fact has
+    since diverged must NOT be flagged unresolved (only the newest slot can hold an
+    interrupted single-phase mutation — older entries are proven completed)."""
+    gf = _root(tmp_path)
+    store = MemoryStore(gf)
+    _fact(store, "old")
+    _fact(store, "new")  # "new" is the newest journal entry
+    # Simulate a legacy journal: strip the ``committed`` flag from every entry.
+    entries = store.read_journal()
+    for e in entries:
+        e.pop("committed", None)
+    store.journal_path.write_text("".join(json.dumps(e) + "\n" for e in entries))
+    # Diverge the OLDER fact's content so its post_hash no longer matches on disk.
+    (gf / "memory" / "old.md").write_text("# totally different content\n")
+
+    store2 = MemoryStore(gf)
+    assert store2.recover() == []  # older divergence NOT mistaken for a dangling intent
+    newest = max(store2.read_journal(), key=lambda e: e["seq"])
+    assert newest["name"] == "new" and newest.get("committed") is True  # rolled forward
+    _fact(store2, "after")  # not failed closed
+
+
+# ---- review round 3: F2 directory-fsync failure propagation ----------------
+
+
+def test_fsync_dir_propagates_real_io_error_but_skips_unsupported(tmp_path, monkeypatch):
+    """Review-3 F2: a real directory-fsync failure (EIO/ENOSPC) is a durability failure
+    the WAL depends on -> PROPAGATE (fail loud). A filesystem that cannot fsync a dir fd
+    (EINVAL/ENOTSUP) is genuinely unsupported -> skip best-effort (never claim durability
+    it cannot provide, never crash a mutation on an unsupported platform)."""
+
+    def fsync_eio(fd):
+        raise OSError(errno.EIO, "simulated device IO error")
+
+    monkeypatch.setattr(memory_index.os, "fsync", fsync_eio)
+    with pytest.raises(OSError) as ei:
+        memory_index._fsync_dir(str(tmp_path))
+    assert ei.value.errno == errno.EIO
+    monkeypatch.undo()
+
+    def fsync_einval(fd):
+        raise OSError(errno.EINVAL, "directory fsync not supported here")
+
+    monkeypatch.setattr(memory_index.os, "fsync", fsync_einval)
+    memory_index._fsync_dir(str(tmp_path))  # unsupported -> best-effort skip, no raise
+
+
+def test_mutation_fails_loud_when_dir_fsync_hits_real_io_error(tmp_path, monkeypatch):
+    """Review-3 F2 end-to-end: a real dir-fsync failure during a mutation surfaces as a
+    raised error rather than a silent success that falsely claims host-crash durability."""
+    gf = _root(tmp_path)
+    store = MemoryStore(gf)
+
+    def fsync_eio(fd):
+        raise OSError(errno.EIO, "simulated device IO error")
+
+    monkeypatch.setattr(memory_index.os, "fsync", fsync_eio)
+    with pytest.raises(OSError):
+        _fact(store, "boom")
+
+
+# ---- review round 3: F3 durable domain-registry removal --------------------
+
+
+def test_last_domain_delete_fsyncs_the_registry_dir(tmp_path, monkeypatch):
+    """Review-3 F3: deleting the last domain-tagged fact purges its registry with a raw
+    unlink; without a directory fsync a power loss can resurrect the stale registry and
+    re-surface an invalidated learning via the rich domain-recall path. The purge must
+    fsync the domains/ directory (parity with the durable fact unlink)."""
+    gf = _root(tmp_path)
+    store = MemoryStore(gf)
+    _fact(store, "d1", domain="process")
+    reg = gf / "memory" / "domains" / "process.md"
+    assert reg.exists()
+
+    domains_dir = str(gf / "memory" / "domains")
+    fsynced = []
+    real = memory_index._fsync_dir
+
+    def spy(path):
+        fsynced.append(str(path))
+        return real(path)
+
+    monkeypatch.setattr(memory_index, "_fsync_dir", spy)
+    store.delete_fact("d1")  # last domain fact -> registry purged
+    assert not reg.exists()
+    assert domains_dir in fsynced  # the removal was made durable (F3)
