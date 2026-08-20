@@ -846,28 +846,37 @@ class MemoryStore:
 
     def _legacy_forward_candidates(self, entries):
         """Seqs of legacy (no ``committed`` field) forward entries that could hold an
-        interrupted single-phase mutation: the LATEST such entry PER NAME. A pre-two-phase
-        process can crash after journaling but before writing the fact, its flock releases
-        on exit, and a LATER process can then journal a successful mutation — so an
-        interrupted legacy entry is NOT necessarily the globally-newest one (that
-        assumption, in an earlier revision, missed a stale seq; F2-r4 / R700). But only the
-        latest-per-name entry can still be pending: any OLDER same-name entry is superseded
-        by a newer journaled mutation of that name (goodfellow only mutates via the
-        journal), so the on-disk fact reflects the latest entry, never an older one. The
-        latest-per-name fact is therefore either at that entry's post-image (completed) or
-        its pre-image (never landed) — never an untracked third state — so inference on it
-        is unambiguous. Legacy ROLLBACK markers are excluded: an old rollback applied its
-        fact op BEFORE journaling its record, so its presence proves completion."""
+        interrupted single-phase mutation. Computed as: for each name, the LATEST forward
+        entry across ALL entries (committed or not); it is a candidate ONLY if that winner
+        is legacy.
+
+        Why the winner is taken across ALL entries, not only legacy ones (F2-r5): a
+        pre-two-phase process can crash after journaling but before writing the fact, its
+        flock releases on exit, and a LATER process can journal a successful mutation — so
+        an interrupted legacy entry is NOT necessarily the globally-newest one (F2-r4). But
+        an OLDER same-name entry is superseded by a newer journaled mutation of that name
+        (goodfellow only mutates via the journal), so the on-disk fact reflects the LATEST
+        forward entry. If we scanned only legacy entries, then after recovery commits the
+        latest entry an OLDER superseded legacy entry would become the new "latest legacy"
+        and, no longer matching the current fact, be falsely reported unresolved — wedging
+        a healthy write->promote legacy history on the second recover() (P17 / R700). The
+        latest-forward fact is either at that entry's post-image (completed -> commit) or
+        its pre-image (never landed -> roll back) — never an untracked third state — so the
+        inference is unambiguous. Legacy ROLLBACK markers are excluded (not a _FORWARD_OP):
+        an old rollback applied its fact op BEFORE journaling its record, proving
+        completion."""
         latest = {}
         for e in entries:
-            if e.get("committed") is None and e.get("op") in self._FORWARD_OPS:
-                name = e.get("name")
-                seq = e.get("seq")
-                if not isinstance(seq, int):
-                    continue
-                if name not in latest or seq > latest[name][0]:
-                    latest[name] = (seq, e)
-        return {v[0] for v in latest.values()}
+            if e.get("op") not in self._FORWARD_OPS:
+                continue
+            seq = e.get("seq")
+            if not isinstance(seq, int) or isinstance(seq, bool):
+                continue
+            name = e.get("name")
+            if name not in latest or seq > latest[name][0]:
+                latest[name] = (seq, e)
+        # candidate only if the winning (latest) forward entry is itself legacy
+        return {seq for seq, e in latest.values() if e.get("committed") is None}
 
     def _is_dangling(self, intent, legacy_candidates):
         """Whether a journal entry still needs recovery. True for:

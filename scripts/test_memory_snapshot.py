@@ -1008,3 +1008,27 @@ def test_fsync_dir_propagates_open_io_error_on_posix(tmp_path, monkeypatch):
     with pytest.raises(OSError) as ei:
         memory_index._fsync_dir(str(tmp_path))
     assert ei.value.errno == errno.EIO
+
+
+def test_legacy_same_name_write_then_promote_survives_repeated_recover(tmp_path):
+    """Review-5 F2-r5 / P17: a HEALTHY legacy history with multiple forward mutations of
+    ONE name (write pending -> promote confirmed) must recover to a clean no-op and stay
+    clean across REPEATED recover() calls. The candidate is the latest FORWARD entry per
+    name across all entries (not the latest still-fieldless one), so once the promote
+    commits, the older superseded write must NOT resurface as a false 'latest legacy'
+    candidate and wedge future mutations."""
+    gf = _root(tmp_path)
+    store = MemoryStore(gf)
+    _fact(store, "f", status="pending")  # seq 1: write
+    store.promote("f")  # seq 2: promote -> confirmed on disk
+    entries = store.read_journal()
+    for e in entries:  # simulate a pre-two-phase journal
+        e.pop("committed", None)
+    store.journal_path.write_text("".join(json.dumps(e) + "\n" for e in entries))
+
+    store2 = MemoryStore(gf)
+    assert store2.recover() == []  # latest (promote) rolls forward; write untouched
+    assert store2.recover() == []  # SECOND pass must NOT wedge on the superseded write
+    assert store2.recover() == []  # ...and stays clean
+    assert "status: confirmed" in (gf / "memory" / "f.md").read_text()
+    _fact(store2, "after")  # mutations are NOT failed closed
