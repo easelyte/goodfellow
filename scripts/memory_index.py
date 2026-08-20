@@ -41,16 +41,20 @@ journal rename / fact change that the crash-recovery ordering depends on survive
 
 Backward compatibility: a pre-existing journal predates two-phase, so its forward
 entries have NO ``committed`` field. Such entries are treated as **committed** (they
-already completed before this code shipped) — with ONE exception: the SINGLE NEWEST entry,
-if it is a legacy forward op, is run through the same crash-recovery inference (F1). A
-pre-two-phase version could have crashed mid single-phase mutation, and the newest slot is
-the only place such an interrupted mutation can survive (every older entry is proven
-completed by the next lock acquisition); leaving it "committed" would let `recover` report
-success while journal and fact disagree, later CAS-conflict a rollback, and let retention
-evict the evidence (P17 Ratchet Every Migration). Legacy ROLLBACK markers are always
-committed (old rollbacks applied the fact op before journaling). The on-disk schema change
-is purely additive (one optional field), so existing `.goodfellow` journals load and — for
-a cleanly-completed newest mutation — recover to a no-op committed mark.
+already completed before this code shipped) — with ONE exception: the LATEST legacy
+forward entry PER NAME is run through the same crash-recovery inference (F1). A pre-two-
+phase version could have crashed mid single-phase mutation; because its flock releases on
+crash, a LATER process can journal a successful mutation after it, so the interrupted
+entry is not necessarily the globally-newest one (F2-r4) — but it IS the latest entry for
+its name (any older same-name entry was superseded by a newer journaled mutation). Leaving
+it "committed" would let `recover` falsely report success while journal and fact disagree,
+later CAS-conflict a rollback, and let retention evict the evidence (P17 Ratchet Every
+Migration / R700). The latest-per-name fact is either at that entry's post-image
+(completed -> commit) or its pre-image (never landed -> roll back) — never an untracked
+third state — so the inference is unambiguous; a genuine third state (non-journaled edit)
+stays UNRESOLVED and fails closed. Legacy ROLLBACK markers are always committed (old
+rollbacks applied the fact op before journaling). The schema change is purely additive
+(one optional field), so a cleanly-completed legacy journal recovers to a no-op mark.
 
 Byte budget (retention): the journal is bounded by entry count AND total bytes, keeping
 the NEWEST entries (a suffix). Suffix-keep guarantees the record of the mutation in
@@ -154,8 +158,16 @@ def _fsync_dir(dirpath):
     rather than falsely claiming host-crash durability (F2 / P3 Fail Visible)."""
     try:
         dfd = os.open(str(dirpath), os.O_RDONLY)
-    except (OSError, ValueError):
-        return  # platform without directory fds (e.g. Windows) — best-effort skip
+    except ValueError:
+        return  # embedded NUL etc. — cannot open, nothing to sync
+    except OSError:
+        # A non-POSIX platform (Windows) has no directory fds -> best-effort skip. On
+        # POSIX a directory this code just wrote to MUST be openable; any failure here
+        # (EIO, EMFILE/ENFILE fd exhaustion, ...) is a REAL error the WAL depends on ->
+        # propagate rather than silently continue (F3 / P3 Fail Visible).
+        if os.name != "posix":
+            return
+        raise
     try:
         os.fsync(dfd)
     except OSError as e:
@@ -832,30 +844,48 @@ class MemoryStore:
             )
         return False  # unknown op with committed:false
 
-    def _is_dangling(self, intent, newest_seq):
+    def _legacy_forward_candidates(self, entries):
+        """Seqs of legacy (no ``committed`` field) forward entries that could hold an
+        interrupted single-phase mutation: the LATEST such entry PER NAME. A pre-two-phase
+        process can crash after journaling but before writing the fact, its flock releases
+        on exit, and a LATER process can then journal a successful mutation — so an
+        interrupted legacy entry is NOT necessarily the globally-newest one (that
+        assumption, in an earlier revision, missed a stale seq; F2-r4 / R700). But only the
+        latest-per-name entry can still be pending: any OLDER same-name entry is superseded
+        by a newer journaled mutation of that name (goodfellow only mutates via the
+        journal), so the on-disk fact reflects the latest entry, never an older one. The
+        latest-per-name fact is therefore either at that entry's post-image (completed) or
+        its pre-image (never landed) — never an untracked third state — so inference on it
+        is unambiguous. Legacy ROLLBACK markers are excluded: an old rollback applied its
+        fact op BEFORE journaling its record, so its presence proves completion."""
+        latest = {}
+        for e in entries:
+            if e.get("committed") is None and e.get("op") in self._FORWARD_OPS:
+                name = e.get("name")
+                seq = e.get("seq")
+                if not isinstance(seq, int):
+                    continue
+                if name not in latest or seq > latest[name][0]:
+                    latest[name] = (seq, e)
+        return {v[0] for v in latest.values()}
+
+    def _is_dangling(self, intent, legacy_candidates):
         """Whether a journal entry still needs recovery. True for:
           - ANY entry explicitly ``committed: false`` — a new-format two-phase intent
             whose commit flip never landed (forward OR rollback, at any position);
-          - the SINGLE NEWEST entry when it is a LEGACY forward op (no ``committed``
-            field). A pre-two-phase version could have crashed mid single-phase mutation,
-            and the newest slot is the ONLY place such an interrupted mutation can survive
-            — every older entry is proven completed by the next lock acquisition (F1 /
-            P17 Ratchet Every Migration). A legacy forward that actually completed simply
-            recovers as ``actual == post_hash -> commit`` (a harmless mark); only one that
-            never landed is rolled back.
-        Legacy ROLLBACK markers are NEVER dangling: old rollbacks applied the fact op
-        BEFORE journaling their record, so a legacy rollback entry proves completion.
-        Older legacy forward entries likewise default to committed (see above)."""
+          - a LEGACY forward op (no ``committed`` field) that is the latest-per-name
+            legacy forward entry (``seq in legacy_candidates``; see
+            `_legacy_forward_candidates`). A pre-two-phase version could have crashed mid
+            single-phase mutation (F1 / P17 Ratchet Every Migration); such an entry
+            recovers as ``actual == post_hash -> commit`` (a harmless mark) when it
+            actually completed, and is rolled back only when its fact never landed.
+        Legacy ROLLBACK markers and superseded older same-name legacy entries are NOT
+        dangling (see `_legacy_forward_candidates`)."""
         committed = intent.get("committed")
         if committed is False:
             return True
-        if (
-            committed is None
-        ):  # legacy entry (field absent) — only the newest can dangle
-            return (
-                intent.get("seq") == newest_seq
-                and intent.get("op") in self._FORWARD_OPS
-            )
+        if committed is None:  # legacy entry (field absent)
+            return intent.get("seq") in legacy_candidates
         return False  # committed is True -> already resolved
 
     def _recover_locked(self):
@@ -886,14 +916,19 @@ class MemoryStore:
         entries = self.read_journal()
         by_seq = {e.get("seq"): e for e in entries}
         reverted = self._committed_reverts_locked(entries)
-        # newest entry: the ONLY position a legacy (pre-two-phase) journal could hold an
-        # interrupted single-phase mutation — a subsequent lock acquisition proves every
-        # OLDER entry's mutation returned. See _is_dangling / F1.
-        newest_seq = max((e.get("seq", 0) for e in entries), default=0)
+        # legacy (pre-two-phase) journals can hold an interrupted single-phase mutation at
+        # the latest-per-name forward entry (NOT only the global newest — a crashed
+        # process releases its flock and a later one can append; F2-r4). See
+        # _legacy_forward_candidates.
+        legacy_candidates = self._legacy_forward_candidates(entries)
         changed = False
         unresolved = []
+        # target_seqs of dangling ROLLBACK intents that recovery COMPLETED this pass — a
+        # user rollback() that crashed after its fact op but before its commit flip.
+        # rollback() uses this to avoid selecting a SECOND target on retry (F1-r4 / P32).
+        recovered_rollbacks = []
         for intent in entries:
-            if not self._is_dangling(intent, newest_seq):
+            if not self._is_dangling(intent, legacy_candidates):
                 continue
             seq = intent.get("seq")
             if seq in reverted:
@@ -919,6 +954,8 @@ class MemoryStore:
                 # the fact already holds the produced state -> roll FORWARD (commit)
                 self._mark_committed_locked(seq)
                 changed = True
+                if op == "rollback":  # a user rollback that landed but didn't commit
+                    recovered_rollbacks.append(intent.get("target_seq"))
                 continue
 
             if op in self._FORWARD_OPS:
@@ -991,16 +1028,24 @@ class MemoryStore:
                     _atomic_write(path, restore)
                 self._mark_committed_locked(seq)  # commit the now-applied rollback
                 changed = True
+                recovered_rollbacks.append(intent.get("target_seq"))
                 continue
 
             unresolved.append(seq)  # unknown op with committed:false — report it
-        return changed, sorted(x for x in unresolved if x is not None)
+        return (
+            changed,
+            sorted(x for x in unresolved if x is not None),
+            [t for t in recovered_rollbacks if t is not None],
+        )
 
     def _recover_or_raise_locked(self):
         """Recover, then FAIL CLOSED if anything is unresolved — a mutation must not
         proceed while a dangling intent's evidence could be evicted by retention (R700 /
-        P3). Caller MUST hold memory_lock. Returns True if recovery changed anything."""
-        changed, unresolved = self._recover_locked()
+        P3). Caller MUST hold memory_lock. Returns ``(changed, recovered_rollbacks)``:
+        ``recovered_rollbacks`` = the forward target_seqs of any in-flight rollback that
+        recovery just COMPLETED, so rollback() can avoid double-targeting on retry
+        (F1-r4 / P32)."""
+        changed, unresolved, recovered_rollbacks = self._recover_locked()
         if unresolved:
             raise self.UnresolvedRecovery(
                 f"unresolved dangling journal intent(s) at seq {unresolved}: a fact was "
@@ -1008,7 +1053,7 @@ class MemoryStore:
                 "missing. Inspect with the `journal` command and reconcile before "
                 "mutating."
             )
-        return changed
+        return changed, recovered_rollbacks
 
     def recover(self):
         """Resolve any dangling two-phase intents and republish the index if anything
@@ -1018,7 +1063,7 @@ class MemoryStore:
         rather than claim a bogus 'recovery complete'."""
         self._preflight()
         with memory_lock(self.gf_root):
-            changed, unresolved = self._recover_locked()
+            changed, unresolved, _recovered = self._recover_locked()
             # Regenerate if recovery changed state OR a prior interrupted recovery left
             # .dirty set (F3): a recovery that mutated the fact + committed the intent but
             # then failed to regenerate must NOT be reported 'complete' on retry just
@@ -1048,7 +1093,17 @@ class MemoryStore:
             # Resolve any dangling intent first (fail closed if unresolvable), so an
             # in-flight incomplete mutation is rolled forward/back cleanly instead of
             # surfacing as a spurious CAS conflict.
-            self._recover_or_raise_locked()
+            _changed, recovered_rollbacks = self._recover_or_raise_locked()
+            if recovered_rollbacks:
+                # A prior rollback() crashed AFTER its fact op but BEFORE its commit
+                # marker; recovery just completed it. Treat THIS invocation as that
+                # request's retry and return the seq it rolled back WITHOUT selecting a
+                # new target — otherwise one retried request would also roll back the next
+                # unrelated fact (F1-r4 / P32 Idempotency for Mutations).
+                if seq is None:
+                    return max(recovered_rollbacks)
+                if seq in recovered_rollbacks:
+                    return seq
             entries = self.read_journal()
             reverted = self._committed_reverts_locked(entries)
             target = None
@@ -1191,7 +1246,7 @@ class MemoryStore:
             # before regenerating so the recovered index reflects the true fact state.
             # A read must not hard-fail (it should still surface the best index it can),
             # but an unresolved dangler is reported to stderr so it is not silent (P3).
-            _changed, unresolved = self._recover_locked()
+            _changed, unresolved, _recovered = self._recover_locked()
             if unresolved:
                 print(
                     f"WARN memory_index: unresolved dangling journal intent(s) at seq "

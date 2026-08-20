@@ -9,6 +9,7 @@ regenerates. Facts may carry an optional single-line `evidence:` provenance fiel
 import errno
 import json
 import multiprocessing
+import os
 import pathlib
 import sys
 
@@ -748,12 +749,12 @@ def test_cli_write_evidence_and_rollback(tmp_path):
 # ---- review round 3: F1 legacy-journal upgrade across a crash --------------
 
 
-def test_legacy_interrupted_newest_forward_is_rolled_back(tmp_path):
+def test_legacy_interrupted_forward_is_rolled_back(tmp_path):
     """Review-3 F1: a PRE-two-phase version crashed after journaling a forward write but
     before the fact landed, then the install upgrades. The legacy entry has NO ``committed``
     field; treating it as committed would let recovery report success while journal and
-    fact disagree (later CAS conflict + retention evicting the evidence). It is the NEWEST
-    entry, so recovery must infer state: the fact never landed -> roll it back, resolved."""
+    fact disagree (later CAS conflict + retention evicting the evidence). Recovery must
+    infer state on the latest-per-name legacy entry: the fact never landed -> roll back."""
     gf = _root(tmp_path)
     store = MemoryStore(gf)
     _fact(store, "seed")  # a real memory dir + a committed journal entry
@@ -783,35 +784,104 @@ def test_legacy_interrupted_newest_forward_is_rolled_back(tmp_path):
     _fact(store2, "after")  # mutations no longer fail closed
 
 
-def test_legacy_journal_completed_recovers_clean_and_older_entries_ignored(tmp_path):
+def _legacy_write_entry(seq, name, post_text, ts):
+    """A single-phase (no ``committed`` field) forward write journal entry."""
+    return {
+        "seq": seq,
+        "op": "write",
+        "name": name,
+        "pre_image": None,
+        "post_hash": memory_index._content_hash(post_text),
+        "ts": ts,
+    }
+
+
+def test_legacy_journal_all_completed_recovers_to_committed_noop(tmp_path):
     """Review-3 F1 (no false-positive): a healthy pre-two-phase journal — every entry
-    lacks ``committed`` — must recover to a benign no-op. The newest legacy forward whose
-    fact IS present rolls forward (committed mark); an OLDER legacy entry whose fact has
-    since diverged must NOT be flagged unresolved (only the newest slot can hold an
-    interrupted single-phase mutation — older entries are proven completed)."""
+    lacks ``committed`` and every fact matches its entry's post-image — recovers to a
+    benign no-op: each latest-per-name entry rolls FORWARD to committed, nothing flagged."""
     gf = _root(tmp_path)
     store = MemoryStore(gf)
-    _fact(store, "old")
-    _fact(store, "new")  # "new" is the newest journal entry
-    # Simulate a legacy journal: strip the ``committed`` flag from every entry.
+    _fact(store, "one")
+    _fact(store, "two")
+    entries = store.read_journal()
+    for e in entries:  # simulate a legacy journal: strip every ``committed`` flag
+        e.pop("committed", None)
+    store.journal_path.write_text("".join(json.dumps(e) + "\n" for e in entries))
+
+    store2 = MemoryStore(gf)
+    assert store2.recover() == []  # all facts present + matching -> clean
+    for e in store2.read_journal():
+        assert e.get("committed") is True  # each rolled forward
+    _fact(store2, "after")  # not failed closed
+
+
+def test_legacy_older_interrupted_forward_is_resolved_not_globally_newest(tmp_path):
+    """Review-4 F2-r4: an interrupted legacy mutation is NOT necessarily the globally
+    newest entry — a crashed pre-two-phase process releases its flock and a LATER process
+    can journal a successful mutation after it. Recovery must inspect the latest-per-name
+    legacy entry (not just the global newest): here the OLDER write 'x' never landed and
+    is rolled back, the NEWER write 'y' landed and commits — recover() must NOT falsely
+    report 'complete' while leaving x's phantom unreconciled (R700)."""
+    gf = _root(tmp_path)
+    store = MemoryStore(gf)
+    _fact(store, "y")  # produces a real y.md whose content we can hash
+    y_hash = memory_index._content_hash((gf / "memory" / "y.md").read_text())
+    x = _legacy_write_entry(
+        1, "x", "x that never landed\n", "2026-01-01T00:00:00+00:00"
+    )
+    y = {  # newer legacy write, fact present + matching
+        "seq": 2,
+        "op": "write",
+        "name": "y",
+        "pre_image": None,
+        "post_hash": y_hash,
+        "ts": "2026-01-02T00:00:00+00:00",
+    }
+    store.journal_path.write_text(json.dumps(x) + "\n" + json.dumps(y) + "\n")
+    assert not (gf / "memory" / "x.md").exists()  # x's mutation never landed
+
+    store2 = MemoryStore(gf)
+    assert store2.recover() == []  # older phantom RESOLVED (rolled back), not ignored
+    assert not (gf / "memory" / "x.md").exists()
+    rb = [
+        e
+        for e in store2.read_journal()
+        if e["op"] == "rollback" and e.get("target_seq") == 1
+    ]
+    assert rb and rb[-1].get("committed") is True  # x rolled back via committed marker
+    y_entry = [
+        e for e in store2.read_journal() if e["op"] == "write" and e["name"] == "y"
+    ]
+    assert y_entry and y_entry[0].get("committed") is True  # y rolled forward
+    _fact(store2, "after")  # not failed closed
+
+
+def test_legacy_third_state_non_journaled_edit_is_unresolved(tmp_path):
+    """Review-4 F2-r4 (fail-visible): a latest-per-name legacy entry whose fact is a
+    genuine THIRD state (neither post- nor pre-image — a non-journaled edit during the
+    crash window) must stay UNRESOLVED and block mutations, never a bogus 'complete'."""
+    gf = _root(tmp_path)
+    store = MemoryStore(gf)
+    _fact(store, "z")
     entries = store.read_journal()
     for e in entries:
         e.pop("committed", None)
     store.journal_path.write_text("".join(json.dumps(e) + "\n" for e in entries))
-    # Diverge the OLDER fact's content so its post_hash no longer matches on disk.
-    (gf / "memory" / "old.md").write_text("# totally different content\n")
+    (gf / "memory" / "z.md").write_text("# non-journaled corruption\n")  # third state
 
     store2 = MemoryStore(gf)
-    assert store2.recover() == []  # older divergence NOT mistaken for a dangling intent
-    newest = max(store2.read_journal(), key=lambda e: e["seq"])
-    assert newest["name"] == "new" and newest.get("committed") is True  # rolled forward
-    _fact(store2, "after")  # not failed closed
+    assert store2.recover() == [1]  # reported unresolved, not silently 'complete'
+    with pytest.raises(MemoryStore.UnresolvedRecovery):
+        _fact(store2, "blocked")  # mutations fail closed until reconciled
 
 
 # ---- review round 3: F2 directory-fsync failure propagation ----------------
 
 
-def test_fsync_dir_propagates_real_io_error_but_skips_unsupported(tmp_path, monkeypatch):
+def test_fsync_dir_propagates_real_io_error_but_skips_unsupported(
+    tmp_path, monkeypatch
+):
     """Review-3 F2: a real directory-fsync failure (EIO/ENOSPC) is a durability failure
     the WAL depends on -> PROPAGATE (fail loud). A filesystem that cannot fsync a dir fd
     (EINVAL/ENOTSUP) is genuinely unsupported -> skip best-effort (never claim durability
@@ -873,3 +943,68 @@ def test_last_domain_delete_fsyncs_the_registry_dir(tmp_path, monkeypatch):
     store.delete_fact("d1")  # last domain fact -> registry purged
     assert not reg.exists()
     assert domains_dir in fsynced  # the removal was made durable (F3)
+
+
+# ---- review round 4: F1-r4 retried rollback must not roll back a 2nd fact ---
+
+
+def test_retried_rollback_does_not_roll_back_a_second_fact(tmp_path, monkeypatch):
+    """Review-4 F1-r4 / P32: rollback() is two-phase; if it applies its fact op and the
+    process crashes before the commit flip, RETRYING rollback() must complete the SAME
+    rollback and stop — never recover the in-flight rollback and then continue into
+    default-target selection to roll back the next unreverted fact. With two facts a
+    retried default rollback would otherwise remove both."""
+    gf = _root(tmp_path)
+    store = MemoryStore(gf)
+    _fact(store, "a")  # seq 1
+    _fact(store, "b")  # seq 2 (the default rollback target)
+
+    # Crash the FIRST rollback() after its fact op but before the commit marker.
+    def crash_commit(self, seq):
+        raise RuntimeError("simulated crash before the rollback commit marker")
+
+    monkeypatch.setattr(MemoryStore, "_mark_committed_locked", crash_commit)
+    with pytest.raises(RuntimeError):
+        store.rollback()  # targets b; applies the delete, then crashes on commit
+    monkeypatch.undo()
+
+    assert not (gf / "memory" / "b.md").exists()  # b's fact op landed
+    dangling = [
+        e
+        for e in store.read_journal()
+        if e["op"] == "rollback" and e.get("committed") is False
+    ]
+    assert dangling and dangling[-1]["target_seq"] == 2
+
+    # RETRY: a fresh process re-invokes the same default rollback.
+    store2 = MemoryStore(gf)
+    result = store2.rollback()
+    assert result == 2  # returns the seq it (re)completed — b
+    assert not (gf / "memory" / "b.md").exists()  # b stays rolled back
+    assert (gf / "memory" / "a.md").exists()  # a is NOT collaterally rolled back
+    rb = [e for e in store2.read_journal() if e["op"] == "rollback"]
+    assert (
+        rb[-1].get("committed") is True
+    )  # in-flight rollback committed, no new target
+
+
+# ---- review round 4: F3-r4 directory-OPEN failure propagation --------------
+
+
+def test_fsync_dir_propagates_open_io_error_on_posix(tmp_path, monkeypatch):
+    """Review-4 F3-r4: a real os.open() failure on a directory this code just wrote to
+    (EIO, EMFILE/ENFILE fd exhaustion, ...) is a genuine error the WAL depends on — on
+    POSIX it must PROPAGATE, not be swallowed as an 'unsupported platform' skip."""
+    if os.name != "posix":  # pragma: no cover - suite runs on the POSIX VPS
+        pytest.skip("POSIX-only propagation semantics")
+    real_open = memory_index.os.open
+
+    def open_eio(path, *a, **k):
+        if str(path) == str(tmp_path):
+            raise OSError(errno.EIO, "simulated directory open IO error")
+        return real_open(path, *a, **k)
+
+    monkeypatch.setattr(memory_index.os, "open", open_eio)
+    with pytest.raises(OSError) as ei:
+        memory_index._fsync_dir(str(tmp_path))
+    assert ei.value.errno == errno.EIO
