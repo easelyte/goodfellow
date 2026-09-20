@@ -9,6 +9,17 @@
           }
         ]
       }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/guard_engine.py\" --project-dir \"${CLAUDE_PROJECT_DIR}\""
+          }
+        ]
+      }
     ]
   }
 }

@@ -311,6 +311,44 @@ GOODFELLOW_REVIEW_MODEL=haiku   # Quick passes on small diffs
 | `GOODFELLOW_PRINCIPLES_WEB` | unset | `1` forces reading the web supplement (`knowledge/principles-web.md`) alongside core (and hard-errors if that file is missing — packaging drift). Unset or empty → auto-detected by a `package.json` at the project root (best-effort: core-only if the supplement isn't present). Any other non-empty value hard-errors. |
 | `GOODFELLOW_MEMORY` | `flat` | Memory backend. `flat` (default): append-only `.goodfellow/knowledge.md` with `[pending]→confirmed` promotion — zero-config, unchanged. `rich`: per-fact files (`.goodfellow/memory/*.md`) + regenerated index (`.goodfellow/MEMORY.md`) + domain registries + hybrid recall; first rich write auto-migrates an existing `knowledge.md`. Any other value hard-errors (no silent fall-back). The gate is enforced at the **chain-skill dispatch** level — skills resolve the mode (via `memory_config.py`) before choosing the flat or rich path. `scripts/memory_index.py` is the rich backend implementation invoked once rich is selected; it is not itself mode-gated, so don't invoke it directly while in `flat` mode. |
 | `GOODFELLOW_MEMORY_WARN_KB` | `16` | Rich-mode advisory size threshold (KB). When `MEMORY.md` exceeds it, regenerate prints a stderr warning suggesting `/goodfellow:triage`. Must be a positive integer; any other value hard-errors. Warning only — regeneration always completes. |
+| `GOODFELLOW_GUARDS` | `1` | Tool-layer PreToolUse guards (see below). `0` disables the built-in universal guards; user BLOCK rules in `.goodfellow/guards.json` still run. `CLAUDE_HOOK_BYPASS=1` disables everything for one command. |
+
+### Tool-layer guards
+
+A constraint whose violation is expensive to reverse does not belong in prose. Compaction is optimized for task accuracy, so nothing measures whether a "never do X" instruction survives the rewrite — and once it is gone, the session that inherits the summary was never told the rule. The fix that works is enforcement at the tool layer: a `PreToolUse` hook (`hooks/hooks.json` → `scripts/guard_engine.py`) that fires deterministically on every tool call regardless of what the context still holds.
+
+**Built-in universal guards** (on by default, no project knowledge required):
+
+- `git add -A` / `git add .` / `git add --all` — stage specific files; a blanket add is how secrets and stray artifacts leak into a commit.
+- `--dangerously-skip-permissions` — this flag disables the permission prompt for every tool call.
+- Force-push to a protected branch (`main`/`master` by default) — rewriting shared history can destroy other people's commits. Force-pushing a *feature* branch is not blocked.
+
+Matching is shlex-token based, not substring, and the built-ins inspect only the `Bash` tool's command — so writing or documenting a blocked flag in a file, or mentioning it inside a quoted commit message, never trips a guard.
+
+**Declarative project rules.** Drop a `.goodfellow/guards.json` to enforce your own expensive-to-reverse rules at the tool layer instead of hoping a prose instruction survives. See `configs/guards.example.json`. Shape:
+
+```json
+{
+  "protected_branches": ["main", "master"],
+  "disable_builtins": [],
+  "block": [
+    {
+      "id": "no-prod-db-writes",
+      "match": "regex",
+      "pattern": "psql.*(prod|production)",
+      "flags": "i",
+      "reason": "Prod DB writes need an operator greenlight.",
+      "tools": ["Bash"],
+      "bypass_env": "PROD_DB_OK"
+    }
+  ]
+}
+```
+
+Each rule needs `id`, `pattern`, and `reason`. `match` is `substring` (default) or `regex`; `tools` defaults to `["Bash"]` and may include `Write`/`Edit`; an optional `bypass_env` names an env var that, set to `1`, waives that one rule. Validate a config with `python3 scripts/guard_engine.py --validate` and inspect the enforced set with `--selfcheck`.
+
+**Failure posture.** The live hook fails *safe-open* on a malformed `guards.json`: it skips the user rules (built-ins still enforce), warns on stderr, and never deadlocks the session into a state where you cannot even edit the file to fix it. `--validate` fails *loud* (non-zero) for CI and pre-compaction checks. The `snap-compact` skill snapshots the active guard set with `--selfcheck` and re-asserts it after the compaction boundary, so governance that lives on disk is verified to have survived rather than assumed.
+
 
 ### Rich-mode recall hook (best-effort)
 

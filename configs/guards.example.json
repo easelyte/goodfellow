@@ -1,0 +1,33 @@
+{
+  "//": "Copy to .goodfellow/guards.json in your project. Declarative PreToolUse BLOCK rules — expensive-to-reverse constraints enforced at the tool layer, not in prose the summarizer can drop. Validate with: python3 guard_engine.py --validate. Inspect the active set with: --selfcheck.",
+
+  "protected_branches": ["main", "master"],
+
+  "disable_builtins": [],
+
+  "block": [
+    {
+      "id": "no-prod-db-writes",
+      "match": "regex",
+      "pattern": "psql.*(prod|production)",
+      "flags": "i",
+      "reason": "Prod DB writes need an operator greenlight. Run the migration through review, then apply with the sanctioned path.",
+      "tools": ["Bash"],
+      "bypass_env": "PROD_DB_OK"
+    },
+    {
+      "id": "no-rm-rf-root",
+      "match": "regex",
+      "pattern": "rm\\s+-rf\\s+/(\\s|$)",
+      "reason": "rm -rf / is almost never what you meant.",
+      "tools": ["Bash"]
+    },
+    {
+      "id": "no-secret-in-committed-file",
+      "match": "substring",
+      "pattern": "-----BEGIN RSA PRIVATE KEY-----",
+      "reason": "Do not write a private key into a tracked file.",
+      "tools": ["Write", "Edit"]
+    }
+  ]
+}

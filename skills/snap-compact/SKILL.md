@@ -62,8 +62,42 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/memory_index.py" --root .goodfellow write
   --type principle --status pending --opened "$(date +%F)" --body "Detail of the learning."
 ```
 
-## 3. Compact
+## 3. Snapshot the enforced guard set (governance survives, prose does not)
+
+Compaction is optimized for task accuracy, so nothing measures whether a safety
+constraint survives the rewrite ("Governance Decay"). A "never do X" *sentence* can
+silently vanish across the boundary; a tool-layer guard cannot, because it lives on
+disk and fires on every tool call. Snapshot the active BLOCK-rule set now so the
+post-boundary session can **assert** it is still enforced instead of trusting the
+summarizer:
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/guard_engine.py" --selfcheck > .goodfellow/guard-set.pre-compact.json
+```
+
+This records the enabled built-ins, protected branches, and the ids of every
+declarative rule in `.goodfellow/guards.json`. If it reports a non-null
+`config_error`, fix `guards.json` *before* compacting (`guard_engine.py --validate`
+prints the specific error) — a broken config means your project's own
+expensive-to-reverse rules are NOT being enforced.
+
+## 4. Compact
 
 Proceed with context compaction. The learnings are now persisted and will survive the context loss.
 
 Report: "Extracted N learnings to .goodfellow/knowledge.md before compacting."
+
+## 5. After the boundary — assert the guard set is intact
+
+On the first turn after compaction, re-run the self-check and diff it against the
+pre-compaction snapshot. The set is on disk, so it *should* match exactly; a
+mismatch (a rule id gone, `builtins_enabled` shrunk, a new `config_error`) means
+enforcement changed under you — surface it loudly rather than assuming the summary
+kept your governance:
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/guard_engine.py" --selfcheck > .goodfellow/guard-set.post-compact.json
+diff .goodfellow/guard-set.pre-compact.json .goodfellow/guard-set.post-compact.json \
+  && echo "Guard set intact across compaction." \
+  || echo "WARNING: guard set changed across compaction — investigate before proceeding."
+```
