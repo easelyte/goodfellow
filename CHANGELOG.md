@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- **Tool-layer enforcement guards (PreToolUse).** A new `PreToolUse` hook (`hooks/hooks.json` →
+  `scripts/guard_engine.py`) enforces expensive-to-reverse constraints at the tool layer instead of
+  in prose a compaction can silently drop. Ships three built-in universal guards on by default (no
+  project knowledge required): `git add -A`/`.`/`--all`, the `--dangerously-skip-permissions` CLI
+  flag, and force-push to a protected branch (`main`/`master`; feature branches unaffected). Matching
+  is shlex-token based and built-ins inspect only the `Bash` command, so writing or documenting a
+  blocked flag in a file — or mentioning it inside a quoted commit message — never trips a guard.
+  Projects add their own BLOCK rules in `.goodfellow/guards.json` (`substring`/`regex` match,
+  per-tool scoping, per-rule `bypass_env`; see `configs/guards.example.json`). Denies via the
+  documented `permissionDecision` JSON contract (asserted by JSON, not exit code). Fails *safe-open*
+  on a malformed config (built-ins still enforce, no deadlock); `guard_engine.py --validate` fails
+  *loud* for CI, and `--selfcheck` prints the enforced set. The `snap-compact` skill now snapshots
+  that set and re-asserts it after the compaction boundary. Toggles: `GOODFELLOW_GUARDS=0`
+  (built-ins off), `CLAUDE_HOOK_BYPASS=1` (all off, one command).
 - **New `grill` skill — opt-in relentless-interview design front-end.** A sibling to `brainstorm`
   for fuzzy or high-stakes intent: a bounded fact-scout (≤8 tool-calls, foreground), then a
   one-question-at-a-time interview (each question ships a recommended default + a prominent "enough /
