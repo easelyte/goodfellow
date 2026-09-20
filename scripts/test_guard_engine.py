@@ -3,7 +3,9 @@
 Every deny path is asserted by its JSON output (the deny contract), not by exit
 code — a PreToolUse hook denies via permissionDecision JSON on stdout while
 exiting 0. `run_hook` drives the real CLI over stdin to prove the wire contract;
-the pure-function tests cover the matrix cheaply.
+the pure-function tests cover the matrix cheaply. Bypass-shape fixtures
+(multiline / wrapper / nested-shell / force-refspec) are first-class, per the
+"test the parser-equivalent spellings, not just the canonical one" rule.
 """
 
 import json
@@ -21,20 +23,21 @@ from guard_engine import (
     check_git_add_all,
     check_skip_permissions,
     decision_for_input,
+    expand_segments,
     load_config,
-    split_segments,
     validate_config,
 )
 
 HERE = os.path.dirname(__file__)
 ENGINE = os.path.join(HERE, "guard_engine.py")
+HOOKS_JSON = os.path.join(os.path.dirname(HERE), "hooks", "hooks.json")
 
 
 def run_hook(payload, project_dir, env=None):
     """Invoke the engine as the harness does: JSON on stdin. Returns (rc, parsed_stdout_or_None)."""
     full_env = dict(os.environ)
-    full_env.pop("CLAUDE_HOOK_BYPASS", None)
-    full_env.pop("GOODFELLOW_GUARDS", None)
+    for k in ("CLAUDE_HOOK_BYPASS", "GOODFELLOW_GUARDS", "CLAUDE_PROJECT_DIR"):
+        full_env.pop(k, None)
     if env:
         full_env.update(env)
     proc = subprocess.run(
@@ -64,7 +67,7 @@ def assert_denied(parsed, contains=None):
 
 
 # --------------------------------------------------------------------------- #
-# Built-in: git add -A / . / --all
+# Built-in: git add -A / . / --all  (incl. bypass shapes)
 # --------------------------------------------------------------------------- #
 
 
@@ -78,10 +81,16 @@ def assert_denied(parsed, contains=None):
         "git -C /repo add --all",
         "cd x && git add .",
         "command git add -A",
+        "echo preparing\ngit add -A",  # F1: multiline
+        "env git add -A",  # F1: env wrapper
+        "FOO=bar git add -A",  # F1: leading assignment
+        "sudo git add --all",  # F1: sudo wrapper
+        "bash -c 'git add -A'",  # F1: nested shell
+        'sh -lc "git add ."',  # F1: nested login shell
     ],
 )
 def test_git_add_all_denied(cmd):
-    assert check_git_add_all(split_segments(cmd)) is not None
+    assert check_git_add_all(expand_segments(cmd)) is not None
 
 
 @pytest.mark.parametrize(
@@ -95,32 +104,38 @@ def test_git_add_all_denied(cmd):
     ],
 )
 def test_git_add_specific_allowed(cmd):
-    assert check_git_add_all(split_segments(cmd)) is None
+    assert check_git_add_all(expand_segments(cmd)) is None
 
 
 # --------------------------------------------------------------------------- #
-# Built-in: --dangerously-skip-permissions
+# Built-in: --dangerously-skip-permissions  (incl. bypass shapes)
 # --------------------------------------------------------------------------- #
 
 
 def test_skip_perms_denied():
     assert (
-        check_skip_permissions(split_segments("claude --dangerously-skip-permissions"))
+        check_skip_permissions(expand_segments("claude --dangerously-skip-permissions"))
         is not None
     )
     assert (
         check_skip_permissions(
-            split_segments("claude --dangerously-skip-permissions=1")
+            expand_segments("claude --dangerously-skip-permissions=1")
         )
         is not None
     )
+
+
+def test_skip_perms_nested_shell_denied():
+    # F1 class: the flag hidden inside a `bash -c` program is still caught.
+    cmd = "bash -c 'claude --dangerously-skip-permissions'"
+    assert check_skip_permissions(expand_segments(cmd)) is not None
 
 
 def test_skip_perms_in_quoted_message_allowed():
     # The caveat: writing the flag text must NOT trip the guard. Inside a quoted
     # commit message the flag is one token (the message), not a standalone arg.
     cmd = "git commit -m 'docs: never use --dangerously-skip-permissions'"
-    assert check_skip_permissions(split_segments(cmd)) is None
+    assert check_skip_permissions(expand_segments(cmd)) is None
 
 
 def test_skip_perms_not_checked_on_write_content():
@@ -133,7 +148,7 @@ def test_skip_perms_not_checked_on_write_content():
 
 
 # --------------------------------------------------------------------------- #
-# Built-in: force-push to a protected branch
+# Built-in: force-push to a protected branch  (incl. bypass shapes)
 # --------------------------------------------------------------------------- #
 
 
@@ -146,11 +161,14 @@ def test_skip_perms_not_checked_on_write_content():
         "git push --force-with-lease origin main",
         "git push -f origin HEAD:main",
         "git push --force origin +main",
+        "git push origin +main",  # F2: + refspec, no flag
+        "git push origin +HEAD:refs/heads/main",  # F2: + refspec + full ref
+        "git push --force origin HEAD:refs/heads/main",  # F2: full ref normalized
     ],
 )
 def test_force_push_protected_denied(cmd):
     assert (
-        check_force_push_protected(split_segments(cmd), ["main", "master"]) is not None
+        check_force_push_protected(expand_segments(cmd), ["main", "master"]) is not None
     )
 
 
@@ -162,22 +180,23 @@ def test_force_push_protected_denied(cmd):
         "git push origin main",  # not forced
         "git push",  # bare, no branch named
         "git push -f",  # forced but no branch named -> not blocked
+        "git push origin +feature-x",  # + on a non-protected branch
     ],
 )
 def test_force_push_non_protected_allowed(cmd):
-    assert check_force_push_protected(split_segments(cmd), ["main", "master"]) is None
+    assert check_force_push_protected(expand_segments(cmd), ["main", "master"]) is None
 
 
 def test_custom_protected_branches():
     assert (
         check_force_push_protected(
-            split_segments("git push -f origin release"), ["release"]
+            expand_segments("git push -f origin release"), ["release"]
         )
         is not None
     )
     assert (
         check_force_push_protected(
-            split_segments("git push -f origin main"), ["release"]
+            expand_segments("git push -f origin main"), ["release"]
         )
         is None
     )
@@ -191,6 +210,12 @@ def test_custom_protected_branches():
 def test_wire_deny_git_add_all(tmp_path):
     rc, parsed = run_hook(bash("git add -A"), tmp_path)
     assert rc == 0  # deny is exit 0 + JSON, never a non-zero exit
+    assert_denied(parsed, contains="Stage specific files")
+
+
+def test_wire_deny_git_add_all_multiline(tmp_path):
+    rc, parsed = run_hook(bash("echo hi\ngit add -A"), tmp_path)
+    assert rc == 0
     assert_denied(parsed, contains="Stage specific files")
 
 
@@ -330,6 +355,26 @@ def test_disable_builtin_from_config(tmp_path):
     assert_denied(push_parsed)  # other built-ins still active
 
 
+def test_regex_redos_does_not_hang(tmp_path):
+    # F3: a pathological pattern must not wedge the hook. The bounded matcher
+    # returns within the timeout (fail-open for that rule) rather than hanging.
+    write_guards(
+        tmp_path,
+        {
+            "block": [
+                {"id": "redos", "match": "regex", "pattern": "(a+)+$", "reason": "x"}
+            ]
+        },
+    )
+    payload = bash("a" * 40 + "!")
+    import time
+
+    start = time.time()
+    _, parsed = run_hook(payload, tmp_path)
+    elapsed = time.time() - start
+    assert elapsed < 10, f"hook took {elapsed}s — ReDoS not bounded"
+
+
 # --------------------------------------------------------------------------- #
 # Config validation / failure posture
 # --------------------------------------------------------------------------- #
@@ -387,6 +432,24 @@ def test_validate_cli_ok_when_absent(tmp_path):
         },  # bad regex
         {"protected_branches": "main"},  # not a list
         {"disable_builtins": ["no-such-builtin"]},  # unknown builtin
+        {
+            "block": [{"id": "x", "pattern": "y", "reason": "z", "flags": 1}]
+        },  # F4: non-str flags
+        {
+            "block": [{"id": "x", "pattern": "y", "reason": "z", "flags": "q"}]
+        },  # F4: bad flag char
+        {
+            "block": [{"id": "x", "pattern": "y", "reason": "z", "bypass_env": 1}]
+        },  # F4: non-str env
+        {
+            "block": [{"id": "x", "pattern": "y", "reason": "z", "bypass_env": "1BAD"}]
+        },  # F4: bad env name
+        {
+            "block": [  # F4: duplicate ids
+                {"id": "dup", "pattern": "a", "reason": "z"},
+                {"id": "dup", "pattern": "b", "reason": "z"},
+            ]
+        },
     ],
 )
 def test_validate_config_rejects(bad):
@@ -394,8 +457,26 @@ def test_validate_config_rejects(bad):
         validate_config(bad)
 
 
+def test_validate_config_accepts_typed_optionals():
+    validate_config(
+        {
+            "block": [
+                {
+                    "id": "ok",
+                    "pattern": "p",
+                    "reason": "r",
+                    "match": "regex",
+                    "flags": "im",
+                    "bypass_env": "MY_OK",
+                    "tools": ["Bash", "Write"],
+                }
+            ]
+        }
+    )
+
+
 # --------------------------------------------------------------------------- #
-# Compaction-survival self-check
+# Compaction-survival self-check (full-rule digests, not id proxy)
 # --------------------------------------------------------------------------- #
 
 
@@ -411,8 +492,59 @@ def test_selfcheck_lists_active_guard_set(tmp_path):
     assert proc.returncode == 0
     state = json.loads(proc.stdout)
     assert set(state["builtins_enabled"]) == set(BUILTIN_IDS)
-    assert state["user_rule_ids"] == ["no-prod"]
+    assert [r["id"] for r in state["user_rules"]] == ["no-prod"]
     assert state["config_error"] is None
+
+
+def test_selfcheck_digest_changes_when_pattern_changes(tmp_path):
+    # F5: same id, changed pattern -> digest changes, so drift is detected.
+    write_guards(tmp_path, {"block": [{"id": "r", "pattern": "A", "reason": "x"}]})
+    before = active_guard_set(str(tmp_path))["user_rules"][0]["digest"]
+    write_guards(tmp_path, {"block": [{"id": "r", "pattern": "B", "reason": "x"}]})
+    after = active_guard_set(str(tmp_path))["user_rules"][0]["digest"]
+    assert before != after
+
+
+def test_assert_guard_set_detects_drift(tmp_path):
+    # F5: --assert-guard-set exits non-zero when the set changes, not just warns.
+    write_guards(tmp_path, {"block": [{"id": "r", "pattern": "A", "reason": "x"}]})
+    baseline = tmp_path / "baseline.json"
+    proc = subprocess.run(
+        [sys.executable, ENGINE, "--project-dir", str(tmp_path), "--selfcheck"],
+        capture_output=True,
+        text=True,
+    )
+    baseline.write_text(proc.stdout)
+    # No change -> exit 0
+    ok = subprocess.run(
+        [
+            sys.executable,
+            ENGINE,
+            "--project-dir",
+            str(tmp_path),
+            "--assert-guard-set",
+            str(baseline),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert ok.returncode == 0
+    # Change the pattern -> drift -> exit 1
+    write_guards(tmp_path, {"block": [{"id": "r", "pattern": "B", "reason": "x"}]})
+    drift = subprocess.run(
+        [
+            sys.executable,
+            ENGINE,
+            "--project-dir",
+            str(tmp_path),
+            "--assert-guard-set",
+            str(baseline),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert drift.returncode == 1
+    assert "DRIFT" in drift.stderr
 
 
 def test_active_guard_set_surfaces_config_error(tmp_path):
@@ -427,3 +559,39 @@ def test_active_guard_set_surfaces_config_error(tmp_path):
 
 def test_load_config_absent_is_empty(tmp_path):
     assert load_config(str(tmp_path)) == {}
+
+
+# --------------------------------------------------------------------------- #
+# F6: pin the host wiring (guard is dead if hooks.json stops calling it)
+# --------------------------------------------------------------------------- #
+
+
+def test_hooks_json_wires_guard_engine():
+    with open(HOOKS_JSON, "r", encoding="utf-8") as fh:
+        data = json.load(fh)
+    pre = data["hooks"]["PreToolUse"]
+    entries = [
+        e
+        for e in pre
+        if any("guard_engine.py" in h.get("command", "") for h in e.get("hooks", []))
+    ]
+    assert entries, "no PreToolUse hook invokes guard_engine.py"
+    entry = entries[0]
+    assert "Bash" in entry["matcher"]
+    # the SessionStart recall hook must survive alongside the new PreToolUse one
+    assert data["hooks"]["SessionStart"]
+
+
+def test_hook_registered_selfcheck(tmp_path):
+    # active_guard_set reports the wiring as present when CLAUDE_PLUGIN_ROOT points
+    # at the repo (best-effort; None when the env is unset).
+    plugin_root = os.path.dirname(HERE)
+    state = active_guard_set(str(tmp_path))
+    assert state["hook_registered"] is None  # env unset in-process
+    proc = subprocess.run(
+        [sys.executable, ENGINE, "--project-dir", str(tmp_path), "--selfcheck"],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "CLAUDE_PLUGIN_ROOT": plugin_root},
+    )
+    assert json.loads(proc.stdout)["hook_registered"] is True

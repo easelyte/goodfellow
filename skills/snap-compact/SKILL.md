@@ -89,15 +89,19 @@ Report: "Extracted N learnings to .goodfellow/knowledge.md before compacting."
 
 ## 5. After the boundary — assert the guard set is intact
 
-On the first turn after compaction, re-run the self-check and diff it against the
-pre-compaction snapshot. The set is on disk, so it *should* match exactly; a
-mismatch (a rule id gone, `builtins_enabled` shrunk, a new `config_error`) means
-enforcement changed under you — surface it loudly rather than assuming the summary
-kept your governance:
+On the first turn after compaction, assert the current guard set against the
+pre-compaction snapshot. The snapshot records full per-rule digests (not just
+ids), the enabled built-ins, the protected branches, and whether the hook is
+still wired — so a rule that kept its id while its pattern changed, or a
+`config_error` that appeared, or the registration disappearing, all count as
+drift. The assertion exits non-zero on any mismatch (a gate, not a warning):
 
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/guard_engine.py" --selfcheck > .goodfellow/guard-set.post-compact.json
-diff .goodfellow/guard-set.pre-compact.json .goodfellow/guard-set.post-compact.json \
-  && echo "Guard set intact across compaction." \
-  || echo "WARNING: guard set changed across compaction — investigate before proceeding."
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/guard_engine.py" \
+  --assert-guard-set .goodfellow/guard-set.pre-compact.json \
+  || echo "WARNING: guard set drifted across compaction — investigate before proceeding."
 ```
+
+The set lives on disk, so it *should* match exactly; if it does not, your
+governance changed under you — stop and investigate rather than assuming the
+summary kept it.

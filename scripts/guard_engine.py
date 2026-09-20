@@ -22,16 +22,39 @@ A PreToolUse hook DENIES by printing a permissionDecision JSON object on stdout
 and exiting 0. A non-zero exit is a *hook error*, not a deny. Tests must assert
 the JSON, never the exit code. See `emit_deny` / `decision_for_input`.
 
-## The "flag text anywhere" caveat
+## Bypass-shape coverage (why parsing, not grep)
 
-Grepping the whole command string means merely *writing* a blocked flag as text
-(e.g. `git commit -m "docs: mention --dangerously-skip-permissions"`) trips the
-guard. Two defenses are baked in here:
-  - Built-in guards only inspect the `Bash` tool's command, never Write/Edit
-    *content*. Documenting or testing a flag in a file never trips a built-in.
-  - Matching is shlex-token based, not substring: the flag must appear as its own
-    argument token. A flag mentioned inside a quoted commit message is one token
-    (the message) and does not match.
+A guard that only recognizes the canonical spelling of a dangerous command is a
+guard an attacker (or a careless paste) walks around. So the built-ins parse
+shell structure rather than substring-match:
+
+  - Commands are split on unquoted newlines and `;`/`|`/`&`/`()` control
+    operators, so `echo hi\ngit add -A` is seen as two commands, not one.
+  - Leading env assignments and wrappers (`env`, `sudo`, `command`, `FOO=bar …`)
+    are stripped before the subcommand is read, so `env git add -A` is caught.
+  - Nested `sh -c '…'` / `bash -c '…'` programs are recursively expanded
+    (bounded depth), so `bash -c 'git add -A'` is caught.
+  - Force-push detection understands `+refspec` force syntax and normalizes
+    `refs/heads/main` to `main`.
+
+Conversely, matching is shlex-token based, so merely *writing* a blocked flag as
+text (`git commit -m "docs: --dangerously-skip-permissions"`) is one token — the
+message — and never trips a guard, and built-ins inspect only the `Bash` tool's
+command, never Write/Edit content.
+
+Known, deliberate limitation: a bare `git push --force` with no refspec is NOT
+blocked (the target branch cannot be resolved statically, and force-pushing a
+feature branch is routine). Name the protected branch to be protected.
+
+## Untrusted config (ReDoS bound)
+
+`.goodfellow/guards.json` is repository-supplied and therefore untrusted input.
+A user `regex` rule runs on the text of every tool call, so a pathological
+pattern (`(a+)+$`) could catastrophically backtrack and wedge the session — the
+PreToolUse hook would hang before Bash/Write/Edit. Regex matching is bounded by a
+wall-clock timeout (POSIX) and a payload-length cap; on timeout the rule is
+skipped with a loud stderr warning rather than hanging (fail-open for that one
+rule, so the session is never wedged — the primary harm P61 warns about).
 
 ## Failure posture (fail-safe-open for the live hook, fail-loud on demand)
 
@@ -39,9 +62,11 @@ A governance gate must not *itself* block legitimate work. If `.goodfellow/guard
 is malformed, the live hook skips the user rules (built-ins still enforce) and
 writes a warning to stderr — it never deny-alls the session into a deadlock where
 you cannot even edit the file to fix it. For a loud, CI/snap-compact-style check,
-run `guard_engine.py --validate`, which exits non-zero on a bad config, and
-`guard_engine.py --selfcheck`, which prints the active guard set so a
-post-compaction session can assert governance survived the boundary.
+run `guard_engine.py --validate`, which exits non-zero on a bad config;
+`guard_engine.py --selfcheck`, which prints the active guard set (with full
+per-rule digests) so a post-compaction session can assert governance survived the
+boundary; and `guard_engine.py --assert-guard-set <baseline.json>`, which exits
+non-zero if the enforced set drifted from a snapshot.
 
 Escape hatches: `CLAUDE_HOOK_BYPASS=1` (all guards off), `GOODFELLOW_GUARDS=0`
 (built-ins off), or a per-rule `bypass_env` in guards.json.
@@ -49,6 +74,7 @@ Escape hatches: `CLAUDE_HOOK_BYPASS=1` (all guards off), `GOODFELLOW_GUARDS=0`
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -60,6 +86,27 @@ from typing import Iterable, List, Optional, Sequence
 DEFAULT_PROTECTED_BRANCHES = ("main", "master")
 BUILTIN_IDS = ("git-add-all", "dangerous-skip-permissions", "force-push-protected")
 SKIP_PERMS_FLAG = "--dangerously-skip-permissions"
+
+# Leading wrappers/assignments to strip before reading a subcommand.
+_ENV_ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+_ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_WRAPPERS = {
+    "command",
+    "env",
+    "sudo",
+    "nice",
+    "nohup",
+    "stdbuf",
+    "setsid",
+    "time",
+    "builtin",
+    "exec",
+}
+_SHELLS = {"sh", "bash", "zsh", "dash", "ash", "ksh"}
+_MAX_NEST_DEPTH = 4
+_REGEX_TIMEOUT_S = 1.0
+_REGEX_MAX_LEN = 100_000
+_ALLOWED_REGEX_FLAGS = set("ims")
 
 
 class GuardConfigError(Exception):
@@ -73,13 +120,52 @@ class GuardConfigError(Exception):
 _CONTROL_TOKENS = {"&&", "||", ";", "&", "|", "(", ")"}
 
 
-def split_segments(command: str) -> List[List[str]]:
-    """Split a shell command into argument segments at control operators.
+def _split_unquoted_newlines(command: str) -> List[str]:
+    """Split a command on newlines that are NOT inside quotes, honoring backslash
+    line-continuation (`\\<newline>` joins). Quoted newlines stay intact."""
+    parts: List[str] = []
+    buf: List[str] = []
+    quote: Optional[str] = None
+    i, n = 0, len(command)
+    while i < n:
+        c = command[i]
+        if quote is not None:
+            buf.append(c)
+            if c == quote:
+                quote = None
+            elif c == "\\" and quote == '"' and i + 1 < n:
+                buf.append(command[i + 1])
+                i += 2
+                continue
+            i += 1
+            continue
+        if c in ("'", '"'):
+            quote = c
+            buf.append(c)
+            i += 1
+            continue
+        if c == "\\" and i + 1 < n:
+            nxt = command[i + 1]
+            if nxt == "\n":
+                i += 2  # line continuation: drop the backslash-newline
+                continue
+            buf.append(c)
+            buf.append(nxt)
+            i += 2
+            continue
+        if c == "\n":
+            parts.append("".join(buf))
+            buf = []
+            i += 1
+            continue
+        buf.append(c)
+        i += 1
+    parts.append("".join(buf))
+    return [p for p in parts if p.strip()]
 
-    `git add -A && rm x` -> [["git","add","-A"], ["rm","x"]]. Uses shlex in POSIX
-    mode so quotes are honored: text inside a quoted string stays a single token
-    and never masquerades as a standalone flag argument.
-    """
+
+def _split_control(command: str) -> List[List[str]]:
+    """shlex-split one command line into argument segments at control operators."""
     lexer = shlex.shlex(command, posix=True, punctuation_chars="();|&")
     lexer.whitespace_split = True
     tokens = list(lexer)
@@ -97,29 +183,55 @@ def split_segments(command: str) -> List[List[str]]:
     return segments
 
 
+def split_segments(command: str) -> List[List[str]]:
+    """Split a shell command into argument segments.
+
+    Splits first on unquoted newlines, then on `;`/`|`/`&`/`()` control
+    operators. `git add -A && rm x` and `echo hi\\ngit add -A` both yield two
+    segments; text inside quotes stays one token.
+    """
+    segments: List[List[str]] = []
+    for line in _split_unquoted_newlines(command):
+        segments.extend(_split_control(line))
+    return segments
+
+
 def _basename_is(token: str, names: set) -> bool:
     """True when token is a bare name in `names`, or a path whose basename is."""
+    lowered = {n.lower() for n in names}
     if token in names:
         return True
     if token.startswith("/") or token.startswith("./") or token.startswith("../"):
         return PurePosixPath(token).name in names
     if re.match(r"^[A-Za-z]:[\\/]", token) or "\\" in token:
-        return PureWindowsPath(token).name.lower() in {n.lower() for n in names}
+        return PureWindowsPath(token).name.lower() in lowered
     return False
 
 
+def _strip_wrappers(tokens: List[str]) -> List[str]:
+    """Drop leading `command`, env assignments, and known wrappers so the real
+    subcommand is first. `env FOO=1 sudo git add -A` -> `git add -A`."""
+    i = 0
+    while i < len(tokens):
+        t = tokens[i]
+        if _ENV_ASSIGN.match(t) or t in _WRAPPERS:
+            i += 1
+            continue
+        break
+    return tokens[i:]
+
+
 def _git_arg_start(tokens: List[str]) -> Optional[int]:
-    """Index of the git *subcommand*, skipping a leading `command` and git's own
-    top-level options (`-C <dir>`, `--git-dir=…`, `--work-tree=…`). None if the
-    segment is not a git invocation."""
-    index = 0
-    if index < len(tokens) and tokens[index] == "command":
-        index += 1
-    if index >= len(tokens) or not _basename_is(tokens[index], {"git", "git.exe"}):
+    """Index (into the ORIGINAL list) of the git *subcommand*, after stripping
+    wrappers and git's own top-level options (`-C <dir>`, `--git-dir=…`,
+    `--work-tree=…`). None if the segment is not a git invocation."""
+    stripped = _strip_wrappers(tokens)
+    offset = len(tokens) - len(stripped)
+    if not stripped or not _basename_is(stripped[0], {"git", "git.exe"}):
         return None
-    index += 1
-    while index < len(tokens):
-        token = tokens[index]
+    index = 1
+    while index < len(stripped):
+        token = stripped[index]
         if token in {"-C", "--git-dir", "--work-tree"}:
             index += 2
             continue
@@ -130,7 +242,47 @@ def _git_arg_start(tokens: List[str]) -> Optional[int]:
             index += 1
             continue
         break
-    return index
+    return offset + index
+
+
+def _nested_shell_program(tokens: List[str]) -> Optional[str]:
+    """If the segment is `sh -c PROG` / `bash -lc PROG` (after wrappers), return
+    PROG so it can be recursively parsed. None otherwise."""
+    toks = _strip_wrappers(tokens)
+    if not toks or not _basename_is(toks[0], _SHELLS):
+        return None
+    j = 1
+    while j < len(toks):
+        t = toks[j]
+        if t == "-c" or (
+            t.startswith("-")
+            and t != "--"
+            and "c" in t
+            and all(ch in "ilrsxc-" for ch in t)
+        ):
+            return toks[j + 1] if j + 1 < len(toks) else None
+        if not t.startswith("-"):
+            break
+        j += 1
+    return None
+
+
+def expand_segments(command: str, _depth: int = 0) -> List[List[str]]:
+    """All command segments, including those nested inside `sh -c '…'` programs
+    (recursively, bounded by `_MAX_NEST_DEPTH`). Raises ValueError on unparseable
+    shell (unbalanced quotes) — callers decide whether to block or pass."""
+    segments = split_segments(command)
+    if _depth >= _MAX_NEST_DEPTH:
+        return segments
+    out = list(segments)
+    for tokens in segments:
+        prog = _nested_shell_program(tokens)
+        if prog:
+            try:
+                out.extend(expand_segments(prog, _depth + 1))
+            except ValueError:
+                pass  # a nested program we cannot parse: don't guess
+    return out
 
 
 # --------------------------------------------------------------------------- #
@@ -164,42 +316,50 @@ def check_skip_permissions(segments: Sequence[List[str]]) -> Optional[str]:
     return None
 
 
+def _normalize_ref(refspec: str) -> str:
+    """Reduce a push refspec to its short destination branch name.
+    `+HEAD:refs/heads/main` -> `main`; `origin` -> `origin`."""
+    ref = refspec.lstrip("+").split(":")[-1]
+    for prefix in ("refs/heads/", "heads/"):
+        if ref.startswith(prefix):
+            ref = ref[len(prefix) :]
+            break
+    return ref
+
+
 def check_force_push_protected(
     segments: Sequence[List[str]], protected: Sequence[str]
 ) -> Optional[str]:
-    """Deny a force-push whose refspec names a protected branch.
+    """Deny a force-push whose refspec resolves to a protected branch.
 
-    Deliberately scoped to a protected branch appearing as an argument token:
-    force-pushing a *feature* branch is routine and legitimate, so a bare
-    `git push -f` (no branch named) is NOT blocked — only an explicit
-    `git push --force origin main` (or `main`/`master` as a refspec) is.
-    """
-    protected_set = {b for b in protected if b}
+    Understands both a global force flag (`--force`/`-f`/`--force-with-lease`) and
+    per-refspec `+` force syntax, and normalizes `refs/heads/<b>` to `<b>`. A bare
+    `git push --force` with no refspec is deliberately NOT blocked (unresolvable
+    target; feature-branch force-push is routine)."""
+    protected_set = {_normalize_ref(b) for b in protected if b}
     for tokens in segments:
         start = _git_arg_start(tokens)
         if start is None or start >= len(tokens) or tokens[start] != "push":
             continue
         args = tokens[start + 1 :]
-        forced = any(
+        global_force = any(
             a in {"-f", "--force"}
             or a == "--force-with-lease"
             or a.startswith("--force-with-lease=")
             or a.startswith("--force-if-includes")
             for a in args
         )
-        if not forced:
-            continue
-        for a in args:
-            if a.startswith("-"):
+        refspecs = [a for a in args if not a.startswith("-")]
+        for a in refspecs:
+            if not (global_force or a.startswith("+")):
                 continue
-            # refspec forms: `main`, `HEAD:main`, `+main`, `origin main`
-            ref = a.lstrip("+").split(":")[-1]
-            if ref in protected_set:
+            if _normalize_ref(a) in protected_set:
                 return (
-                    f"Blocked force-push to protected branch '{ref}'. Force-pushing "
+                    f"Blocked force-push to protected branch "
+                    f"'{_normalize_ref(a)}'. Force-pushing "
                     f"{'/'.join(sorted(protected_set))} rewrites shared history and "
                     "can destroy other people's commits. Push a feature branch and "
-                    "open a PR, or drop --force."
+                    "open a PR, or drop the force."
                 )
     return None
 
@@ -229,7 +389,8 @@ def load_config(project_dir: str) -> dict:
 
 
 def validate_config(data: dict, path: str = "guards.json") -> None:
-    """Fail loud on a structurally invalid config so typos never silently disarm a rule."""
+    """Fail loud on a structurally invalid config so a typo never silently disarms
+    a rule — and so `--validate` catches every field the live hook consumes."""
     protected = data.get("protected_branches", list(DEFAULT_PROTECTED_BRANCHES))
     if not isinstance(protected, list) or not all(
         isinstance(b, str) for b in protected
@@ -248,6 +409,7 @@ def validate_config(data: dict, path: str = "guards.json") -> None:
     rules = data.get("block", [])
     if not isinstance(rules, list):
         raise GuardConfigError(f"{path}: 'block' must be a list")
+    seen_ids = set()
     for i, rule in enumerate(rules):
         if not isinstance(rule, dict):
             raise GuardConfigError(f"{path}: block[{i}] must be an object")
@@ -256,6 +418,10 @@ def validate_config(data: dict, path: str = "guards.json") -> None:
                 raise GuardConfigError(
                     f"{path}: block[{i}] missing required string '{req}'"
                 )
+        rid = rule["id"]
+        if rid in seen_ids:
+            raise GuardConfigError(f"{path}: duplicate rule id '{rid}'")
+        seen_ids.add(rid)
         match = rule.get("match", "substring")
         if match not in {"substring", "regex"}:
             raise GuardConfigError(
@@ -268,11 +434,81 @@ def validate_config(data: dict, path: str = "guards.json") -> None:
                 raise GuardConfigError(
                     f"{path}: block[{i}] invalid regex: {exc}"
                 ) from exc
-        tools = rule.get("tools", ["Bash"])
-        if not isinstance(tools, list) or not all(isinstance(t, str) for t in tools):
+        # Optional fields consumed at runtime must be typed here or the live hook
+        # crashes instead of taking its documented malformed-config path.
+        flags = rule.get("flags", "")
+        if not isinstance(flags, str) or any(
+            ch not in _ALLOWED_REGEX_FLAGS for ch in flags
+        ):
             raise GuardConfigError(
-                f"{path}: block[{i}].tools must be a list of strings"
+                f"{path}: block[{i}].flags must be a string of {sorted(_ALLOWED_REGEX_FLAGS)}"
             )
+        bypass_env = rule.get("bypass_env")
+        if bypass_env is not None and (
+            not isinstance(bypass_env, str) or not _ENV_NAME.match(bypass_env)
+        ):
+            raise GuardConfigError(
+                f"{path}: block[{i}].bypass_env must be a valid env-var name"
+            )
+        tools = rule.get("tools", ["Bash"])
+        if not isinstance(tools, list) or not all(
+            isinstance(t, str) and t for t in tools
+        ):
+            raise GuardConfigError(
+                f"{path}: block[{i}].tools must be a list of tool names"
+            )
+
+
+def _regex_flags(flags: str) -> int:
+    out = 0
+    if "i" in flags:
+        out |= re.IGNORECASE
+    if "m" in flags:
+        out |= re.MULTILINE
+    if "s" in flags:
+        out |= re.DOTALL
+    return out
+
+
+def _bounded_regex_search(pattern: str, text: str, flags: int, rule_id: str) -> bool:
+    """Run an untrusted regex with a wall-clock bound so a pathological pattern
+    cannot wedge the hook (P61). On POSIX main-thread, a SIGALRM timeout skips the
+    rule (fail-open) with a loud warning; elsewhere only the length cap applies."""
+    if len(text) > _REGEX_MAX_LEN:
+        text = text[:_REGEX_MAX_LEN]
+    compiled = re.compile(pattern, flags)
+    try:
+        import signal
+
+        has_alarm = hasattr(signal, "SIGALRM")
+    except Exception:
+        has_alarm = False
+    if not has_alarm:
+        return compiled.search(text) is not None
+
+    class _Timeout(Exception):
+        pass
+
+    def _handler(signum, frame):
+        raise _Timeout()
+
+    try:
+        old = signal.signal(signal.SIGALRM, _handler)
+    except (ValueError, OSError):
+        return compiled.search(text) is not None  # not main thread
+    signal.setitimer(signal.ITIMER_REAL, _REGEX_TIMEOUT_S)
+    try:
+        return compiled.search(text) is not None
+    except _Timeout:
+        print(
+            f"goodfellow guard_engine: rule '{rule_id}' regex exceeded "
+            f"{_REGEX_TIMEOUT_S}s and was skipped — simplify the pattern.",
+            file=sys.stderr,
+        )
+        return False
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, old)
 
 
 def check_user_rules(text: str, tool_name: str, rules: Iterable[dict]) -> Optional[str]:
@@ -286,26 +522,15 @@ def check_user_rules(text: str, tool_name: str, rules: Iterable[dict]) -> Option
             continue
         pattern = rule["pattern"]
         match = rule.get("match", "substring")
-        hit = (
-            pattern in text
-            if match == "substring"
-            else re.search(pattern, text, _regex_flags(rule.get("flags", "")))
-            is not None
-        )
+        if match == "substring":
+            hit = pattern in text
+        else:
+            hit = _bounded_regex_search(
+                pattern, text, _regex_flags(rule.get("flags", "")), rule.get("id", "?")
+            )
         if hit:
             return f"Blocked by goodfellow guard '{rule['id']}': {rule['reason']}"
     return None
-
-
-def _regex_flags(flags: str) -> int:
-    out = 0
-    if "i" in flags:
-        out |= re.IGNORECASE
-    if "m" in flags:
-        out |= re.MULTILINE
-    if "s" in flags:
-        out |= re.DOTALL
-    return out
 
 
 # --------------------------------------------------------------------------- #
@@ -330,7 +555,7 @@ def evaluate_builtins(
     if os.environ.get("GOODFELLOW_GUARDS") == "0":
         return None
     try:
-        segments = split_segments(command)
+        segments = expand_segments(command)
     except ValueError:
         # Unparseable shell (unbalanced quotes): don't guess, don't block.
         return None
@@ -396,6 +621,71 @@ def emit_deny(reason: str) -> None:
 
 
 # --------------------------------------------------------------------------- #
+# Self-check / drift assertion (compaction-survival)
+# --------------------------------------------------------------------------- #
+
+
+def _rule_digest(rule: dict) -> str:
+    """A stable digest of a rule's *effective* content, so a changed pattern/tools/
+    flags/bypass is detected even when the id is unchanged (not an id-only proxy)."""
+    effective = {
+        "id": rule.get("id"),
+        "pattern": rule.get("pattern"),
+        "reason": rule.get("reason"),
+        "match": rule.get("match", "substring"),
+        "flags": rule.get("flags", ""),
+        "tools": rule.get("tools", ["Bash"]),
+        "bypass_env": rule.get("bypass_env"),
+    }
+    blob = json.dumps(effective, sort_keys=True, ensure_ascii=True)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
+
+
+def _hook_registered() -> Optional[bool]:
+    """Best-effort: is the PreToolUse hook still wired to this engine? Reads the
+    plugin's hooks.json when CLAUDE_PLUGIN_ROOT is set. None = could not tell."""
+    root = os.environ.get("CLAUDE_PLUGIN_ROOT")
+    if not root:
+        return None
+    path = os.path.join(root, "hooks", "hooks.json")
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    for entry in data.get("hooks", {}).get("PreToolUse", []):
+        for hook in entry.get("hooks", []):
+            if "guard_engine" in hook.get("command", ""):
+                return True
+    return False
+
+
+def active_guard_set(project_dir: str) -> dict:
+    """The set of enforced guards, for the compaction-survival assertion. Includes
+    full per-rule digests (not just ids) so a semantic change is caught."""
+    try:
+        config = load_config(project_dir)
+        config_error = None
+    except GuardConfigError as exc:
+        config, config_error = {}, str(exc)
+    disabled = set(config.get("disable_builtins", []))
+    builtins_off = os.environ.get("GOODFELLOW_GUARDS") == "0"
+    rules = [r for r in config.get("block", []) if isinstance(r, dict)]
+    return {
+        "builtins_enabled": []
+        if builtins_off
+        else [b for b in BUILTIN_IDS if b not in disabled],
+        "protected_branches": config.get(
+            "protected_branches", list(DEFAULT_PROTECTED_BRANCHES)
+        ),
+        "user_rules": [{"id": r.get("id"), "digest": _rule_digest(r)} for r in rules],
+        "hook_registered": _hook_registered(),
+        "config_error": config_error,
+        "all_disabled": os.environ.get("CLAUDE_HOOK_BYPASS") == "1",
+    }
+
+
+# --------------------------------------------------------------------------- #
 # CLI
 # --------------------------------------------------------------------------- #
 
@@ -415,34 +705,33 @@ def cmd_validate(project_dir: str) -> int:
     return 0
 
 
-def active_guard_set(project_dir: str) -> dict:
-    """The set of enforced guards, for the compaction-survival assertion."""
-    try:
-        config = load_config(project_dir)
-        config_error = None
-    except GuardConfigError as exc:
-        config, config_error = {}, str(exc)
-    disabled = set(config.get("disable_builtins", []))
-    builtins_off = os.environ.get("GOODFELLOW_GUARDS") == "0"
-    return {
-        "builtins_enabled": []
-        if builtins_off
-        else [b for b in BUILTIN_IDS if b not in disabled],
-        "protected_branches": config.get(
-            "protected_branches", list(DEFAULT_PROTECTED_BRANCHES)
-        ),
-        "user_rule_ids": [
-            r.get("id") for r in config.get("block", []) if isinstance(r, dict)
-        ],
-        "config_error": config_error,
-        "all_disabled": os.environ.get("CLAUDE_HOOK_BYPASS") == "1",
-    }
-
-
 def cmd_selfcheck(project_dir: str) -> int:
     """Print the active guard set as JSON so a post-compaction session can assert
     the BLOCK-rule set is still enforced rather than trusting the summarizer."""
-    print(json.dumps(active_guard_set(project_dir), indent=2))
+    print(json.dumps(active_guard_set(project_dir), indent=2, sort_keys=True))
+    return 0
+
+
+def cmd_assert_guard_set(project_dir: str, baseline_path: str) -> int:
+    """Compare the current guard set to a baseline snapshot; non-zero on drift."""
+    current = active_guard_set(project_dir)
+    try:
+        with open(baseline_path, "r", encoding="utf-8") as fh:
+            baseline = json.load(fh)
+    except (OSError, ValueError) as exc:
+        print(f"DRIFT: cannot read baseline {baseline_path}: {exc}", file=sys.stderr)
+        return 1
+    if current.get("config_error"):
+        print(f"DRIFT: config error: {current['config_error']}", file=sys.stderr)
+        return 1
+    if current != baseline:
+        print(
+            "DRIFT: guard set changed across the boundary — investigate before "
+            "proceeding.",
+            file=sys.stderr,
+        )
+        return 1
+    print("OK: guard set intact.")
     return 0
 
 
@@ -465,6 +754,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         action="store_true",
         help="Print the active guard set as JSON and exit",
     )
+    parser.add_argument(
+        "--assert-guard-set",
+        metavar="BASELINE",
+        default=None,
+        help="Exit non-zero if the guard set drifted from BASELINE snapshot",
+    )
     args = parser.parse_args(argv)
     project_dir = _resolve_project_dir(args.project_dir)
 
@@ -472,6 +767,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return cmd_validate(project_dir)
     if args.selfcheck:
         return cmd_selfcheck(project_dir)
+    if args.assert_guard_set:
+        return cmd_assert_guard_set(project_dir, args.assert_guard_set)
 
     # Hook mode: read the PreToolUse payload from stdin.
     raw = sys.stdin.read()
