@@ -87,21 +87,21 @@ Children branch from a commit, so anything not committed is invisible to them. B
 
 **Step 4 — dispatch one worktree-isolated implementer per task.**
 
-Dispatch one implementer subagent (vanilla Agent/Task tool) per task. Two invariants MUST hold for every child, and neither is satisfied by a prose instruction alone:
+Dispatch one implementer subagent (vanilla Agent/Task tool) per task. Two invariants MUST hold for every child, and neither is satisfied by a prose instruction to the child:
 
-1. **The child starts from the checkpoint SHA (Step 3), not a fresh/default base.** Claude Code's runtime worktree isolation branches from a base governed by a `worktree.baseRef` setting whose **default (`fresh`) is `origin/<default-branch>` — NOT your local HEAD/checkpoint.** Use that option without pinning the base and children silently run against stale code missing the phase's work and the just-committed plan.
-2. **Isolation is enforced by the runtime, not by asking.** Subagents start in the *parent's* working directory and `cd` does not persist between their tool calls, so a child using ordinary relative Edit/Write mutates the parent checkout and recreates the shared-tree corruption this design exists to prevent.
+1. **Isolation is enforced by the runtime, not by asking.** Subagents start in the *parent's* working directory and `cd` does not persist between their tool calls, so a child using ordinary relative Edit/Write/Bash mutates the parent checkout and recreates the shared-tree corruption this design exists to prevent. Only a runtime that reroots and confines the child's working root actually prevents this — absolute-path and pre-write instructions are best-effort prose, not enforcement.
+2. **The child starts from the checkpoint SHA (Step 3), not a fresh/default base.** Claude Code's runtime worktree isolation branches from a base governed by a `worktree.baseRef` setting whose **default (`fresh`) is `origin/<default-branch>` — NOT your local HEAD/checkpoint.** Left unpinned, children silently run against stale code missing the phase's work and the just-committed plan.
 
-The **canonical mechanism** that satisfies both — and gives you a base and branch name you control — is to create the worktree yourself off the checkpoint and hand the child an absolute, verified path:
+**Preferred — runtime-enforced isolation.** Use the Agent tool's built-in `isolation: "worktree"` (or a harness equivalent that actually reroots the child), the only mechanism that *enforces* invariant 1. Configure it to also satisfy invariant 2: (i) pin its base to the checkpoint SHA (e.g. set `worktree.baseRef=head` with the checkpoint on HEAD, or pass an explicit base), (ii) have each child **verify its starting `HEAD == <CKPT>` before any write and fail closed to serial on mismatch**, and (iii) **capture the runtime-created branch/commit ref** it returns — do not assume a name — for the Step-6 merge.
+
+**Degraded fallback — manual worktree, NOT runtime-enforced.** Only if no runtime isolation option exists, create the worktree yourself off the checkpoint:
 
 ```bash
 # CKPT = the Step-3 checkpoint SHA; SLUG = task id, e.g. t-2-3
 git worktree add -b "gf-exec/<SLUG>" "$(pwd)/../gf-exec-<SLUG>" "<CKPT>"
 ```
 
-Give the child (a) its **absolute** worktree path, (b) an instruction to use **absolute paths for every file operation** (never relative), and (c) a **mandatory pre-write assertion**: run `git rev-parse --show-toplevel` and refuse to write unless it equals the allocated worktree path.
-
-You **may** instead use the Agent tool's built-in `isolation: "worktree"` **only if** you can (i) pin its base to the checkpoint SHA (e.g. set `worktree.baseRef=head` with the checkpoint on HEAD, or pass an explicit base), (ii) have each child **verify its starting `HEAD == <CKPT>` before any write and fail closed to serial on mismatch**, and (iii) **capture the runtime-created branch/commit ref** it returns — do not assume a `gf-exec/<SLUG>` name — for the Step-6 merge.
+Understand this does **not** confine the child at the runtime layer — a child that ignores its instructions can still write the parent checkout. Mitigate with (a) the child's **absolute** worktree path, (b) **absolute paths for every file operation** (never relative), and (c) a **mandatory pre-write assertion**: `git rev-parse --show-toplevel` must equal the allocated path or the child refuses to write. **If you cannot guarantee runtime-enforced confinement and do not fully trust these prose controls, run the phase serial instead** — serial is strictly safer than an unenforced "isolated" fan-out.
 
 Each child runs the per-task loop below (2a-2e) inside its worktree and **commits its result on its own branch** before returning; record that branch/commit ref for reconciliation.
 
