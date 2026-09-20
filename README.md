@@ -45,19 +45,34 @@ Your 50th feature ships with the wisdom of the first 49.
 
 ## Install
 
-**From the marketplace (recommended).** Goodfellow ships its own single-repo marketplace manifest (`.claude-plugin/marketplace.json`), so install is three steps inside Claude Code:
+Goodfellow ships its own single-repo marketplace manifest (`.claude-plugin/marketplace.json`) at the repo root, so it installs **directly from this public GitHub repo**. This works today and does not depend on the Anthropic plugin directory — no directory listing is required for any of the commands below.
+
+**Inside Claude Code (recommended):**
 ```text
 /plugin marketplace add easelyte/goodfellow
 /plugin install goodfellow@goodfellow
 /reload-plugins
 ```
-`/plugin install goodfellow@goodfellow` reads `plugin@marketplace` — both are named `goodfellow` here (the plugin lives at the marketplace repo root).
+`/plugin install goodfellow@goodfellow` reads `plugin@marketplace` — both are named `goodfellow` here (the plugin lives at the marketplace repo root, `source: "./"`).
+
+**One command** (Claude Code v2.1.275+):
+```text
+/plugin install goodfellow --marketplace easelyte/goodfellow
+```
+
+**From your shell** (non-interactive / scripting):
+```bash
+claude plugin marketplace add easelyte/goodfellow
+claude plugin install goodfellow@goodfellow
+```
 
 **Session-only** (for testing, no persistent install):
 ```bash
 claude --plugin-dir /path/to/goodfellow
 ```
 This loads the plugin for the current session only from a local checkout — nothing is registered or persisted.
+
+> **The Anthropic directory is optional — for discovery, not for installing.** `/plugin marketplace add easelyte/goodfellow` clones this repo and reads the manifest straight from GitHub; it never touches Anthropic's plugin directory. Being listed in [`claude-plugins-community`](https://github.com/anthropics/claude-plugins-community) only adds discoverability (browsing `/plugin` → **Discover**). Once that listing lands you can also `/plugin install goodfellow@claude-community`, but the direct-from-repo commands above always work and track `main` on every marketplace refresh — no commit-pin, no nightly-sync lag.
 
 ## Quick Start
 
