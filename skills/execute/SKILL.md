@@ -53,28 +53,59 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/principles_context.py" --emit --project-r
 
 ## 2. Per-task implementation loop
 
-**Default: serial.** Implement every task inline yourself, in plan order. This is the baseline behavior and the safe default — do not deviate from it unless the gate in 2.0 provably clears.
+**Default: serial.** Implement every task inline yourself, in plan order. This is the baseline behavior and the safe default — do not deviate from it unless the fan-out decision in 2.0 justifies it.
 
-### 2.0. Optional: gated parallel implementers (opt-in, per phase)
+### 2.0. Optional: parallel implementers, worktree-isolated (opt-in, per phase)
 
-This is a capability the skill uses **only when the plan makes independence provable** — it is not a default change to how plans execute. Most phases run serial. Parallel fan-out is the exception you must justify from the plan's own dependency graph, not a mode you turn on by preference.
+This is a capability the skill uses when a phase has **enough independent work to be worth fanning out** — it is not a default change to how plans execute. Most phases run serial. Parallel fan-out is the exception you justify from the plan's dependency graph *and* from the fan-out sizing rules below, not a mode you turn on by preference.
 
-**When it may apply:** at a phase boundary, look at the set of not-yet-done tasks in the current phase and the plan's stated dependency graph (the `what blocks what, what parallelizes` section). If a subset of those tasks is provably **file-disjoint** — no two of them touch the same file, per the plan's declared target files and dependency edges — you MAY fan out one implementer subagent per independent task (vanilla Agent/Task tool, following `superpowers:dispatching-parallel-agents`), then reconcile their results before continuing.
+Each parallel implementer runs in its **own git worktree** off the current execution HEAD, and results are reconciled by **merge**, not by writing a shared tree. That isolation is what makes fan-out safe here: two children can no longer corrupt each other, because they never write the same working tree. A wrong independence call now costs a **merge conflict you resolve serially**, not silent mutual corruption.
 
-**MANDATORY independence gate (load-bearing — do not soften):**
-- Parallelize a set of tasks ONLY if the plan's stated dependency graph proves they are file-disjoint: no shared target file, no declared dependency edge between them.
-- On **ANY** file overlap, ambiguity, or uncertainty about what a task touches → **fall back to serial** for those tasks. Do not guess. Do not parallelize "probably independent" tasks.
-- The default is serial; parallel is the exception. If you cannot cite the specific dependency-graph facts that prove disjointness, you have not cleared the gate — run serial.
+**Step 1 — decide the fan-out count (MANDATORY: state it and why before dispatching).**
 
-**Portability caveats (state these explicitly; they are why the gate is strict):**
-- goodfellow has **NO git-worktree isolation** and **NO #39-style parent-side liveness watchdog**. There is no worktree safety net.
-- (a) Parallel children write a **shared working tree**. If two children touch the same file they WILL collide and corrupt each other's work — the disjointness gate is the *only* thing preventing this. Nothing else will catch it.
-- (b) A hung child is **unrecoverable** — there is no TaskStop watchdog to reap it. Keep parallel children **foreground, short-lived, and bounded** (small, well-scoped tasks; never long-running or open-ended). Do not background them.
-- (c) If in doubt, serial.
+Before you create any worktree or dispatch any child, compute and **state out loud** the fan-out count you chose and the reason (e.g. "Phase 2 has 5 file-disjoint tasks; nproc=8 → cap 6; fanning out 5"). Do not dispatch without this line. Sizing rules (centrally set — identical to the son-of-anton coordinator philosophy so the two stay consistent):
 
-**Reconcile after fan-out:** once the parallel children return, integrate their changes, then run the per-task verify (2d) across all affected files together, and resolve any conflict serially. Then continue to the next phase.
+- **FLOOR — below ~3 independent tasks, run serial.** For 1-2 items the coordination overhead plus the coordinator context spent creating worktrees, dispatching, and merging exceeds the wall-clock saved. (Anthropic scaling guidance: 1 subagent for a simple task, 2-4 for comparisons, 10+ only for genuinely complex fan-out.)
+- **CEILING — tied to available concurrency ≈ `nproc - 2`.** The Agent-tool concurrency cap is `min(16, nproc - 2)`; dispatch no more children than that. Past the cap children just queue — no throughput gain, only straggler wall-clock and wasted coordinator context. Detect it with `getconf _NPROCESSORS_ONLN` (or `nproc`) and clamp: `fanout = max(1, min(candidate_count, 16, nproc - 2))`.
+- If the count lands below the FLOOR after clamping, run the phase serial.
 
-For each task run serially (or each task within a fanned-out set, executed by the child implementer): follow the loop below, in plan order.
+**Step 2 — pick the candidate set (file-disjointness is now an optimization hint, not a safety gate).**
+
+From the not-yet-done tasks in the current phase, use the plan's dependency graph (the `what blocks what, what parallelizes` section) and declared target files to pick the fan-out set:
+
+- Tasks with **no declared dependency edge** between them are candidates to run in parallel — a task that depends on another's output must still run after it.
+- **File-disjointness is a hint that predicts clean merges, not a correctness precondition.** Prefer file-disjoint tasks because they merge without conflict. Tasks that share a file are *allowed* to fan out under isolation, but they will likely need a serial conflict resolution at merge time — factor that cost in, and when in doubt about the payoff, keep overlapping tasks serial. What you are no longer doing is treating overlap as a corruption hazard; isolation removed that.
+
+**Step 3 — dispatch one worktree-isolated implementer per task.**
+
+For each task in the fan-out set, create a dedicated worktree off the current execution HEAD and dispatch one implementer subagent (vanilla Agent/Task tool) into it:
+
+```bash
+# BASE = current execution branch HEAD; SLUG = task id, e.g. t-2-3
+git worktree add -b "gf-exec/<SLUG>" "../gf-exec-<SLUG>" HEAD
+```
+
+Instruct each child to work **only inside its worktree path**, run the per-task loop below (2a-2e) there, and **commit its result on its own branch** before returning. Children touch only their own worktree — never the parent checkout, never another child's.
+
+**Liveness (relaxed, because isolation removed the corruption risk).** goodfellow still has no parent-side liveness watchdog, but a hung or reaped child can no longer damage the shared tree — its work is quarantined in its own worktree and branch. So the old hard "foreground, short-lived only" constraint is relaxed to a bound, not a prohibition:
+- Keep child tasks **well-scoped and bounded** so a straggler doesn't stall the phase.
+- If a child hangs or fails to return within a reasonable bound, **abandon its worktree and run that one task serially in the parent** — the other children's committed branches are unaffected. Discard the dead worktree with `git worktree remove --force`.
+- Because a dead child costs only its own task (not the phase), children **may** run concurrently rather than being forced strictly foreground one-at-a-time.
+
+**Step 4 — reconcile by merge, then verify together.**
+
+Once children return, merge each child branch back into the execution branch in plan order:
+
+```bash
+git merge --no-ff "gf-exec/<SLUG>"   # repeat per child, in dependency order
+```
+
+- A **clean merge** confirms the tasks were disjoint as predicted — continue.
+- A **merge conflict** means the disjointness hint was wrong for those files. This is a conflict, not corruption: resolve it serially, keeping both children's intent, then continue.
+- After all merges, run the per-task verify (2d) across **all** affected files together to catch cross-task integration breakage.
+- Clean up worktrees when done: `git worktree remove "../gf-exec-<SLUG>"` for each (`--force` if a child left it dirty), and delete merged branches.
+
+For each task run serially (or each task within a fanned-out set, executed by the child implementer in its worktree): follow the loop below, in plan order.
 
 ### 2a. Read the task
 Read the task body, acceptance criteria, and dependencies. Check that dependencies are complete.
