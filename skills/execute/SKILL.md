@@ -59,14 +59,14 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/principles_context.py" --emit --project-r
 
 This is a capability the skill uses when a phase has **enough independent work to be worth fanning out** — it is not a default change to how plans execute. Most phases run serial. Parallel fan-out is the exception you justify from the plan's dependency graph *and* from the fan-out sizing rules below, not a mode you turn on by preference.
 
-Each parallel implementer runs in its **own git worktree** off the current execution HEAD, and results are reconciled by **merge**, not by writing a shared tree. That isolation is what makes fan-out safe here: two children can no longer corrupt each other, because they never write the same working tree. A wrong independence call now costs a **merge conflict you resolve serially**, not silent mutual corruption.
+Each parallel implementer runs in its **own git worktree** off a checkpoint of the current execution state, and results are reconciled by **merge**, not by writing a shared tree. That isolation is what makes fan-out safe here: two children can no longer corrupt each other, because they never write the same working tree. But isolation only holds if it is *enforced at the runtime layer* (Step 4) — a prose instruction to "stay in your worktree" is not isolation. A wrong independence call then costs a **merge conflict you resolve serially**, not silent mutual corruption.
 
 **Step 1 — decide the fan-out count (MANDATORY: state it and why before dispatching).**
 
-Before you create any worktree or dispatch any child, compute and **state out loud** the fan-out count you chose and the reason (e.g. "Phase 2 has 5 file-disjoint tasks; nproc=8 → cap 6; fanning out 5"). Do not dispatch without this line. Sizing rules (centrally set — identical to the son-of-anton coordinator philosophy so the two stay consistent):
+Before you checkpoint, create any worktree, or dispatch any child, compute and **state out loud** the fan-out count you chose and the reason (e.g. "Phase 2 has 5 independent tasks; runtime concurrency cap ~8; fanning out 5"). Do not dispatch without this line. Sizing rules (centrally set — identical to the son-of-anton coordinator philosophy so the two stay consistent):
 
-- **FLOOR — below ~3 independent tasks, run serial.** For 1-2 items the coordination overhead plus the coordinator context spent creating worktrees, dispatching, and merging exceeds the wall-clock saved. (Anthropic scaling guidance: 1 subagent for a simple task, 2-4 for comparisons, 10+ only for genuinely complex fan-out.)
-- **CEILING — tied to available concurrency ≈ `nproc - 2`.** The Agent-tool concurrency cap is `min(16, nproc - 2)`; dispatch no more children than that. Past the cap children just queue — no throughput gain, only straggler wall-clock and wasted coordinator context. Detect it with `getconf _NPROCESSORS_ONLN` (or `nproc`) and clamp: `fanout = max(1, min(candidate_count, 16, nproc - 2))`.
+- **FLOOR — below ~3 independent tasks, run serial.** For 1-2 items the coordination overhead plus the coordinator context spent checkpointing, creating worktrees, dispatching, and merging exceeds the wall-clock saved. (Anthropic scaling guidance: 1 subagent for a simple task, 2-4 for comparisons, 10+ only for genuinely complex fan-out.)
+- **CEILING — never dispatch more children than the runtime can actually run concurrently.** Past the real cap children just queue — no throughput gain, only straggler wall-clock and wasted coordinator context. The true cap is set by the harness, not by CPU count, and is often lower than you'd guess (a common default is ~10 concurrent tool uses, and some hosts configure it lower). Do not hardcode a formula as if it were authoritative: read the runtime's concurrency setting if it exposes one, otherwise treat capacity as unknown and use a conservative bound (a `nproc - 2` estimate, capped at ~8-10, is a reasonable fallback — not a guarantee). Clamp the count to that bound.
 - If the count lands below the FLOOR after clamping, run the phase serial.
 
 **Step 2 — pick the candidate set (file-disjointness is now an optimization hint, not a safety gate).**
@@ -74,25 +74,39 @@ Before you create any worktree or dispatch any child, compute and **state out lo
 From the not-yet-done tasks in the current phase, use the plan's dependency graph (the `what blocks what, what parallelizes` section) and declared target files to pick the fan-out set:
 
 - Tasks with **no declared dependency edge** between them are candidates to run in parallel — a task that depends on another's output must still run after it.
-- **File-disjointness is a hint that predicts clean merges, not a correctness precondition.** Prefer file-disjoint tasks because they merge without conflict. Tasks that share a file are *allowed* to fan out under isolation, but they will likely need a serial conflict resolution at merge time — factor that cost in, and when in doubt about the payoff, keep overlapping tasks serial. What you are no longer doing is treating overlap as a corruption hazard; isolation removed that.
+- **File-disjointness is a hint that predicts clean *textual* merges, not a correctness precondition and not proof of semantic independence.** Prefer file-disjoint tasks because they merge without textual conflict. Tasks that share a file are *allowed* to fan out under isolation, but they will likely need a serial conflict resolution at merge time — factor that cost in, and when in doubt about the payoff, keep overlapping tasks serial. What you are no longer doing is treating overlap as a corruption hazard; isolation removed that. Note the limit: even file-disjoint tasks can be *semantically* coupled (a rename, shared invariant, schema, or ordering assumption) — the plan's dependency graph, not disjointness, is what rules that out, and Step 6's integration verify is the backstop.
 
-**Step 3 — dispatch one worktree-isolated implementer per task.**
+**Step 3 — checkpoint the full execution state before fanning out.**
 
-For each task in the fan-out set, create a dedicated worktree off the current execution HEAD and dispatch one implementer subagent (vanilla Agent/Task tool) into it:
+Children branch from a commit, so anything not committed is invisible to them. Before creating any worktree, make the current execution state recoverable and complete:
+
+- **Commit completed-but-uncommitted task work** from earlier in this phase/run onto the execution branch (the serial loop marks tasks done without committing) — otherwise children start from stale code missing their prerequisites.
+- **Make the plan artifact and any untracked prerequisite inputs available to children.** The plan file is usually still untracked at execution time; commit it (or otherwise place it inside each worktree) so children can read their own task bodies and acceptance criteria.
+- Branch every child worktree from **this checkpoint commit**, not from a bare `HEAD` that predates the phase's work.
+
+**Step 4 — dispatch one worktree-isolated implementer per task (isolation MUST be runtime-enforced).**
+
+Dispatch one implementer subagent (vanilla Agent/Task tool) per task. Claude Code subagents start in the *parent's* working directory and `cd` does not persist between their tool calls, so telling a child to "work in the worktree" does NOT put it there — a child using ordinary relative Edit/Write would mutate the parent checkout and recreate the shared-tree corruption this design exists to prevent. Enforce isolation one of two ways:
+
+- **Preferred — use the Agent tool's own worktree isolation** (`isolation: "worktree"` or the harness's equivalent), so the runtime creates and pins the child to its own worktree off the checkpoint. This is the only option that *guarantees* the child cannot touch the parent tree.
+- **Fallback — if the runtime exposes no isolation option**, create the worktree yourself off the checkpoint and give the child (a) its **absolute** worktree path, (b) an instruction to use **absolute paths for every file operation** (never relative), and (c) a **mandatory pre-write assertion**: run `git rev-parse --show-toplevel` and refuse to write unless it equals the allocated worktree path.
 
 ```bash
-# BASE = current execution branch HEAD; SLUG = task id, e.g. t-2-3
-git worktree add -b "gf-exec/<SLUG>" "../gf-exec-<SLUG>" HEAD
+# Fallback path only. CKPT = the Step-3 checkpoint commit; SLUG = task id, e.g. t-2-3
+git worktree add -b "gf-exec/<SLUG>" "$(pwd)/../gf-exec-<SLUG>" "<CKPT>"
 ```
 
-Instruct each child to work **only inside its worktree path**, run the per-task loop below (2a-2e) there, and **commit its result on its own branch** before returning. Children touch only their own worktree — never the parent checkout, never another child's.
+Each child runs the per-task loop below (2a-2e) inside its worktree and **commits its result on its own branch** before returning.
 
-**Liveness (relaxed, because isolation removed the corruption risk).** goodfellow still has no parent-side liveness watchdog, but a hung or reaped child can no longer damage the shared tree — its work is quarantined in its own worktree and branch. So the old hard "foreground, short-lived only" constraint is relaxed to a bound, not a prohibition:
-- Keep child tasks **well-scoped and bounded** so a straggler doesn't stall the phase.
-- If a child hangs or fails to return within a reasonable bound, **abandon its worktree and run that one task serially in the parent** — the other children's committed branches are unaffected. Discard the dead worktree with `git worktree remove --force`.
-- Because a dead child costs only its own task (not the phase), children **may** run concurrently rather than being forced strictly foreground one-at-a-time.
+**Step 5 — straggler / liveness handling (never force-remove a worktree whose child may be live).**
 
-**Step 4 — reconcile by merge, then verify together.**
+goodfellow has no parent-side liveness watchdog and cannot portably hard-kill a hung subagent (see `skills/grill/SKILL.md`). Isolation removed the *corruption* risk — a slow or dead child can no longer damage the shared tree — but it did NOT make forced cleanup safe, because you cannot prove a hung child has stopped writing:
+
+- Keep child tasks **well-scoped and bounded** so a straggler doesn't stall the phase. Because a dead child costs only its own task (not the phase), children **may** run concurrently rather than strictly foreground one-at-a-time.
+- If a child exceeds a reasonable bound: **do not `git worktree remove --force` a worktree whose child you cannot confirm has terminated** — that can delete uncommitted work and yank the directory out from under a still-running writer. Instead **quarantine** it (leave it in place, do not reuse it) and run that one task serially in the parent (or in a fresh worktree). The other children's committed branches are unaffected.
+- Only remove a worktree after the child is **confirmed finished** AND its working tree is either clean or its dirty diff has been inspected and preserved (or proven redundant). Reserve `--force` for that confirmed-dead, already-captured case.
+
+**Step 6 — reconcile by merge, then verify together.**
 
 Once children return, merge each child branch back into the execution branch in plan order:
 
@@ -100,10 +114,10 @@ Once children return, merge each child branch back into the execution branch in 
 git merge --no-ff "gf-exec/<SLUG>"   # repeat per child, in dependency order
 ```
 
-- A **clean merge** confirms the tasks were disjoint as predicted — continue.
-- A **merge conflict** means the disjointness hint was wrong for those files. This is a conflict, not corruption: resolve it serially, keeping both children's intent, then continue.
-- After all merges, run the per-task verify (2d) across **all** affected files together to catch cross-task integration breakage.
-- Clean up worktrees when done: `git worktree remove "../gf-exec-<SLUG>"` for each (`--force` if a child left it dirty), and delete merged branches.
+- A **clean merge means only that the edits did not textually conflict** — it does NOT prove the tasks were semantically independent. Two cleanly-merging children can still disagree about a renamed interface, an invariant, a schema, or an ordering assumption.
+- A **merge conflict** means the changes overlapped textually. This is a conflict, not corruption: resolve it serially, keeping both children's intent, then continue.
+- After all merges, run the per-task verify (2d) across **all** affected files together, **and re-check the merged diff against every affected task's acceptance criteria** — this integration pass, not the merge result, is what catches semantic incompatibility a clean merge hides.
+- Clean up only **confirmed-finished** worktrees (per Step 5): `git worktree remove "../gf-exec-<SLUG>"` for each (`--force` only once the child is proven done and its work captured), and delete merged branches.
 
 For each task run serially (or each task within a fanned-out set, executed by the child implementer in its worktree): follow the loop below, in plan order.
 
