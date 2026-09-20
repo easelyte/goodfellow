@@ -181,10 +181,29 @@ def test_force_push_protected_denied(cmd):
         "git push",  # bare, no branch named
         "git push -f",  # forced but no branch named -> not blocked
         "git push origin +feature-x",  # + on a non-protected branch
+        "git push --force main feature-x",  # F4: 'main' is the REMOTE, not a refspec
+        "git push -f main topic",  # F4: remote named 'main'
     ],
 )
 def test_force_push_non_protected_allowed(cmd):
     assert check_force_push_protected(expand_segments(cmd), ["main", "master"]) is None
+
+
+def test_force_push_repo_option_treats_positionals_as_refspecs():
+    # F4: with --repo the positional is a refspec, not a remote, so a protected
+    # target is still caught.
+    assert (
+        check_force_push_protected(
+            expand_segments("git push --force --repo=origin main"), ["main"]
+        )
+        is not None
+    )
+    assert (
+        check_force_push_protected(
+            expand_segments("git push --force --repo origin main"), ["main"]
+        )
+        is not None
+    )
 
 
 def test_custom_protected_branches():
@@ -355,9 +374,9 @@ def test_disable_builtin_from_config(tmp_path):
     assert_denied(push_parsed)  # other built-ins still active
 
 
-def test_regex_redos_does_not_hang(tmp_path):
-    # F3: a pathological pattern must not wedge the hook. The bounded matcher
-    # returns within the timeout (fail-open for that rule) rather than hanging.
+def test_regex_redos_bounded_and_denies(tmp_path):
+    # A pathological pattern must not wedge the hook: the bounded worker is killed
+    # at the budget and the operation is conservatively DENIED (not silently allowed).
     write_guards(
         tmp_path,
         {
@@ -366,13 +385,78 @@ def test_regex_redos_does_not_hang(tmp_path):
             ]
         },
     )
-    payload = bash("a" * 40 + "!")
+    payload = bash("a" * 60 + "!")
     import time
 
     start = time.time()
     _, parsed = run_hook(payload, tmp_path)
     elapsed = time.time() - start
-    assert elapsed < 10, f"hook took {elapsed}s — ReDoS not bounded"
+    assert elapsed < 15, f"hook took {elapsed}s — ReDoS not bounded"
+    assert_denied(parsed, contains="could not be evaluated")
+
+
+def test_regex_full_payload_evaluated_no_truncation(tmp_path):
+    # F1: a match after a long safe prefix must still be caught (no length cap
+    # that a dangerous suffix could hide behind).
+    write_guards(
+        tmp_path,
+        {
+            "block": [
+                {
+                    "id": "no-block",
+                    "match": "regex",
+                    "pattern": "BLOCK",
+                    "reason": "nope",
+                }
+            ]
+        },
+    )
+    _, parsed = run_hook(bash("x" * 200_000 + " BLOCK"), tmp_path)
+    assert_denied(parsed, contains="no-block")
+
+
+def test_many_regex_rules_share_one_budget(tmp_path):
+    # F2: N pathological rules must not cost N * per-rule-timeout. One aggregate
+    # budget covers them all, so the hook still returns quickly.
+    write_guards(
+        tmp_path,
+        {
+            "block": [
+                {
+                    "id": f"redos{i}",
+                    "match": "regex",
+                    "pattern": "(a+)+$",
+                    "reason": "x",
+                }
+                for i in range(20)
+            ]
+        },
+    )
+    payload = bash("a" * 60 + "!")
+    import time
+
+    start = time.time()
+    _, parsed = run_hook(payload, tmp_path)
+    elapsed = time.time() - start
+    assert elapsed < 15, f"20 rules took {elapsed}s — budget is per-rule, not aggregate"
+    assert_denied(parsed, contains="could not be evaluated")
+
+
+def test_substring_only_config_fast_path(tmp_path):
+    # Pure-substring configs take the inline fast path (correctness check).
+    write_guards(
+        tmp_path,
+        {
+            "block": [
+                {"id": "s1", "pattern": "AAA", "reason": "x"},
+                {"id": "s2", "pattern": "BBB", "reason": "y"},
+            ]
+        },
+    )
+    _, hit = run_hook(bash("echo BBB"), tmp_path)
+    assert_denied(hit, contains="s2")
+    _, miss = run_hook(bash("echo ok"), tmp_path)
+    assert miss is None
 
 
 # --------------------------------------------------------------------------- #
@@ -595,3 +679,23 @@ def test_hook_registered_selfcheck(tmp_path):
         env={**os.environ, "CLAUDE_PLUGIN_ROOT": plugin_root},
     )
     assert json.loads(proc.stdout)["hook_registered"] is True
+
+
+# --------------------------------------------------------------------------- #
+# F3: the snap-compact drift gate must not mask its own non-zero exit
+# --------------------------------------------------------------------------- #
+
+def test_snap_compact_drift_gate_not_masked():
+    skill = os.path.join(
+        os.path.dirname(HERE), "skills", "snap-compact", "SKILL.md")
+    with open(skill, "r", encoding="utf-8") as fh:
+        text = fh.read()
+    # The assertion must be gated by `if !`, and must NOT swallow the exit via
+    # `|| echo` (which would report success precisely when governance drifted).
+    assert "--assert-guard-set" in text
+    assert "if ! python3" in text
+    assert "--assert-guard-set .goodfellow/guard-set.pre-compact.json \\\n     || echo" not in text
+    # No `|| echo` on the same logical line as the assertion.
+    for line in text.splitlines():
+        if "assert-guard-set" in line:
+            assert "|| echo" not in line

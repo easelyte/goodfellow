@@ -51,10 +51,14 @@ feature branch is routine). Name the protected branch to be protected.
 `.goodfellow/guards.json` is repository-supplied and therefore untrusted input.
 A user `regex` rule runs on the text of every tool call, so a pathological
 pattern (`(a+)+$`) could catastrophically backtrack and wedge the session — the
-PreToolUse hook would hang before Bash/Write/Edit. Regex matching is bounded by a
-wall-clock timeout (POSIX) and a payload-length cap; on timeout the rule is
-skipped with a loud stderr warning rather than hanging (fail-open for that one
-rule, so the session is never wedged — the primary harm P61 warns about).
+PreToolUse hook would hang before Bash/Write/Edit. When any regex rule applies,
+ALL applicable rules are evaluated in a child process under ONE hard wall-clock
+budget (`subprocess.run(timeout=...)`), which is platform-independent (works where
+`signal` is unavailable), covers every rule at once (not one timer per rule), and
+sees the FULL payload (no length-cap that a suffix could hide behind). A budget
+overrun is a *conservative deny*: an operation that cannot be evaluated is
+blocked, never silently allowed. Pure-substring configs skip the subprocess and
+match inline (linear, safe).
 
 ## Failure posture (fail-safe-open for the live hook, fail-loud on demand)
 
@@ -104,8 +108,7 @@ _WRAPPERS = {
 }
 _SHELLS = {"sh", "bash", "zsh", "dash", "ash", "ksh"}
 _MAX_NEST_DEPTH = 4
-_REGEX_TIMEOUT_S = 1.0
-_REGEX_MAX_LEN = 100_000
+_REGEX_BUDGET_S = 2.0  # one hard wall-clock budget for ALL regex rules combined
 _ALLOWED_REGEX_FLAGS = set("ims")
 
 
@@ -327,6 +330,35 @@ def _normalize_ref(refspec: str) -> str:
     return ref
 
 
+def _push_refspecs(args: List[str]) -> List[str]:
+    """The refspec arguments of a `git push`, excluding the remote/repository.
+
+    In `git push [opts] [<repo> [<refspec>...]]` the first positional is the
+    remote, not a refspec — so `git push --force main feature-x` (remote `main`)
+    force-pushes `feature-x`, not `main`. When the repo is supplied via `--repo`
+    every positional is a refspec instead."""
+    positionals: List[str] = []
+    repo_via_option = False
+    skip_next = False
+    for a in args:
+        if skip_next:
+            skip_next = False
+            continue
+        if a == "--repo":
+            repo_via_option = True
+            skip_next = True  # its value is the next token
+            continue
+        if a.startswith("--repo="):
+            repo_via_option = True
+            continue
+        if a.startswith("-"):
+            continue
+        positionals.append(a)
+    if repo_via_option:
+        return positionals
+    return positionals[1:]  # drop the remote/repository
+
+
 def check_force_push_protected(
     segments: Sequence[List[str]], protected: Sequence[str]
 ) -> Optional[str]:
@@ -349,7 +381,7 @@ def check_force_push_protected(
             or a.startswith("--force-if-includes")
             for a in args
         )
-        refspecs = [a for a in args if not a.startswith("-")]
+        refspecs = _push_refspecs(args)
         for a in refspecs:
             if not (global_force or a.startswith("+")):
                 continue
@@ -470,67 +502,125 @@ def _regex_flags(flags: str) -> int:
     return out
 
 
-def _bounded_regex_search(pattern: str, text: str, flags: int, rule_id: str) -> bool:
-    """Run an untrusted regex with a wall-clock bound so a pathological pattern
-    cannot wedge the hook (P61). On POSIX main-thread, a SIGALRM timeout skips the
-    rule (fail-open) with a loud warning; elsewhere only the length cap applies."""
-    if len(text) > _REGEX_MAX_LEN:
-        text = text[:_REGEX_MAX_LEN]
-    compiled = re.compile(pattern, flags)
+def _rule_hit(rule: dict, text: str) -> bool:
+    """Does one rule match the FULL text? substring (linear) or regex (backtracking).
+    Regex is only ever called from inside the bounded worker below."""
+    if rule.get("match", "substring") == "substring":
+        return rule["pattern"] in text
+    return (
+        re.search(rule["pattern"], text, _regex_flags(rule.get("flags", "")))
+        is not None
+    )
+
+
+def _first_match_index(rules: Sequence[dict], text: str) -> Optional[int]:
+    for i, rule in enumerate(rules):
+        if _rule_hit(rule, text):
+            return i
+    return None
+
+
+def _regex_worker() -> int:
+    """Hidden CLI mode (`--regex-worker`): evaluate rules against text read from
+    stdin, print the index of the first match (or nothing), exit 0. Run as a child
+    process so the PARENT's subprocess timeout is a hard, platform-independent
+    wall-clock bound over ALL rules and the WHOLE payload at once — no truncation,
+    one aggregate budget (P61)."""
     try:
-        import signal
-
-        has_alarm = hasattr(signal, "SIGALRM")
-    except Exception:
-        has_alarm = False
-    if not has_alarm:
-        return compiled.search(text) is not None
-
-    class _Timeout(Exception):
-        pass
-
-    def _handler(signum, frame):
-        raise _Timeout()
-
-    try:
-        old = signal.signal(signal.SIGALRM, _handler)
-    except (ValueError, OSError):
-        return compiled.search(text) is not None  # not main thread
-    signal.setitimer(signal.ITIMER_REAL, _REGEX_TIMEOUT_S)
-    try:
-        return compiled.search(text) is not None
-    except _Timeout:
-        print(
-            f"goodfellow guard_engine: rule '{rule_id}' regex exceeded "
-            f"{_REGEX_TIMEOUT_S}s and was skipped — simplify the pattern.",
-            file=sys.stderr,
-        )
-        return False
-    finally:
-        signal.setitimer(signal.ITIMER_REAL, 0)
-        signal.signal(signal.SIGALRM, old)
+        data = json.load(sys.stdin)
+    except ValueError:
+        return 2
+    idx = _first_match_index(data.get("rules", []), data.get("text", ""))
+    if idx is not None:
+        print(idx)
+    return 0
 
 
 def check_user_rules(text: str, tool_name: str, rules: Iterable[dict]) -> Optional[str]:
-    """Evaluate declarative BLOCK rules against the extracted text for this tool."""
-    for rule in rules:
-        tools = rule.get("tools", ["Bash"])
-        if tool_name not in tools:
-            continue
-        bypass_env = rule.get("bypass_env")
-        if bypass_env and os.environ.get(bypass_env) == "1":
-            continue
-        pattern = rule["pattern"]
-        match = rule.get("match", "substring")
-        if match == "substring":
-            hit = pattern in text
-        else:
-            hit = _bounded_regex_search(
-                pattern, text, _regex_flags(rule.get("flags", "")), rule.get("id", "?")
-            )
-        if hit:
-            return f"Blocked by goodfellow guard '{rule['id']}': {rule['reason']}"
-    return None
+    """Evaluate declarative BLOCK rules (in config order) against this tool's text.
+
+    Rules that don't apply to this tool, or whose `bypass_env` is set, are dropped
+    first. If none of the applicable rules use `regex`, matching is linear and runs
+    inline (the common fast path). If any regex rule applies, ALL applicable rules
+    are evaluated inside a child worker under one hard wall-clock budget, so a
+    catastrophic-backtracking pattern in the (untrusted) repo config can neither
+    wedge the hook nor be dodged by putting the dangerous text past a length cap.
+    A budget overrun is a *conservative deny* — an operation that cannot be
+    evaluated is blocked, not silently allowed."""
+    applicable = [
+        r
+        for r in rules
+        if tool_name in r.get("tools", ["Bash"])
+        and not (r.get("bypass_env") and os.environ.get(r["bypass_env"]) == "1")
+    ]
+    if not applicable:
+        return None
+
+    def _reason(rule: dict) -> str:
+        return f"Blocked by goodfellow guard '{rule['id']}': {rule['reason']}"
+
+    if not any(r.get("match", "substring") == "regex" for r in applicable):
+        idx = _first_match_index(applicable, text)
+        return _reason(applicable[idx]) if idx is not None else None
+
+    payload = json.dumps(
+        {
+            "text": text,
+            "rules": [
+                {
+                    "id": r["id"],
+                    "reason": r["reason"],
+                    "pattern": r["pattern"],
+                    "match": r.get("match", "substring"),
+                    "flags": r.get("flags", ""),
+                }
+                for r in applicable
+            ],
+        }
+    )
+    try:
+        import subprocess
+
+        proc = subprocess.run(
+            [sys.executable, os.path.abspath(__file__), "--regex-worker"],
+            input=payload,
+            capture_output=True,
+            text=True,
+            timeout=_REGEX_BUDGET_S,
+        )
+    except subprocess.TimeoutExpired:
+        print(
+            "goodfellow guard_engine: guards.json regex evaluation exceeded "
+            f"{_REGEX_BUDGET_S}s — blocking conservatively.",
+            file=sys.stderr,
+        )
+        return (
+            "Blocked: a `regex` rule in .goodfellow/guards.json could not be "
+            f"evaluated within {_REGEX_BUDGET_S}s (possible catastrophic "
+            "backtracking). Blocking conservatively — simplify the pattern(s). "
+            "Run `guard_engine.py --validate` to locate them."
+        )
+    except OSError as exc:
+        print(
+            f"goodfellow guard_engine: regex worker failed to launch: {exc} "
+            "(regex rules skipped)",
+            file=sys.stderr,
+        )
+        return None  # engine failure -> fail-open rather than a spurious block
+    if proc.returncode != 0:
+        print(
+            f"goodfellow guard_engine: regex worker error rc={proc.returncode} "
+            "(regex rules skipped)",
+            file=sys.stderr,
+        )
+        return None
+    out = proc.stdout.strip()
+    if not out:
+        return None
+    try:
+        return _reason(applicable[int(out)])
+    except (ValueError, IndexError):
+        return None
 
 
 # --------------------------------------------------------------------------- #
@@ -760,7 +850,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         default=None,
         help="Exit non-zero if the guard set drifted from BASELINE snapshot",
     )
+    parser.add_argument(
+        "--regex-worker",
+        action="store_true",
+        help=argparse.SUPPRESS,  # internal: bounded regex evaluation child process
+    )
     args = parser.parse_args(argv)
+
+    if args.regex_worker:
+        return _regex_worker()
+
     project_dir = _resolve_project_dir(args.project_dir)
 
     if args.validate:

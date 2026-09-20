@@ -97,11 +97,16 @@ still wired — so a rule that kept its id while its pattern changed, or a
 drift. The assertion exits non-zero on any mismatch (a gate, not a warning):
 
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/guard_engine.py" \
-  --assert-guard-set .goodfellow/guard-set.pre-compact.json \
-  || echo "WARNING: guard set drifted across compaction — investigate before proceeding."
+if ! python3 "${CLAUDE_PLUGIN_ROOT}/scripts/guard_engine.py" \
+     --assert-guard-set .goodfellow/guard-set.pre-compact.json; then
+  echo "STOP: guard set drifted across compaction — investigate before proceeding."
+  exit 1
+fi
+echo "Guard set intact across the compaction boundary."
 ```
 
-The set lives on disk, so it *should* match exactly; if it does not, your
-governance changed under you — stop and investigate rather than assuming the
+Do NOT wrap the assertion in `|| echo …` — that swallows the non-zero exit, so
+the gate would report success precisely when governance drifted. Keep the failing
+status: the set lives on disk, so it *should* match exactly, and if it does not,
+your governance changed under you — stop and investigate rather than assuming the
 summary kept it.
