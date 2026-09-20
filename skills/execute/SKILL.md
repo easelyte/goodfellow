@@ -78,32 +78,39 @@ From the not-yet-done tasks in the current phase, use the plan's dependency grap
 
 **Step 3 — checkpoint the full execution state before fanning out.**
 
-Children branch from a commit, so anything not committed is invisible to them. Before creating any worktree, make the current execution state recoverable and complete:
+Children branch from a commit, so anything not committed is invisible to them. Before creating any worktree, make the current execution state recoverable and complete — **without sweeping in unrelated changes**:
 
+- **Audit the index first, and checkpoint an explicit pathspec.** The §0 workspace check is advisory, so the tree may be dirty with changes you do not own. Never checkpoint with a blanket `git add -A` or a bare `git commit`: derive the explicit pathset of files this phase's completed tasks own and commit **only that pathspec** (`git add <task-files>` then commit). If unrelated paths are already staged, abort and surface them rather than absorbing them — a checkpoint that captures the operator's unrelated staged work propagates it to every child and into the final PR.
 - **Commit completed-but-uncommitted task work** from earlier in this phase/run onto the execution branch (the serial loop marks tasks done without committing) — otherwise children start from stale code missing their prerequisites.
 - **Make the plan artifact and any untracked prerequisite inputs available to children.** The plan file is usually still untracked at execution time; commit it (or otherwise place it inside each worktree) so children can read their own task bodies and acceptance criteria.
-- Branch every child worktree from **this checkpoint commit**, not from a bare `HEAD` that predates the phase's work.
+- Record this **checkpoint commit SHA** — every child must start from exactly it (Step 4), not from a bare `HEAD` that predates the phase's work nor a fresh base that omits it.
 
-**Step 4 — dispatch one worktree-isolated implementer per task (isolation MUST be runtime-enforced).**
+**Step 4 — dispatch one worktree-isolated implementer per task.**
 
-Dispatch one implementer subagent (vanilla Agent/Task tool) per task. Claude Code subagents start in the *parent's* working directory and `cd` does not persist between their tool calls, so telling a child to "work in the worktree" does NOT put it there — a child using ordinary relative Edit/Write would mutate the parent checkout and recreate the shared-tree corruption this design exists to prevent. Enforce isolation one of two ways:
+Dispatch one implementer subagent (vanilla Agent/Task tool) per task. Two invariants MUST hold for every child, and neither is satisfied by a prose instruction alone:
 
-- **Preferred — use the Agent tool's own worktree isolation** (`isolation: "worktree"` or the harness's equivalent), so the runtime creates and pins the child to its own worktree off the checkpoint. This is the only option that *guarantees* the child cannot touch the parent tree.
-- **Fallback — if the runtime exposes no isolation option**, create the worktree yourself off the checkpoint and give the child (a) its **absolute** worktree path, (b) an instruction to use **absolute paths for every file operation** (never relative), and (c) a **mandatory pre-write assertion**: run `git rev-parse --show-toplevel` and refuse to write unless it equals the allocated worktree path.
+1. **The child starts from the checkpoint SHA (Step 3), not a fresh/default base.** Claude Code's runtime worktree isolation branches from a base governed by a `worktree.baseRef` setting whose **default (`fresh`) is `origin/<default-branch>` — NOT your local HEAD/checkpoint.** Use that option without pinning the base and children silently run against stale code missing the phase's work and the just-committed plan.
+2. **Isolation is enforced by the runtime, not by asking.** Subagents start in the *parent's* working directory and `cd` does not persist between their tool calls, so a child using ordinary relative Edit/Write mutates the parent checkout and recreates the shared-tree corruption this design exists to prevent.
+
+The **canonical mechanism** that satisfies both — and gives you a base and branch name you control — is to create the worktree yourself off the checkpoint and hand the child an absolute, verified path:
 
 ```bash
-# Fallback path only. CKPT = the Step-3 checkpoint commit; SLUG = task id, e.g. t-2-3
+# CKPT = the Step-3 checkpoint SHA; SLUG = task id, e.g. t-2-3
 git worktree add -b "gf-exec/<SLUG>" "$(pwd)/../gf-exec-<SLUG>" "<CKPT>"
 ```
 
-Each child runs the per-task loop below (2a-2e) inside its worktree and **commits its result on its own branch** before returning.
+Give the child (a) its **absolute** worktree path, (b) an instruction to use **absolute paths for every file operation** (never relative), and (c) a **mandatory pre-write assertion**: run `git rev-parse --show-toplevel` and refuse to write unless it equals the allocated worktree path.
+
+You **may** instead use the Agent tool's built-in `isolation: "worktree"` **only if** you can (i) pin its base to the checkpoint SHA (e.g. set `worktree.baseRef=head` with the checkpoint on HEAD, or pass an explicit base), (ii) have each child **verify its starting `HEAD == <CKPT>` before any write and fail closed to serial on mismatch**, and (iii) **capture the runtime-created branch/commit ref** it returns — do not assume a `gf-exec/<SLUG>` name — for the Step-6 merge.
+
+Each child runs the per-task loop below (2a-2e) inside its worktree and **commits its result on its own branch** before returning; record that branch/commit ref for reconciliation.
 
 **Step 5 — straggler / liveness handling (never force-remove a worktree whose child may be live).**
 
 goodfellow has no parent-side liveness watchdog and cannot portably hard-kill a hung subagent (see `skills/grill/SKILL.md`). Isolation removed the *corruption* risk — a slow or dead child can no longer damage the shared tree — but it did NOT make forced cleanup safe, because you cannot prove a hung child has stopped writing:
 
 - Keep child tasks **well-scoped and bounded** so a straggler doesn't stall the phase. Because a dead child costs only its own task (not the phase), children **may** run concurrently rather than strictly foreground one-at-a-time.
-- If a child exceeds a reasonable bound: **do not `git worktree remove --force` a worktree whose child you cannot confirm has terminated** — that can delete uncommitted work and yank the directory out from under a still-running writer. Instead **quarantine** it (leave it in place, do not reuse it) and run that one task serially in the parent (or in a fresh worktree). The other children's committed branches are unaffected.
+- If a child exceeds a reasonable bound: **do not `git worktree remove --force` a worktree whose child you cannot confirm has terminated** — that can delete uncommitted work and yank the directory out from under a still-running writer. Instead **quarantine** it (leave it in place, do not reuse it). Whether you may then *replay* the task depends on its effects: a **filesystem-only** task can be re-run serially in a fresh worktree (the quarantined child touches only its own tree). A task with **external, non-idempotent effects** (DB migration, API call, deploy, notification, package publish) must **NOT** be concurrently replayed — a worktree isolates files, not a shared database or remote, so replaying while the first execution is still live duplicates the mutation. For those, **halt to the operator** unless the task carries a stable idempotency key and you can check whether the effect already happened. The other children's committed branches are unaffected either way.
 - Only remove a worktree after the child is **confirmed finished** AND its working tree is either clean or its dirty diff has been inspected and preserved (or proven redundant). Reserve `--force` for that confirmed-dead, already-captured case.
 
 **Step 6 — reconcile by merge, then verify together.**
@@ -111,13 +118,13 @@ goodfellow has no parent-side liveness watchdog and cannot portably hard-kill a 
 Once children return, merge each child branch back into the execution branch in plan order:
 
 ```bash
-git merge --no-ff "gf-exec/<SLUG>"   # repeat per child, in dependency order
+git merge --no-ff "<child-branch-ref>"   # the ref captured in Step 4; repeat per child, in dependency order
 ```
 
 - A **clean merge means only that the edits did not textually conflict** — it does NOT prove the tasks were semantically independent. Two cleanly-merging children can still disagree about a renamed interface, an invariant, a schema, or an ordering assumption.
 - A **merge conflict** means the changes overlapped textually. This is a conflict, not corruption: resolve it serially, keeping both children's intent, then continue.
 - After all merges, run the per-task verify (2d) across **all** affected files together, **and re-check the merged diff against every affected task's acceptance criteria** — this integration pass, not the merge result, is what catches semantic incompatibility a clean merge hides.
-- Clean up only **confirmed-finished** worktrees (per Step 5): `git worktree remove "../gf-exec-<SLUG>"` for each (`--force` only once the child is proven done and its work captured), and delete merged branches.
+- Clean up only **confirmed-finished** worktrees (per Step 5): `git worktree remove` each (`--force` only once the child is proven done and its work captured), and delete merged branches.
 
 For each task run serially (or each task within a fanned-out set, executed by the child implementer in its worktree): follow the loop below, in plan order.
 
