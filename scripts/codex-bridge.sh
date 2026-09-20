@@ -227,7 +227,7 @@ has_hunks() {
 # to no principle section rather than failing the review.
 emit_principles() {
   local plugin_root="${CLAUDE_PLUGIN_ROOT:-$(cd "${SCRIPT_DIR}/.." && pwd)}"
-  python3 "${SCRIPT_DIR}/principles_context.py" --emit --plugin-root "$plugin_root" \
+  python3 "${SCRIPT_DIR}/principles_context.py" --index --plugin-root "$plugin_root" \
     --project-root . 2>/dev/null || true
 }
 
