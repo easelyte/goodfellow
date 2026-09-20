@@ -113,8 +113,10 @@ major   -> loop_store        # substantive follow-up; non-blocking, but MUST be 
 minor   -> knowledge_gotchas # polish-tier
 ```
 
+Pass `--lens <lens>` when the finding came from the judged Codex review: read the finding's `lens` cell from the review artifact's `## Judge audit` table (one of `auth-trust`, `data-integrity`, `failure-handling`, `concurrency`, `input-edge`, `compat-migration`, `observability`, `contract-scope`, or `other`). This threads the interpretation frame onto the loop so `triage` and `lens_tuning.py` can attribute outcomes per-lens. Omit `--lens` for hand-filed loops or an unjudged (fallback) review — a missing lens is fine (bucketed `unattributed`).
+
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/loop_store.py" --root . add "<title>" --priority <p> --source "ship-review-r<N>" --description "<text>"
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/loop_store.py" --root . add "<title>" --priority <p> --source "ship-review-r<N>" --description "<text>" [--lens <lens>]
 ```
 
 Soft cap check: if >15 active loops, warn "loop backlog growing — consider /goodfellow:triage".

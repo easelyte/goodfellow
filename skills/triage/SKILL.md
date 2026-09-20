@@ -86,7 +86,7 @@ For each confirmed decision:
 Append each decision to `.goodfellow/triage-log.jsonl` (lock + flush + fsync, truncated-line tolerant):
 
 ```json
-{"loop_id": 1, "loop_uuid": "<loop's uuid from loops.json>", "title": "...", "decision": "real-defect", "confidence": "high", "reviewer_1": "real-defect", "reviewer_2": "real-defect", "date": "2026-06-02", "operator_override": false}
+{"loop_id": 1, "loop_uuid": "<loop's uuid from loops.json>", "title": "...", "decision": "real-defect", "confidence": "high", "reviewer_1": "real-defect", "reviewer_2": "real-defect", "date": "2026-06-02", "operator_override": false, "lens": "<loop's lens, or omit if none>"}
 ```
 
 Include `loop_uuid` — copy the `uuid` field of the loop from `loops.json`. It is the durable identity the lens-tuning join keys on: the integer `loop_id` restarts at 1 on any store reset, so a record carrying only `loop_id` can be mis-attributed to a different loop after a reset. `loop_uuid` is collision-proof across resets. (Legacy records without it still load; the join falls back to `loop_id`.)
@@ -97,7 +97,7 @@ Include `loop_uuid` — copy the `uuid` field of the loop from `loops.json`. It 
 
 ## 9. Optional: reviewer-lens tuning (read-only pointer)
 
-Once triage decisions accumulate, surface review `source`s worth a human look — those whose surviving deferred findings were mostly triaged `not-a-defect` (rejection signal) or mostly operator-overridden (disagreement signal). It joins `loops.json` + `triage-log.jsonl`, attributes at `source` granularity (the only durable proxy — no record stores a lens tag), and points at the lens prose. Read-only; it never edits, and a human validates before tuning.
+Once triage decisions accumulate, surface review `source`s worth a human look — those whose surviving deferred findings were mostly triaged `not-a-defect` (rejection signal) or mostly operator-overridden (disagreement signal). It joins `loops.json` + `triage-log.jsonl`, attributes at `source` granularity AND per-`lens` for loops carrying the judge's lens tag, and points at the lens prose. Loops filed before the tag shipped have no lens and appear under `unattributed` (never flagged). Read-only; it never edits, and a human validates before tuning.
 
 ```bash
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/lens_tuning.py" --root .        # human report

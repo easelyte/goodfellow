@@ -41,7 +41,10 @@ if _HERE not in sys.path:
 
 from atomic_write import write_text_atomic  # noqa: E402
 from judge_decision_validator import (  # noqa: E402
+    LENS_UNATTRIBUTED,
+    LENS_VOCABULARY,
     JudgeContractError,
+    normalize_lens,
     validate_decisions,
 )
 
@@ -214,15 +217,20 @@ def build_judge_prompt(
             '  "causal_exception_valid": <EXACT boolean true/false — true ONLY '
             "when decision=drop, drop_reason=out-of-diff-boundary AND you "
             "independently confirm the finding is causally load-bearing; "
-            "false/null otherwise. Emit a real JSON boolean, never a string.>"
+            "false/null otherwise. Emit a real JSON boolean, never a string.>,"
         )
-        schema_intro = "Decision object schema (these six fields ONLY):"
     else:
         schema_fields.append(
             '  "reclassified_to": "<\\"tier-3\\" only when '
-            'drop_reason=auto-zero-category, else null>"'
+            'drop_reason=auto-zero-category, else null>",'
         )
-        schema_intro = "Decision object schema (these five fields ONLY):"
+    # `lens` : the interpretation frame the finding falls under.
+    # OPTIONAL / fail-open — an omitted or unrecognized value is coerced to
+    # "other" downstream, so it never affects the keep/drop grounding.
+    schema_fields.append(
+        '  "lens": "<one of: ' + ", ".join(sorted(LENS_VOCABULARY)) + '>"'
+    )
+    schema_intro = "Decision object schema (emit ONLY these fields):"
 
     findings_json = json.dumps(
         [
@@ -260,6 +268,13 @@ def build_judge_prompt(
         "context. Do NOT drop-as-hallucination an entity merely because its "
         "definition is not shown, and do NOT keep a finding that only flags such "
         "an entity — judge on the evidence actually present.",
+        "",
+        "LENS TAGGING: also set `lens` on every decision — the interpretation "
+        "frame the finding falls under (auth-trust, data-integrity, "
+        "failure-handling, concurrency, input-edge, compat-migration, "
+        "observability, contract-scope), or `other` if none fits. This only tags "
+        "the finding for per-lens outcome tracking; it does NOT change your "
+        "keep/drop judgement or score.",
         "",
         "## Generator findings to judge",
         "```json",
@@ -307,6 +322,8 @@ def reconcile(
         score = dec["judge_score"]
         drop_reason = dec.get("drop_reason")
         reclassified_to = dec.get("reclassified_to")
+        # fail-open lens tag (unknown/malformed -> "other").
+        lens = normalize_lens(dec.get("lens"))
 
         # The load-bearing verbatim escape requires BOTH the generator's
         # precondition flag AND the judge's independent confirmation
@@ -318,7 +335,7 @@ def reconcile(
 
         if decision == "keep":
             pieces.append(finding_prose + f.raw)
-            audit_rows.append(_row(f, "keep", score, None, None))
+            audit_rows.append(_row(f, "keep", score, None, None, lens))
             continue
 
         # decision == drop
@@ -330,7 +347,7 @@ def reconcile(
             # scope-fence load-bearing escape -> retain verbatim
             pieces.append(finding_prose + f.raw)
             audit_rows.append(
-                _row(f, "keep", score, "out-of-diff-boundary(load-bearing)", None)
+                _row(f, "keep", score, "out-of-diff-boundary(load-bearing)", None, lens)
             )
             continue
 
@@ -338,7 +355,12 @@ def reconcile(
             # reclassification WINS over blocker retention
             audit_rows.append(
                 _row(
-                    f, "drop", score, "auto-zero-category", reclassified_to or "tier-3"
+                    f,
+                    "drop",
+                    score,
+                    "auto-zero-category",
+                    reclassified_to or "tier-3",
+                    lens,
                 )
             )
             # Whole unit (prose + block) removed; leave a visible tombstone so a
@@ -352,11 +374,13 @@ def reconcile(
                 f.raw + f"\n\n> [judge-contested blocker: {drop_reason}, score {score}]"
             )
             pieces.append(finding_prose + annotated)
-            audit_rows.append(_row(f, "retain-annotated", score, drop_reason, None))
+            audit_rows.append(
+                _row(f, "retain-annotated", score, drop_reason, None, lens)
+            )
             continue
 
         # Tier-2/Tier-3 drop -> remove the whole unit, leave a tombstone.
-        audit_rows.append(_row(f, "drop", score, drop_reason, None))
+        audit_rows.append(_row(f, "drop", score, drop_reason, None, lens))
         pieces.append(_tombstone(f, drop_reason, score))
 
     pieces.append(generator_text[cursor:])
@@ -479,6 +503,7 @@ def _row(
     score: int,
     drop_reason: Optional[str],
     reclassified_to: Optional[str],
+    lens: str = LENS_UNATTRIBUTED,
 ) -> Dict[str, Any]:
     return {
         "finding_id": f.finding_id,
@@ -489,6 +514,7 @@ def _row(
         "decision": decision,
         "drop_reason": drop_reason,
         "reclassified_to": reclassified_to,
+        "lens": lens,
     }
 
 
@@ -514,17 +540,19 @@ def render_audit_section(audit_rows: List[Dict[str, Any]]) -> str:
         lines.append("_No findings to judge._")
         return "\n".join(lines) + "\n"
     lines.append(
-        "| finding_id | decision | severity | score | drop_reason | reclassified_to | area |"
+        "| finding_id | decision | severity | score | lens | drop_reason | "
+        "reclassified_to | area |"
     )
-    lines.append("|---|---|---|---|---|---|---|")
-    # decision / drop_reason / reclassified_to are controlled enums and score is
-    # an int, but finding_id / severity / area are generator-controlled — inert
-    # every cell so no path can inject Markdown into the authoritative table.
+    lines.append("|---|---|---|---|---|---|---|---|")
+    # decision / drop_reason / reclassified_to / lens are controlled enums and
+    # score is an int, but finding_id / severity / area are generator-controlled —
+    # inert every cell so no path can inject Markdown into the authoritative table.
     for r in audit_rows:
         cells = {k: _inert(v) for k, v in r.items()}
+        cells.setdefault("lens", LENS_UNATTRIBUTED)  # pre-lens-tag rows had no lens key
         lines.append(
             "| {finding_id} | {decision} | {generator_severity} | {judge_score} | "
-            "{drop_reason} | {reclassified_to} | {area} |".format(**cells)
+            "{lens} | {drop_reason} | {reclassified_to} | {area} |".format(**cells)
         )
     return "\n".join(lines) + "\n"
 

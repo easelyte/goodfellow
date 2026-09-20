@@ -19,10 +19,30 @@
 #              <class>` (never a path). Callers MUST check `$?` / reject the
 #              `REVIEW_FAILED ` prefix before reading the artifact path.
 #
-# MODEL ($GOODFELLOW_REVIEW_MODEL, default sonnet) is a CLAUDE model id, only ever
-# passed to the Claude fallback reviewer. The Codex path must NOT receive a Claude
-# model name (codex expects a GPT model id); it stays on codex's configured
-# default unless $GOODFELLOW_CODEX_MODEL is set to a GPT id.
+# MODEL ($GOODFELLOW_REVIEW_MODEL, default opus) is a CLAUDE model id, only ever
+# passed to the single-Claude FALLBACK reviewer (used when Codex is unavailable).
+# The Codex path must NOT receive a Claude model name (codex expects a GPT model
+# id); it stays on codex's configured default unless $GOODFELLOW_CODEX_MODEL is
+# set to a GPT id.
+#
+# Reviewer tiering. The FALLBACK path has no cross-family reviewer
+# (no Codex), so verifier STRENGTH is the only remaining lever. The mechanism is
+# self-contained: a review only adds confidence if the reviewer is at least as
+# capable as whatever produced the code — a reviewer weaker than the generator
+# mostly rubber-stamps defects it cannot see, so an Opus-generated change checked
+# by a Sonnet fallback yields false confidence rather than a real gate. So the
+# fallback defaults to `opus` (the strongest Claude), trading quota for
+# correctness on the already-degraded no-Codex path. A user whose generator is
+# Sonnet, or who must conserve Opus quota, sets GOODFELLOW_REVIEW_MODEL=sonnet to
+# restore a correctly same-tiered review. In THIS bridge's Codex-present path
+# MODEL is unused (only the fallback reads it). Note GOODFELLOW_REVIEW_MODEL is
+# ALSO referenced (prose-directed, not a script read) by the spec-review /
+# plan-review skills for their parallel Claude reviewer, so setting it can change
+# that reviewer too; only the no-Codex fallback DEFAULT flips to opus here — those
+# skills keep their own sonnet default for the parallel reviewer when unset.
+# Evidence for the generation/verification capability asymmetry and the
+# large-verifier/small-generator gain vs small-verifier/large-generator harm:
+# arXiv:2506.18203 (Weaver), arXiv:2410.21819.
 #
 # Review artifacts are LOCAL /tmp files shown only to the operator on their own
 # machine — there is no publish/egress surface, so the review pipeline uses an
@@ -33,7 +53,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RJ="${SCRIPT_DIR}/review_judge.py"
 
 KIND=""
-MODEL="${GOODFELLOW_REVIEW_MODEL:-sonnet}"
+MODEL="${GOODFELLOW_REVIEW_MODEL:-opus}"
 # GPT model id for the Codex path only. Empty => codex uses its configured default.
 CODEX_MODEL="${GOODFELLOW_CODEX_MODEL:-}"
 INCLUDE_AESTHETIC=""

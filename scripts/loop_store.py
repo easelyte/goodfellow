@@ -107,6 +107,7 @@ def add_loop(
     tags=None,
     owner="operator",
     next_action="",
+    lens=None,
     project_root=".",
 ):
     if priority not in VALID_PRIORITIES:
@@ -134,6 +135,10 @@ def add_loop(
         "tags": tags or [],
         "owner": owner,
         "next_action": next_action,
+        # reviewer lens the finding was tagged with (from the judge
+        # audit), so lens_tuning can attribute triage outcomes per-lens. None for
+        # loops filed by hand or before the lens tag shipped.
+        "lens": lens,
         "triage_count": 0,
         "last_triaged": None,
     }
@@ -217,6 +222,7 @@ if __name__ == "__main__":
     add_p.add_argument("--tags", default="")
     add_p.add_argument("--owner", default="operator")
     add_p.add_argument("--next-action", default="")
+    add_p.add_argument("--lens", default=None)
 
     close_p = sub.add_parser("close")
     close_p.add_argument("id", type=int)
@@ -243,6 +249,7 @@ if __name__ == "__main__":
             tags=tags,
             owner=args.owner,
             next_action=args.next_action,
+            lens=args.lens,
             project_root=args.root,
         )
         print(f"Added loop #{lid}: {args.title}")
