@@ -110,6 +110,15 @@ _SHELLS = {"sh", "bash", "zsh", "dash", "ash", "ksh"}
 _MAX_NEST_DEPTH = 4
 _REGEX_BUDGET_S = 2.0  # one hard wall-clock budget for ALL regex rules combined
 _ALLOWED_REGEX_FLAGS = set("ims")
+# `git push` options that consume a following value token (so it is not a refspec).
+_PUSH_VALUE_OPTS = {
+    "--repo",
+    "-o",
+    "--push-option",
+    "--receive-pack",
+    "--exec",
+    "--recurse-submodules",
+}
 
 
 class GuardConfigError(Exception):
@@ -336,7 +345,11 @@ def _push_refspecs(args: List[str]) -> List[str]:
     In `git push [opts] [<repo> [<refspec>...]]` the first positional is the
     remote, not a refspec — so `git push --force main feature-x` (remote `main`)
     force-pushes `feature-x`, not `main`. When the repo is supplied via `--repo`
-    every positional is a refspec instead."""
+    every positional is a refspec instead.
+
+    Value-taking options are consumed with their value so the value can never be
+    mistaken for the repository token (which would then shift the real remote into
+    refspec position and spuriously deny a legitimate push)."""
     positionals: List[str] = []
     repo_via_option = False
     skip_next = False
@@ -344,12 +357,15 @@ def _push_refspecs(args: List[str]) -> List[str]:
         if skip_next:
             skip_next = False
             continue
-        if a == "--repo":
-            repo_via_option = True
-            skip_next = True  # its value is the next token
+        if a in _PUSH_VALUE_OPTS:
+            repo_via_option = repo_via_option or a == "--repo"
+            skip_next = True  # its value is the next token — not a positional
             continue
-        if a.startswith("--repo="):
-            repo_via_option = True
+        base = a.split("=", 1)[0]
+        if a.startswith("--") and "=" in a and base in _PUSH_VALUE_OPTS:
+            repo_via_option = repo_via_option or base == "--repo"
+            continue
+        if a.startswith("-o") and a != "-o":  # `-oVALUE` combined short form
             continue
         if a.startswith("-"):
             continue
@@ -784,13 +800,44 @@ def _resolve_project_dir(explicit: Optional[str]) -> str:
     return explicit or os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
 
 
+_NESTED_QUANTIFIER = re.compile(r"\([^()]*[+*?][^()]*\)\s*[+*]")
+
+
+def _redos_prone(pattern: str) -> bool:
+    """Best-effort heuristic: a quantifier applied to a group that itself contains
+    a quantifier (`(a+)+`, `(a*)+`, `(.+)*`) — the classic catastrophic-backtracking
+    shape. Not exhaustive, but enough to point --validate at a likely offender."""
+    return _NESTED_QUANTIFIER.search(pattern) is not None
+
+
 def cmd_validate(project_dir: str) -> int:
-    """Fail-loud config check for CI / snap-compact. Non-zero on a bad config."""
+    """Fail-loud config check for CI / snap-compact. Non-zero on a bad config.
+
+    Also a genuine ReDoS diagnostic: names each regex rule whose pattern looks
+    catastrophic-backtracking-prone, so the runtime timeout message ("run
+    --validate to locate them") actually leads somewhere. Risk is a warning, not
+    an error — a complex pattern may be intentional — so the exit stays 0."""
     try:
-        load_config(project_dir)
+        config = load_config(project_dir)
     except GuardConfigError as exc:
         print(f"INVALID: {exc}", file=sys.stderr)
         return 1
+    risky = [
+        r["id"]
+        for r in config.get("block", [])
+        if isinstance(r, dict)
+        and r.get("match") == "regex"
+        and isinstance(r.get("pattern"), str)
+        and _redos_prone(r["pattern"])
+    ]
+    if risky:
+        print(
+            "WARNING: possible catastrophic-backtracking regex in rule(s): "
+            f"{', '.join(risky)} — a nested quantifier like `(a+)+` can hang the "
+            "guard on a crafted payload (it is then conservatively denied). "
+            "Rewrite the pattern to a linear form.",
+            file=sys.stderr,
+        )
     print("OK: .goodfellow/guards.json is valid (or absent)")
     return 0
 

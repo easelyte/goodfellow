@@ -81,12 +81,12 @@ def assert_denied(parsed, contains=None):
         "git -C /repo add --all",
         "cd x && git add .",
         "command git add -A",
-        "echo preparing\ngit add -A",  # F1: multiline
-        "env git add -A",  # F1: env wrapper
-        "FOO=bar git add -A",  # F1: leading assignment
-        "sudo git add --all",  # F1: sudo wrapper
-        "bash -c 'git add -A'",  # F1: nested shell
-        'sh -lc "git add ."',  # F1: nested login shell
+        "echo preparing\ngit add -A",  # multiline
+        "env git add -A",  # env wrapper
+        "FOO=bar git add -A",  # leading assignment
+        "sudo git add --all",  # sudo wrapper
+        "bash -c 'git add -A'",  # nested shell
+        'sh -lc "git add ."',  # nested login shell
     ],
 )
 def test_git_add_all_denied(cmd):
@@ -126,7 +126,7 @@ def test_skip_perms_denied():
 
 
 def test_skip_perms_nested_shell_denied():
-    # F1 class: the flag hidden inside a `bash -c` program is still caught.
+    # the flag hidden inside a `bash -c` program is still caught.
     cmd = "bash -c 'claude --dangerously-skip-permissions'"
     assert check_skip_permissions(expand_segments(cmd)) is not None
 
@@ -161,9 +161,9 @@ def test_skip_perms_not_checked_on_write_content():
         "git push --force-with-lease origin main",
         "git push -f origin HEAD:main",
         "git push --force origin +main",
-        "git push origin +main",  # F2: + refspec, no flag
-        "git push origin +HEAD:refs/heads/main",  # F2: + refspec + full ref
-        "git push --force origin HEAD:refs/heads/main",  # F2: full ref normalized
+        "git push origin +main",  # + refspec, no flag
+        "git push origin +HEAD:refs/heads/main",  # + refspec + full ref
+        "git push --force origin HEAD:refs/heads/main",  # full ref normalized
     ],
 )
 def test_force_push_protected_denied(cmd):
@@ -181,8 +181,8 @@ def test_force_push_protected_denied(cmd):
         "git push",  # bare, no branch named
         "git push -f",  # forced but no branch named -> not blocked
         "git push origin +feature-x",  # + on a non-protected branch
-        "git push --force main feature-x",  # F4: 'main' is the REMOTE, not a refspec
-        "git push -f main topic",  # F4: remote named 'main'
+        "git push --force main feature-x",  # 'main' is the REMOTE, not a refspec
+        "git push -f main topic",  # remote named 'main'
     ],
 )
 def test_force_push_non_protected_allowed(cmd):
@@ -190,7 +190,7 @@ def test_force_push_non_protected_allowed(cmd):
 
 
 def test_force_push_repo_option_treats_positionals_as_refspecs():
-    # F4: with --repo the positional is a refspec, not a remote, so a protected
+    # with --repo the positional is a refspec, not a remote, so a protected
     # target is still caught.
     assert (
         check_force_push_protected(
@@ -396,7 +396,7 @@ def test_regex_redos_bounded_and_denies(tmp_path):
 
 
 def test_regex_full_payload_evaluated_no_truncation(tmp_path):
-    # F1: a match after a long safe prefix must still be caught (no length cap
+    # a match after a long safe prefix must still be caught (no length cap
     # that a dangerous suffix could hide behind).
     write_guards(
         tmp_path,
@@ -416,7 +416,7 @@ def test_regex_full_payload_evaluated_no_truncation(tmp_path):
 
 
 def test_many_regex_rules_share_one_budget(tmp_path):
-    # F2: N pathological rules must not cost N * per-rule-timeout. One aggregate
+    # N pathological rules must not cost N * per-rule-timeout. One aggregate
     # budget covers them all, so the hook still returns quickly.
     write_guards(
         tmp_path,
@@ -518,18 +518,18 @@ def test_validate_cli_ok_when_absent(tmp_path):
         {"disable_builtins": ["no-such-builtin"]},  # unknown builtin
         {
             "block": [{"id": "x", "pattern": "y", "reason": "z", "flags": 1}]
-        },  # F4: non-str flags
+        },  # non-str flags
         {
             "block": [{"id": "x", "pattern": "y", "reason": "z", "flags": "q"}]
-        },  # F4: bad flag char
+        },  # bad flag char
         {
             "block": [{"id": "x", "pattern": "y", "reason": "z", "bypass_env": 1}]
-        },  # F4: non-str env
+        },  # non-str env
         {
             "block": [{"id": "x", "pattern": "y", "reason": "z", "bypass_env": "1BAD"}]
-        },  # F4: bad env name
+        },  # bad env name
         {
-            "block": [  # F4: duplicate ids
+            "block": [  # duplicate ids
                 {"id": "dup", "pattern": "a", "reason": "z"},
                 {"id": "dup", "pattern": "b", "reason": "z"},
             ]
@@ -581,7 +581,7 @@ def test_selfcheck_lists_active_guard_set(tmp_path):
 
 
 def test_selfcheck_digest_changes_when_pattern_changes(tmp_path):
-    # F5: same id, changed pattern -> digest changes, so drift is detected.
+    # same id, changed pattern -> digest changes, so drift is detected.
     write_guards(tmp_path, {"block": [{"id": "r", "pattern": "A", "reason": "x"}]})
     before = active_guard_set(str(tmp_path))["user_rules"][0]["digest"]
     write_guards(tmp_path, {"block": [{"id": "r", "pattern": "B", "reason": "x"}]})
@@ -590,7 +590,7 @@ def test_selfcheck_digest_changes_when_pattern_changes(tmp_path):
 
 
 def test_assert_guard_set_detects_drift(tmp_path):
-    # F5: --assert-guard-set exits non-zero when the set changes, not just warns.
+    # --assert-guard-set exits non-zero when the set changes, not just warns.
     write_guards(tmp_path, {"block": [{"id": "r", "pattern": "A", "reason": "x"}]})
     baseline = tmp_path / "baseline.json"
     proc = subprocess.run(
@@ -646,7 +646,7 @@ def test_load_config_absent_is_empty(tmp_path):
 
 
 # --------------------------------------------------------------------------- #
-# F6: pin the host wiring (guard is dead if hooks.json stops calling it)
+# pin the host wiring (guard is dead if hooks.json stops calling it)
 # --------------------------------------------------------------------------- #
 
 
@@ -682,7 +682,7 @@ def test_hook_registered_selfcheck(tmp_path):
 
 
 # --------------------------------------------------------------------------- #
-# F3: the snap-compact drift gate must not mask its own non-zero exit
+# the snap-compact drift gate must not mask its own non-zero exit
 # --------------------------------------------------------------------------- #
 
 def test_snap_compact_drift_gate_not_masked():
@@ -699,3 +699,44 @@ def test_snap_compact_drift_gate_not_masked():
     for line in text.splitlines():
         if "assert-guard-set" in line:
             assert "|| echo" not in line
+
+
+# --------------------------------------------------------------------------- #
+# Value-taking push options must not shift remote/refspec parsing
+# --------------------------------------------------------------------------- #
+
+@pytest.mark.parametrize("cmd", [
+    "git push --force --push-option ci.skip main feature-x",  # main is REMOTE
+    "git push -f -o ci.skip main feature-x",
+    "git push --force --push-option=ci.skip main feature-x",
+    "git push -f --receive-pack /x/git main feature-x",
+    "git push -f --exec /x/git main feature-x",
+    "git push -f --recurse-submodules on-demand main feature-x",
+])
+def test_value_option_does_not_flag_remote(cmd):
+    assert check_force_push_protected(expand_segments(cmd), ["main", "master"]) is None
+
+
+@pytest.mark.parametrize("cmd", [
+    "git push --force --push-option ci.skip origin main",   # main IS the refspec
+    "git push -f -o ci.skip origin master",
+])
+def test_value_option_still_catches_protected(cmd):
+    assert check_force_push_protected(expand_segments(cmd), ["main", "master"]) is not None
+
+
+# --------------------------------------------------------------------------- #
+# --validate is a genuine ReDoS diagnostic
+# --------------------------------------------------------------------------- #
+
+def test_validate_warns_on_redos_prone_pattern(tmp_path):
+    write_guards(tmp_path, {"block": [
+        {"id": "danger", "match": "regex", "pattern": "(a+)+$", "reason": "x"},
+        {"id": "safe", "match": "regex", "pattern": "^abc$", "reason": "y"},
+    ]})
+    proc = subprocess.run(
+        [sys.executable, ENGINE, "--project-dir", str(tmp_path), "--validate"],
+        capture_output=True, text=True)
+    assert proc.returncode == 0            # risk is a warning, not an error
+    assert "danger" in proc.stderr
+    assert "safe" not in proc.stderr
