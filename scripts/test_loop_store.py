@@ -206,3 +206,21 @@ print(lid)
             out, _ = p.communicate()
             ids.add(int(out.strip()))
         assert len(ids) == 5, f"Expected 5 distinct IDs, got {ids}"
+
+
+def test_add_loop_stores_lens():
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as d:
+        lid = loop_store.add_loop("Lensed", lens="concurrency", project_root=d)
+        loop = loop_store.get_loop(lid, project_root=d)
+        assert loop["lens"] == "concurrency"
+
+
+def test_add_loop_lens_defaults_none():
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as d:
+        lid = loop_store.add_loop("No lens", project_root=d)
+        loop = loop_store.get_loop(lid, project_root=d)
+        assert loop["lens"] is None

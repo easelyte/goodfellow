@@ -28,6 +28,11 @@ Rules enforced:
     "true"/"false" strings, reject int). The reconciler only reads it under the
     out-of-diff-boundary drop branch, so no cross-field enforcement here — a
     stray bool elsewhere is inert.
+  - lens: OPTIONAL ; the interpretation frame the finding falls under.
+    FAIL-OPEN — validate_decisions NEVER raises on it; review_judge coerces any
+    value via normalize_lens() (recognized member incl explicit "other" kept as
+    measured data; absent/malformed/unrecognized -> LENS_UNATTRIBUTED, never
+    "other"), so a bad lens degrades attribution instead of failing the pass.
 """
 
 from __future__ import annotations
@@ -39,6 +44,58 @@ DROP_REASONS = frozenset(
     {"no-evidence", "below-threshold", "auto-zero-category", "out-of-diff-boundary"}
 )
 DECISIONS = frozenset({"keep", "drop"})
+
+# --- Reviewer-lens vocabulary ----------------------------------
+# The judge tags each finding with the LENS (interpretation frame) it falls
+# under. Lenses previously lived only as PROSE in the generator stances with no
+# durable tag, so per-lens outcome attribution was impossible; this tag dissolves
+# that. The set is cross-KIND (code/spec/plan) — the primary value is code review.
+#
+# FAIL-OPEN CONTRACT: `lens` is an OPTIONAL field on a decision object. It NEVER
+# raises JudgeContractError — an absent, malformed, non-string, or unrecognized
+# value is normalized to LENS_UNATTRIBUTED by normalize_lens(). A bad lens
+# therefore can never flip the whole judge pass to unjudged passthrough (that
+# escalation is reserved for a violation of the core keep/drop grounding fields).
+#
+# MEASURED-ZERO vs NO-DATA (P65): `LENS_UNKNOWN` ("other") is a VALID vocabulary
+# member — the judge's explicit "fits no named lens" choice, which IS measured
+# data and stays eligible for lens-tuning. It is DISTINCT from LENS_UNATTRIBUTED
+# ("no lens provenance at all": absent/malformed/unrecognized). Collapsing the two
+# would let a batch of no-provenance findings masquerade as a measured "other"
+# lens and emit a false tuning signal, so normalize_lens keeps them separate.
+LENS_UNKNOWN = "other"  # explicit valid judge choice: fits no named lens
+LENS_UNATTRIBUTED = "unattributed"  # no usable lens provenance (no-data, not a lens)
+LENS_VOCABULARY = frozenset(
+    {
+        "auth-trust",  # auth, permissions, tenant isolation, trust boundaries
+        "data-integrity",  # data loss, corruption, duplication, irreversible state
+        "failure-handling",  # rollback, retries, partial failure, idempotency
+        "concurrency",  # races, ordering, stale state, re-entrancy
+        "input-edge",  # empty/null/timeout/degraded-dependency, edge inputs
+        "compat-migration",  # version skew, schema drift, migration, compatibility
+        "observability",  # observability / audit gaps
+        "contract-scope",  # contradictions, ambiguity, scope gaps, task ordering
+        LENS_UNKNOWN,  # explicit "fits no named lens" — a valid, measurable choice
+    }
+)
+
+
+def normalize_lens(value: Any) -> str:
+    """Coerce a judge-supplied lens value to a canonical vocabulary member, or to
+    LENS_UNATTRIBUTED when there is no usable lens provenance.
+
+    Fail-open, and P65-preserving: a recognized vocabulary member (INCLUDING the
+    explicit "other" = LENS_UNKNOWN) is returned as-is (measured data); an absent,
+    non-string, blank, or unrecognized value returns LENS_UNATTRIBUTED (no-data) —
+    NOT "other", so missing provenance never contaminates the valid "other" bucket.
+    Never raises.
+    """
+    if not isinstance(value, str):
+        return LENS_UNATTRIBUTED
+    v = value.strip().lower()
+    if not v:
+        return LENS_UNATTRIBUTED
+    return v if v in LENS_VOCABULARY else LENS_UNATTRIBUTED
 
 
 class JudgeContractError(ValueError):

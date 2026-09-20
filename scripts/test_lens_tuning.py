@@ -184,8 +184,9 @@ def test_report_declares_all_validity_limits():
     sugg = lens_tuning.suggest_lens_tweaks(stats)
     report = lens_tuning.render_report(sugg, stats)
     flat = " ".join(report.split()).lower()
-    # source-level, not per-lens
-    assert "not per-lens" in flat or "not lens-granular" in flat
+    # per-lens attribution now exists but only for post-tag loops;
+    # the surviving limit is that older/hand-filed loops are unattributed.
+    assert "unattributed" in flat
     # F2: deferred-only denominator — not a lens false-positive rate
     assert "deferred" in flat
     assert (
@@ -509,3 +510,110 @@ def test_cli_rejects_out_of_domain_gate_values():
     ):
         with pytest.raises(SystemExit):
             lens_tuning.main(argv)
+
+
+# ---- per-lens attribution -------------------------------------
+
+
+def _loop_l(id, lens, status="closed"):
+    return {
+        "id": id,
+        "title": f"loop-{id}",
+        "source": "ship-review-r1",
+        "lens": lens,
+        "status": status,
+    }
+
+
+def test_attribute_by_lens_buckets_by_lens():
+    loops = [
+        _loop_l(1, "concurrency"),
+        _loop_l(2, "concurrency"),
+        _loop_l(3, "auth-trust"),
+    ]
+    triage = [
+        _triage(1, "not-a-defect"),
+        _triage(2, "real-defect"),
+        _triage(3, "not-a-defect", operator_override=True),
+    ]
+    stats = lens_tuning.attribute_by_lens(loops, triage)
+    assert stats["concurrency"].total == 2
+    assert stats["concurrency"].not_a_defect == 1
+    assert stats["concurrency"].rejection_ratio == 0.5
+    assert stats["auth-trust"].operator_override == 1
+    assert stats["auth-trust"].rejection_ratio == 1.0
+
+
+def test_loops_without_lens_are_unattributed():
+    loops = [{"id": 1, "title": "x", "status": "closed"}]  # no lens key
+    stats = lens_tuning.attribute_by_lens(loops, [_triage(1, "not-a-defect")])
+    assert lens_tuning.LENS_UNATTRIBUTED in stats
+    assert "concurrency" not in stats
+
+
+def test_unknown_lens_string_bucketed_as_unattributed():
+    # a malformed/unrecognized lens is NO-DATA, not the valid "other" lens (P65)
+    loops = [_loop_l(1, "not-a-real-lens")]
+    stats = lens_tuning.attribute_by_lens(loops, [_triage(1, "not-a-defect")])
+    assert lens_tuning.LENS_UNATTRIBUTED in stats
+    assert "other" not in stats
+
+
+def test_explicit_other_lens_is_measured_and_flaggable():
+    # F2 lock-in: an EXPLICIT "other" is measured data and can be flagged,
+    # while missing-lens loops (no provenance) bucket separately and cannot.
+    explicit = [_loop_l(i, "other") for i in range(1, 4)]
+    missing = [{"id": i, "title": "x", "status": "closed"} for i in range(4, 7)]
+    triage = [_triage(i, "not-a-defect") for i in range(1, 7)]
+    stats = lens_tuning.attribute_by_lens(explicit + missing, triage)
+    assert stats["other"].triaged == 3
+    assert stats[lens_tuning.LENS_UNATTRIBUTED].triaged == 3
+    sugg = lens_tuning.suggest_lens_tweaks_by_lens(stats)
+    flagged = {s.lens for s in sugg}
+    assert "other" in flagged  # explicit "other" IS flaggable
+    assert lens_tuning.LENS_UNATTRIBUTED not in flagged  # no-data never flagged
+
+
+def test_unattributed_lens_never_flagged():
+    loops = [{"id": i, "title": "x", "status": "closed"} for i in range(1, 5)]
+    triage = [_triage(i, "not-a-defect") for i in range(1, 5)]
+    stats = lens_tuning.attribute_by_lens(loops, triage)
+    sugg = lens_tuning.suggest_lens_tweaks_by_lens(stats)
+    assert sugg == []  # unattributed is not a real lens
+
+
+def test_per_lens_suggestion_fires_above_threshold():
+    loops = [_loop_l(i, "input-edge") for i in range(1, 5)]
+    triage = [_triage(i, "not-a-defect") for i in range(1, 4)] + [
+        _triage(4, "real-defect")
+    ]
+    stats = lens_tuning.attribute_by_lens(loops, triage)
+    sugg = lens_tuning.suggest_lens_tweaks_by_lens(stats)
+    assert len(sugg) == 1
+    assert sugg[0].lens == "input-edge"
+    assert lens_tuning.SIGNAL_REJECTION in sugg[0].signals
+
+
+def test_json_report_includes_lenses_key():
+    loops = [_loop_l(i, "concurrency") for i in range(1, 5)]
+    triage = [_triage(i, "not-a-defect") for i in range(1, 4)] + [
+        _triage(4, "real-defect")
+    ]
+    src = lens_tuning.attribute_by_source(loops, triage)
+    lens_stats = lens_tuning.attribute_by_lens(loops, triage)
+    lens_sugg = lens_tuning.suggest_lens_tweaks_by_lens(lens_stats)
+    out = lens_tuning.render_report(
+        [], src, as_json=True, lens_stats=lens_stats, lens_suggestions=lens_sugg
+    )
+    parsed = json.loads(out)
+    assert "lenses" in parsed
+    assert "concurrency" in parsed["lenses"]
+    assert parsed["lens_suggestions"][0]["lens"] == "concurrency"
+
+
+def test_render_report_backward_compatible_without_lens():
+    # existing callers pass no lens_stats -> no lens section, no crash
+    loops = [_loop(1, "ship-review-r1")]
+    stats = lens_tuning.attribute_by_source(loops, [_triage(1, "real-defect")])
+    out = lens_tuning.render_report([], stats)
+    assert "Per-lens attribution" not in out

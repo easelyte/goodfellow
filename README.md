@@ -286,19 +286,40 @@ only for repos you trust.
 GOODFELLOW_CODEX=0
 
 # Set the Claude reviewer model
-GOODFELLOW_REVIEW_MODEL=sonnet  # Default — cost-effective with Codex
-GOODFELLOW_REVIEW_MODEL=opus    # Stronger single reviewer when no Codex
+GOODFELLOW_REVIEW_MODEL=opus    # Strongest — no-Codex fallback default
+GOODFELLOW_REVIEW_MODEL=sonnet  # Cheaper; the spec/plan-review parallel-reviewer default
 GOODFELLOW_REVIEW_MODEL=haiku   # Quick passes on small diffs
 ```
 
-**How the reviewers compose:**
+`GOODFELLOW_REVIEW_MODEL` names the Claude reviewer model. It is honored in two
+places: the bridge's single-Claude reviewer when Codex is absent (a script env
+read), and the parallel Claude reviewer that `spec-review` / `plan-review`
+dispatch alongside Codex (a prose-directed model choice in those skills). It never
+reaches the Codex/GPT path (that path takes `GOODFELLOW_CODEX_MODEL`).
 
-| Codex | GOODFELLOW_REVIEW_MODEL | What runs | Notes |
+Two defaults apply when the variable is UNSET, by design:
+- **No-Codex bridge fallback → `opus`.** With no Codex there is no cross-family
+  reviewer, so verifier strength is the only lever; under-tiering the sole
+  reviewer below the code's generator gives false confidence. This is the only
+  default this change flips.
+- **`spec-review`/`plan-review` parallel Claude reviewer → `sonnet`** (the value
+  written in those skills). Codex/GPT already supplies the cross-family
+  verification, so the parallel Claude reviewer stays cheap without weakening the
+  gate.
+
+The table below describes the **bridge reviewer** the review skills call. In
+addition, `spec-review` and `plan-review` always dispatch their own parallel
+Claude Reviewer-1 (default `sonnet`) — so those two skills run two reviewers even
+when Codex is absent (parallel Sonnet + the bridge's Claude fallback).
+
+**How the bridge reviewer composes:**
+
+| Codex | GOODFELLOW_REVIEW_MODEL | Bridge reviewer | Notes |
 |---|---|---|---|
-| Present | sonnet (default) | Sonnet + Codex | Recommended: cross-model diversity |
-| Present | opus | Opus + Codex | Maximum review depth |
-| Absent | opus | Single Opus reviewer | Best without Codex |
-| Absent | sonnet | Single Sonnet reviewer | Budget option |
+| Present | (any) | Codex/GPT (judged) | Cross-family reviewer; this variable does not reach the Codex path |
+| Absent | opus (default) | Single Opus reviewer | Strongest verifier when there is no cross-family reviewer |
+| Absent | sonnet | Single Sonnet reviewer | Correct when your generator is Sonnet; cheaper |
+| Absent | haiku | Single Haiku reviewer | Quick passes on small diffs |
 
 ## Philosophy
 
@@ -317,7 +338,7 @@ GOODFELLOW_REVIEW_MODEL=haiku   # Quick passes on small diffs
 | `GOODFELLOW_AUTOPILOT` | unset | `1` for full auto, `dry-run` for observe mode |
 | `GOODFELLOW_CODEX` | `1` | `0` to force-disable Codex |
 | `GOODFELLOW_CODEX_MODEL` | unset | GPT model id for the Codex path only (unset → codex default). Never receives a Claude model name. |
-| `GOODFELLOW_REVIEW_MODEL` | `sonnet` | Claude reviewer model: `sonnet`, `opus`, `haiku` (Claude fallback only) |
+| `GOODFELLOW_REVIEW_MODEL` | `opus` fallback / `sonnet` parallel | Claude reviewer model (`opus`/`sonnet`/`haiku`). When set, drives BOTH the no-Codex fallback reviewer and the spec/plan-review parallel Claude reviewer. Unset defaults differ: `opus` for the fallback, `sonnet` for the parallel reviewer. Never reaches the Codex/GPT path. |
 | `GOODFELLOW_TRUST_ANALYZERS` | unset | `1` enables the executing D1 analyzers (`eslint`/`tsc`/`mypy`) — only for trusted repos |
 | `GOODFELLOW_CODEX_STAGE_TIMEOUT` | `300` | Per-stage Codex timeout (seconds). The pipeline runs Codex twice (generator + judge), so total wall-clock is up to 2×. |
 | `GOODFELLOW_TAVILY_KEY` | unset | Tavily API key for batch research verification (optional — falls back to WebSearch) |

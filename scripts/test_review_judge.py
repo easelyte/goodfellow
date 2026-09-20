@@ -899,3 +899,83 @@ def test_nested_subheading_does_not_leak_dropped_prose():
     assert "fire two evictions" not in out
     assert '"finding_id": "F1"' not in out
     assert "judge-dropped F1" in out
+
+
+# --------------------------- lens tag  -----------------------------
+def test_build_judge_prompt_requests_lens():
+    _, findings, _ = rj.check_generator_contract(_gen(_block("F1")))
+    prompt = rj.build_judge_prompt(findings, "context here", "@@ -1 +1 @@\n+x")
+    assert '"lens"' in prompt
+    assert "concurrency" in prompt and "auth-trust" in prompt
+
+
+def test_lens_threads_into_audit_rows():
+    findings_text = _gen(_block("F1", "major"))
+    status, findings, _ = rj.check_generator_contract(findings_text)
+    assert status == "ok"
+    decisions = [
+        {
+            "finding_id": "F1",
+            "decision": "keep",
+            "judge_score": 8,
+            "drop_reason": None,
+            "reclassified_to": None,
+            "lens": "concurrency",
+        }
+    ]
+    validate_decisions(decisions, [f.finding_id for f in findings])
+    res = rj.reconcile(findings_text, findings, decisions)
+    assert res.audit_rows[0]["lens"] == "concurrency"
+    assert "| lens |" in res.reconciled_text  # audit table header column
+
+
+def test_lens_fail_open_unknown_becomes_unattributed():
+    findings_text = _gen(_block("F1", "major"))
+    _, findings, _ = rj.check_generator_contract(findings_text)
+    decisions = [
+        {
+            "finding_id": "F1",
+            "decision": "keep",
+            "judge_score": 8,
+            "drop_reason": None,
+            "reclassified_to": None,
+            "lens": "made-up-lens",
+        }
+    ]
+    validate_decisions(decisions, [f.finding_id for f in findings])
+    res = rj.reconcile(findings_text, findings, decisions)
+    # unrecognized -> no-data bucket, NOT the valid "other" lens (P65)
+    assert res.audit_rows[0]["lens"] == "unattributed"
+
+
+def test_missing_lens_does_not_break_validation_or_reconcile():
+    # a decision with NO lens key must still validate + reconcile (fail-open)
+    findings_text = _gen(_block("F1", "major"))
+    _, findings, _ = rj.check_generator_contract(findings_text)
+    decisions = [
+        {
+            "finding_id": "F1",
+            "decision": "keep",
+            "judge_score": 8,
+            "drop_reason": None,
+            "reclassified_to": None,
+        }
+    ]
+    validate_decisions(decisions, [f.finding_id for f in findings])  # no raise
+    res = rj.reconcile(findings_text, findings, decisions)
+    assert res.audit_rows[0]["lens"] == "unattributed"
+
+
+def test_normalize_lens_fail_open():
+    from judge_decision_validator import normalize_lens
+
+    assert normalize_lens("concurrency") == "concurrency"
+    assert normalize_lens("  Concurrency ") == "concurrency"
+    # explicit "other" is a VALID measured choice, preserved as-is (P65)
+    assert normalize_lens("other") == "other"
+    # no-provenance cases -> unattributed, never "other"
+    assert normalize_lens("bogus") == "unattributed"
+    assert normalize_lens("") == "unattributed"
+    assert normalize_lens(None) == "unattributed"
+    assert normalize_lens(123) == "unattributed"
+    assert normalize_lens(True) == "unattributed"
