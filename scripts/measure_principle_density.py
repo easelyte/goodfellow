@@ -103,13 +103,29 @@ def _plugin_root(arg):
     )
 
 
-def gather(plugin_root, project_root, web):
-    if web:
-        os.environ["GOODFELLOW_PRINCIPLES_WEB"] = "1"
-    entries = pc.load_entries(plugin_root=plugin_root, project_root=project_root)
-    index = pc.build_index(entries)
-    full = pc.emit_principles(plugin_root=plugin_root, project_root=project_root)
-    return entries, index, full
+def gather(plugin_root, project_root, force_web):
+    """Resolve + parse the principles, honoring the SAME web opt-in the chain uses
+    (env / package.json), optionally forced on by --web. Returns whether web is
+    actually active so cap selection matches the resolved corpus — not just the CLI
+    flag (else GOODFELLOW_PRINCIPLES_WEB=1 without --web would load web but check
+    against the core cap). Does NOT persistently mutate os.environ."""
+    saved = os.environ.get("GOODFELLOW_PRINCIPLES_WEB")
+    try:
+        if force_web:
+            os.environ["GOODFELLOW_PRINCIPLES_WEB"] = "1"
+        files = pc.resolve_principle_files(
+            plugin_root=plugin_root, project_root=project_root
+        )
+        entries = pc.load_entries(plugin_root=plugin_root, project_root=project_root)
+        index = pc.build_index(entries)
+        full = pc.emit_principles(plugin_root=plugin_root, project_root=project_root)
+    finally:
+        if saved is None:
+            os.environ.pop("GOODFELLOW_PRINCIPLES_WEB", None)
+        else:
+            os.environ["GOODFELLOW_PRINCIPLES_WEB"] = saved
+    web_active = "principles-web.md" in files
+    return entries, index, full, web_active
 
 
 def main(argv=None):
@@ -126,13 +142,15 @@ def main(argv=None):
     args = ap.parse_args(argv)
 
     plugin_root = _plugin_root(args.plugin_root)
-    entries, index, full = gather(plugin_root, args.project_root, args.web)
+    entries, index, full, web_active = gather(
+        plugin_root, args.project_root, args.web
+    )
 
     i_c, i_tok, i_ins = measure(index)
     f_c, f_tok, f_ins = measure(full)
     n_entries = len(entries)
-    tok_cap = INDEX_TOKEN_CAP_WEB if args.web else INDEX_TOKEN_CAP
-    entry_cap = INDEX_ENTRY_CAP_WEB if args.web else INDEX_ENTRY_CAP
+    tok_cap = INDEX_TOKEN_CAP_WEB if web_active else INDEX_TOKEN_CAP
+    entry_cap = INDEX_ENTRY_CAP_WEB if web_active else INDEX_ENTRY_CAP
     over = i_tok > tok_cap or n_entries > entry_cap
 
     if args.json:
@@ -150,7 +168,7 @@ def main(argv=None):
                     "caps": {
                         "index_tokens": tok_cap,
                         "index_entries": entry_cap,
-                        "web": args.web,
+                        "web": web_active,
                     },
                     "over_cap": over,
                 },
@@ -165,7 +183,7 @@ def main(argv=None):
         print(f"{'FULL (on demand)':<20}{f_tok:>10}{f_ins:>8}{'':>9}")
         print("-" * 64)
         print(
-            f"Index cap ({'core+web' if args.web else 'core'}): {tok_cap} tok / {entry_cap} entries  "
+            f"Index cap ({'core+web' if web_active else 'core'}): {tok_cap} tok / {entry_cap} entries  "
             f"-> {'OVER — displace/merge a principle' if over else 'within budget'}"
         )
         print(

@@ -130,6 +130,11 @@ def emit_principles(plugin_root, project_root):
 
 # `### P-020. Title` (top-level) or `#### P-017a. Title` (sub-principle).
 _HDR = re.compile(r"^(#{2,4})\s+(P-\d+[a-z]?)\.\s+(.+?)\s*$")
+# A heading that LOOKS like a principle (starts with ## .. #### then `P-`) —
+# used to catch drift from the canonical grammar so a malformed principle can't
+# silently vanish from the index (and from the density ratchet, which counts
+# only parsed entries).
+_HDR_LOOSE = re.compile(r"^#{2,4}\s+P-")
 
 
 def parse_principles(text, source=""):
@@ -146,6 +151,13 @@ def parse_principles(text, source=""):
         m = _HDR.match(line)
         if m:
             heads.append((i, len(m.group(1)), m.group(2), m.group(3).strip()))
+        elif _HDR_LOOSE.match(line):
+            # looks like a principle but drifts from `P-NNN. Title` — a silent
+            # drop here would remove it from injection AND evade the ratchet.
+            raise ConfigError(
+                f"malformed principle header in {source or '<principles>'}: "
+                f"{line.strip()!r} (expected '#### P-NNN. Title')"
+            )
     entries = []
     for k, (i, level, pid, title) in enumerate(heads):
         j = i + 1
@@ -180,6 +192,14 @@ def load_entries(plugin_root, project_root):
     entries = []
     for f in files:
         entries.extend(parse_principles(_read_file(kn / f), source=f))
+    seen = {}
+    for e in entries:
+        if e["id"] in seen:
+            raise ConfigError(
+                f"duplicate principle id {e['id']} "
+                f"({seen[e['id']]} and {e['source']})"
+            )
+        seen[e["id"]] = e["source"]
     return entries
 
 
