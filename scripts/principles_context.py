@@ -169,17 +169,26 @@ def parse_principles(text, source=""):
         if j < len(lines) and lines[j].lstrip().startswith(">"):
             oneliner = lines[j].lstrip().lstrip(">").strip()
         end = len(lines)
+        own_end = (
+            None  # first DEEPER (sub-principle) header — bounds this entry's own text
+        )
         for i2, level2, _, _ in heads[k + 1 :]:
             if level2 <= level:
                 end = i2
                 break
+            if own_end is None:
+                own_end = i2
+        if own_end is None:
+            own_end = end
         body = "\n".join(lines[i:end]).rstrip()
         # Routing category (tiered index): an inline `<!-- cat: <name> -->` marker
-        # anywhere in the principle body assigns it to a category. Untagged
-        # principles route to "general". Mirrors this box's per-memory `domain:`
-        # frontmatter: category membership is what keeps a principle in the
-        # on-demand corpus without inflating the always-loaded index.
-        cat_m = _CAT.search(body)
+        # assigns the principle to a category; untagged -> "general". Search only
+        # the entry's OWN text (header through its first sub-principle), NOT the
+        # full body: a parent's body deliberately includes its sub-principles, so
+        # searching all of it would let a tagged child's marker leak onto an
+        # untagged parent (loop-#723-style taxonomy collision). Mirrors this box's
+        # per-memory `domain:` frontmatter — each entry declares its own routing.
+        cat_m = _CAT.search("\n".join(lines[i:own_end]))
         cat = cat_m.group(1) if cat_m else "general"
         entries.append(
             {
@@ -300,6 +309,32 @@ def build_index(entries):
     return "\n".join(out) + "\n"
 
 
+def build_index_flat(entries):
+    """FLAT index: id + title + one-liner for EVERY principle (vital-few first).
+
+    For consumers that embed the principle list into a one-shot subprocess prompt
+    and cannot do progressive disclosure — e.g. `codex-bridge.sh` builds a static
+    reviewer prompt, so a child reviewer can't run `--category` to expand a routing
+    row. Those consumers need every one-liner inline. This is the pre-tiered index
+    shape; it is NOT what the interactive chain skills inject (they use the tiered
+    `build_index`, which the density ratchet caps), and it is NOT ratcheted."""
+    by_id = {e["id"]: e for e in entries}
+    vital = [by_id[i] for i in VITAL_FEW if i in by_id]
+    vital_ids = {e["id"] for e in vital}
+    rest = [e for e in entries if e["id"] not in vital_ids]
+    out = [
+        "# Design principles — flat index (id + title + one-line rule, all principles)",
+        "",
+    ]
+    if vital:
+        out.append("## Most load-bearing (safety / data-loss / irreversibility)")
+        out.extend(_index_line(e) for e in vital)
+        out.append("")
+    out.append("## All principles")
+    out.extend(_index_line(e) for e in rest)
+    return "\n".join(out) + "\n"
+
+
 def show_category(entries, name):
     """Tier 2: emit the id + title + one-liner for every principle in a category.
 
@@ -371,6 +406,13 @@ def main(argv=None):
         "category (expand a routing-table row from --index).",
     )
     mode.add_argument(
+        "--index-flat",
+        action="store_true",
+        help="Print id + title + one-liner for EVERY principle (pre-tiered shape). "
+        "For consumers that embed the list into a one-shot prompt and cannot "
+        "expand categories on demand (e.g. the review bridge).",
+    )
+    mode.add_argument(
         "--emit",
         action="store_true",
         help="Legacy: print every principle body (full corpus). Chain skills use "
@@ -390,6 +432,11 @@ def main(argv=None):
                 plugin_root=plugin_root, project_root=args.project_root
             )
             sys.stdout.write(build_index(entries))
+        elif args.index_flat:
+            entries = load_entries(
+                plugin_root=plugin_root, project_root=args.project_root
+            )
+            sys.stdout.write(build_index_flat(entries))
         elif args.show:
             entries = load_entries(
                 plugin_root=plugin_root, project_root=args.project_root
