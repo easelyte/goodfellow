@@ -8,6 +8,7 @@ framework. Web/JS/SQL-specific rules live in `principles-web.md` (opt-in).
 
 ### P-001. UI Hiding Is Never Authorization
 > Hiding a control doesn't prevent someone from invoking the underlying operation directly.
+<!-- cat: security -->
 
 If an action should be restricted, enforce it on the server / trusted side — in a
 gate, guard, or the handler itself. Client-side hiding (removing menu items,
@@ -20,6 +21,7 @@ gates aren't sufficient when sub-routes have different permission levels.
 
 ### P-002. Canonical Source of Truth
 > If you need a sync script to keep two things in agreement, you have one source too many.
+<!-- cat: data-integrity -->
 
 Every piece of data has exactly ONE authoritative location; everything else is derived.
 When adding a normalized structure to replace a denormalized field, either drop the old
@@ -32,6 +34,7 @@ are data-integrity bugs.
 
 ### P-003. Fail Visible
 > Silent failures are debugging dead ends.
+<!-- cat: reliability -->
 
 When something goes wrong, the system must produce evidence. Auth failures that redirect
 with no error code, triggers that swallow exceptions, state changes that skip the activity
@@ -50,6 +53,7 @@ log — all create invisible state loss.
 
 ### P-007. Verify Third-Party APIs Against Source
 > Don't trust AI-generated API signatures for third-party libraries.
+<!-- cat: integration -->
 
 LLMs hallucinate API signatures, and package APIs change between major versions.
 "It looks right" is not verification.
@@ -64,6 +68,7 @@ running the flag once; a POC refutes it N rounds later as rework.
 
 ### P-008. Guard Boundary Inputs
 > Trust internal code. Validate at system boundaries.
+<!-- cat: security -->
 
 Data entering the system (user input, API responses, callbacks, message/queue payloads,
 file contents) needs validation. Data flowing between internal modules does not.
@@ -81,6 +86,7 @@ file contents) needs validation. Data flowing between internal modules does not.
 
 ### P-011. Privilege Escalation Is Self-Documenting
 > Every elevated-privilege function needs a comment explaining why.
+<!-- cat: security -->
 
 Functions that run with elevated privileges bypass the normal access layer. Future
 editors need the "why" inline, not buried in history.
@@ -92,6 +98,7 @@ editors need the "why" inline, not buried in history.
 
 ### P-012. Side Effects Belong in Their Own Phase
 > If a function both reads a file and writes a file, it is doing too much.
+<!-- cat: reliability -->
 
 Structure logic in three phases: (1) gather inputs, (2) compute decisions as pure logic,
 (3) execute side effects. Event handlers should do one thing; side effects with failure
@@ -104,6 +111,7 @@ modes belong in their own isolated path with their own error handling.
 
 ### P-014. Plans Are Executable Specs
 > Never leave broken code in a plan document.
+<!-- cat: correctness -->
 
 An agent following a plan will use the first code block it finds. Draft/broken versions
 create copy-paste traps.
@@ -115,6 +123,7 @@ create copy-paste traps.
 
 ### P-015. Data Egress Needs Explicit Permission
 > Default-deny for outbound data. Explicit allowlist per sink.
+<!-- cat: security -->
 
 Data leaving the system (to a chat platform, a database, an external API) needs an
 allowlist of approved fields per destination, sanitized for that specific sink — each
@@ -127,6 +136,7 @@ output channel has its own escaping rules.
 
 ### P-016. Deletion Is Productive Work
 > Every line of code that exists is a line that can break, confuse, or mislead.
+<!-- cat: data-integrity -->
 
 Dead code, compatibility shims, unused config entries, and deprecated scripts are
 liabilities, not neutral. Track lines removed as a positive metric.
@@ -138,6 +148,7 @@ liabilities, not neutral. Track lines removed as a positive metric.
 
 ### P-017. Ratchet Every Migration
 > Without a ratchet, the old pattern creeps back within weeks.
+<!-- cat: data-integrity -->
 
 When a migration completes (format change, API deprecation, pattern cleanup), add a
 check that prevents the old pattern from returning.
@@ -149,6 +160,7 @@ check that prevents the old pattern from returning.
 - The ratchet covers EVERY layer where the old pattern can re-enter — instruction strings, docs, conventions, reviewer prompts — not just code constants. Plans that move/rename code artifacts need an explicit code-trace round, because standard reviews check plan-text only and miss stale references in docstrings, comments, test descriptions, and log strings.
 
 #### P-017a. Validation Gates Exempt Their Own Sanctioned Instances
+<!-- cat: data-integrity -->
 A ratchet or validation rule that forbids a pattern must explicitly exempt the sanctioned
 instances of that pattern it also requires keeping — the allowlist is the gate's record of
 deliberate exceptions. A gate that can't pass the very source it mandates isn't a ratchet,
@@ -158,6 +170,7 @@ matches) so they can't smuggle new instances; and include fixtures for known byp
 (a multiline or aliased composition of the forbidden pattern), not just a repository scan.
 
 #### P-017b. Filesystem-Scanning Ratchets Scope to Tracked Files
+<!-- cat: data-integrity -->
 A ratchet that greps the tree for a forbidden string or path must scope its scan to
 version-controlled files — honor ignore files and exclude nested worktrees/checkouts — or it
 passes in CI / a fresh clone but goes red on a live checkout by scanning ignored runtime state
@@ -167,6 +180,7 @@ include fixtures for known bypass shapes.
 
 ### P-018. Cognitive Budget
 > If a reader cannot hold the entire file in working memory, they cannot reason about its behavior.
+<!-- cat: agent-runtime -->
 
 No script should exceed ~400 lines. If it does, it has multiple concerns and should be
 split. N is small — linear scans beat complex data structures for lists under 50 elements.
@@ -178,6 +192,7 @@ split. N is small — linear scans beat complex data structures for lists under 
 
 ### P-019. Check-Act Ordering
 > A failed check must prevent the side effect. Record the attempt only after you've decided the attempt was legitimate.
+<!-- cat: correctness -->
 
 Any function that does {validate, mutate, side-effect} must order them so a failing check
 short-circuits the rest. Writing to an audit/rate-limit table before deciding whether the
@@ -197,6 +212,7 @@ request is valid pollutes the audit trail and corrupts counters with phantom att
 - Acquiring a lock on a narrow scope, then running a repo-wide destructive rollback on failure (the rollback escapes the lock's scope)
 
 #### P-019a. Irreversibility Boundaries
+<!-- cat: correctness -->
 A stronger form: when a sequence mixes reversible and irreversible operations (resource
 creation, process spawn, notification send, payment capture), identify the irreversibility
 boundary and front-load ALL validation before ANY irreversible side effect. Classify every
@@ -209,6 +225,7 @@ with every abort-capable check ahead of it (the Saga "pivot transaction" idea).
 - Leaving one check after the commit point "because it almost never fails"
 
 #### P-019b. Gate-Prediction Scope Matches the Predicted Primitive
+<!-- cat: correctness -->
 When a pre-act gate decides whether to perform a later destructive operation by predicting
 that operation will succeed, the gate must key on the EXACT scope the destructive primitive
 uses — not a "more canonical" base. A gate keyed on a broader scope can pass while the
@@ -219,6 +236,7 @@ predicted act still fails, producing exactly the partial state the gate was mean
 - Gating a remove on a different reference than the delete that follows it
 
 #### P-019c. Trace Downstream Re-Read Hazards in Pipeline Mutations
+<!-- cat: correctness -->
 When inserting a mutation step into a multi-stage pipeline that preserves prior state from
 a canonical store, trace EVERY downstream writer that re-reads the store and ask: "does it
 re-read and undo my mutation?" A mutation correct at its insertion point can be silently
@@ -231,6 +249,7 @@ list enumerating each downstream write that may overwrite.
 
 ### P-020. Column Allowlists on Mass-Assignment
 > Any operation that accepts a user-supplied field name needs an allowlist.
+<!-- cat: security -->
 
 This is OWASP API6:2019 (Mass Assignment). Whenever a write accepts a dynamic field name
 or spreads a request body into an update, an attacker can set fields you didn't intend.
@@ -250,6 +269,7 @@ record" pattern, any ORM update fed raw input.
 
 ### P-021. Platform Limits Drive Architecture, Not Workarounds
 > When a platform imposes a hard limit, design around it architecturally — don't tunnel through.
+<!-- cat: integration -->
 
 Hosting tiers, upload caps, body-size limits, and storage quotas each have a canonical
 architectural response. Discovering the limit and patching around it locally creates tech
@@ -268,6 +288,7 @@ debt the next developer inherits.
 
 ### P-022. Soft-Gate, Then Ratchet (With an Exit Criterion)
 > New validation ships warning-only; enforcement comes after producers catch up. A warn-only gate without a ratchet date is dead code.
+<!-- cat: reliability -->
 
 This is Parallel Change / expand-contract applied to validators. Shipping a required schema
 change on day 1 blocks every producer that hasn't updated; shipping it warn-only unblocks rollout.
@@ -285,6 +306,7 @@ change on day 1 blocks every producer that hasn't updated; shipping it warn-only
 
 ### P-023. Explicit State Machines for Async UI
 > Boolean flags collapse under real async flows. Use explicit states with timeout-backed transitions.
+<!-- cat: reliability -->
 
 The rule kicks in when state represents a multi-step async lifecycle (save, delete-with-confirm,
 submit-with-retry) — not a binary toggle.
@@ -304,6 +326,7 @@ submit-with-retry) — not a binary toggle.
 
 ### P-024. Time-Indexed Calculations Recompute Per Period
 > Values that depend on compounding or decaying state must be computed inside the period loop, not snapshotted at t=0.
+<!-- cat: data-integrity -->
 
 Anything of the form `state[t+1] = f(state[t])` — amortization, accrual, interest on a
 declining balance, cumulative reservoirs — must iterate from current state. Snapshotting
@@ -321,6 +344,7 @@ period 1 and reusing it produces silently wrong numbers that look plausible on t
 
 ### P-025. Entities Own Their Own Assumptions
 > When a system goes mono-to-multi, every hardcoded value migrates from "reasonable default" to "broken assumption."
+<!-- cat: data-integrity -->
 
 Extends P-002. When a codebase grows from one entity (tenant, project, workspace) to many,
 constants baked into formulas — ratios, counts, labels, storage keys — become bombs. Each
@@ -340,6 +364,7 @@ entity object must own its own assumptions, and persistence keys must be scoped 
 
 ### P-026. Schema Tests for Persisted Output Shapes
 > Every stable output — API response, pipeline snapshot, file format — has a schema test that fails on drift.
+<!-- cat: testing -->
 
 Related to consumer-driven contracts, but broader: applies to internal JSON files, pipeline
 outputs, and any shape consumed by more than one module. Without drift detection, contracts
@@ -358,6 +383,7 @@ silently diverge and downstream breaks look mysterious.
 
 ### P-027. E2E Tests Run Against Production Builds
 > A dev server that compiles routes on first request makes your test race the compiler and lose.
+<!-- cat: testing -->
 
 Dev-server flakes manifest as aborted requests, inconsistent first-paint timings, and
 skeleton-vs-hydrated mismatches in visual snapshots.
@@ -376,6 +402,7 @@ skeleton-vs-hydrated mismatches in visual snapshots.
 
 ### P-028. Test Fixtures Are Deterministic and Idempotent
 > Fixed IDs. Trusted seeds. Running twice is a no-op.
+<!-- cat: testing -->
 
 Authed surfaces can't be snapshotted without consistent data. Random IDs break references
 across scripts; non-idempotent seeds double-insert on re-run.
@@ -393,6 +420,7 @@ across scripts; non-idempotent seeds double-insert on re-run.
 
 ### P-030. Audit Logs Are Append-Only, With Tamper-Evidence Tiers
 > If the log can be edited, it isn't proof.
+<!-- cat: security -->
 
 Proof-of-action records (attestation, rotation, approval) only ever append. A missing log
 means "never happened" (negative proof). Staleness is computed from timestamps, not maintained by hand.
@@ -416,6 +444,7 @@ means "never happened" (negative proof). Staleness is computed from timestamps, 
 
 ### P-032. Idempotency for Mutations
 > Every mutation that can be retried needs an idempotency key. Webhooks retry. Queues retry. Agents retry.
+<!-- cat: correctness -->
 
 Canonical pattern: an `Idempotency-Key` header. Applies to webhook handlers, queue consumers,
 agent retries, signup flows — any mutation where the caller might not learn the first attempt's outcome.
@@ -434,6 +463,7 @@ agent retries, signup flows — any mutation where the caller might not learn th
 
 ### P-033. Parse, Don't Validate
 > At the boundary, transform untrusted input into a strongly-typed value. The rest of the system trusts it.
+<!-- cat: correctness -->
 
 Alexis King's essay. Validation checks input is OK then passes on the same untyped shape;
 parsing produces a new, stronger type that CANNOT represent invalid states.
@@ -452,6 +482,7 @@ parsing produces a new, stronger type that CANNOT represent invalid states.
 
 ### P-034. Observability Before Automation
 > You cannot automate what you cannot observe. Every autonomous action logs its decision — and dry-runs before it acts.
+<!-- cat: reliability -->
 
 Every agent, cron, webhook handler, or scheduled job must emit enough structured evidence
 that an operator can answer afterward: what did it consider, what did it decide, why, and
@@ -471,6 +502,7 @@ did it actually do the thing?
 
 ### P-035. Code-Coordinate Citations Grep-Confirmed at Write Time
 > Every `file:line`, symbol name, branch condition, or schema constant cited in a spec or plan must be grep-confirmed against HEAD at write time. Mental-model citations decay across revisions.
+<!-- cat: review-process -->
 
 A plan that cites a symbol at a line is making a claim the next implementer will
 mechanically copy-paste. If the symbol moved or was renamed, the implementer ships a P-014
@@ -490,6 +522,7 @@ This refines P-014 by spelling out the executable-references contract.
 
 ### P-036. Adversarial Review Has a Complexity Ceiling
 > Past round 4 of any review loop, each fix-mode pass introduces regressions. Convergence is by defect class, not by reviewer agreement.
+<!-- cat: review-process -->
 
 Multi-round adversarial review loops plateau between rounds 3 and 5. Past round 5: (a) new
 findings are sub-cases of earlier ones at finer granularity, and (b) fix-mode introduces
@@ -508,6 +541,7 @@ regressions because each pass operates on a findings file without full repo cont
 
 ### P-037. Cross-Model Diversity for Code-Symbol Review
 > Same-model self-review fills in plausible-but-wrong names from training data. Cross-model review has different blind spots.
+<!-- cat: review-process -->
 
 Specs and plans referencing concrete code symbols need cross-model adversarial review at
 least once. Same-model self-review accepts plausible-but-wrong names because it fills the gap
@@ -525,6 +559,7 @@ from the same prior; a second model has independent blind spots.
 
 ### P-038. Spec Body + Implementation + Acceptance Are a Single Contract
 > A revision to one section is a revision to all three. Body-first revision routinely leaves Implementation and Acceptance lagging by N rounds.
+<!-- cat: review-process -->
 
 Multi-section specs form a single contract. The revision pattern is body-first; Implementation
 and Acceptance lag, surfacing later as "inconsistency between body and acceptance" findings.
@@ -541,6 +576,7 @@ and Acceptance lag, surfacing later as "inconsistency between body and acceptanc
 
 ### P-040. Liveness Signal Independent of Monitored Subsystem
 > If the heartbeat shares the same scheduler/event-loop/runtime that can be blocked by the failure mode you're detecting, the heartbeat is also blocked when it matters most.
+<!-- cat: reliability -->
 
 A liveness signal must be produced by a mechanism at a DIFFERENT layer of the stack than the
 subsystem it monitors.
@@ -558,6 +594,7 @@ subsystem it monitors.
 
 ### P-042. Schema-Aware Test Fixtures
 > Fixtures that drop schema metadata silently exempt tests from production validation paths.
+<!-- cat: testing -->
 
 Test fixtures for state-mutating code must include the same schema metadata
 (`schema_version`, type discriminators) that production validation enforces. Fixtures using
@@ -576,6 +613,7 @@ production writers.
 
 ### P-044. Tolerate-Failure Modifiers Are Blanket Switches
 > If your design needs to tolerate some failures but not others, the modifier is the wrong layer. Encode it in exit-code semantics.
+<!-- cat: correctness -->
 
 Failure-tolerance modifiers (`|| true`, bare `except:`, predicate-less retry, a unit's
 ignore-failure prefix, continue-on-error) are blanket switches, not selective filters.
@@ -594,6 +632,7 @@ Designs that try to use them selectively are unimplementable at that layer.
 
 ### P-045. The Workaround Tool Is the Regression Vector
 > Any safety invariant guarded by N lines of design is regressed by an M-line tool that goes around it. The workaround's "just for cleanup" framing is the same framing every future bypass will use.
+<!-- cat: reliability -->
 
 When you've enforced an invariant via a design pattern — operator-only resolver, access
 policy, type system, schema constraint, permission gate — do not write tools that bypass it.
@@ -611,6 +650,7 @@ The tool's existence undermines the invariant for every future caller.
 
 ### P-046. Persist-Then-Acknowledge for Shared Message Buses
 > For a per-conversation worker on a single-stream message bus, the bus's offset advance cannot be driven by per-conversation completion. Persist incoming messages durably with fsync, advance the offset eagerly, replay from the store on restart.
+<!-- cat: reliability -->
 
 Documented in mainstream messaging systems: persist every operation before acknowledging;
 treat committed offsets as the durable acknowledgment. The trap is custom workers that gate
@@ -630,6 +670,7 @@ partial offset advance loses messages on restart.
 
 ### P-047. Spec, Plan, and Ship Convergences Are Independent Surfaces
 > A converged spec does not predict a converged plan. A converged plan does not predict a converged ship review. Each surface has its own defect classes and review budget.
+<!-- cat: review-process -->
 
 Multi-stage review is not a funnel. Spec-review catches architectural/schema issues;
 plan-review catches implementation-detail defects (env var names, file locations, library
@@ -651,6 +692,7 @@ This complements P-036 (per-loop cap) and P-038 (within-spec consistency).
 
 ### P-048. Authoritative Store Beats Local Mirror
 > Code reading from a local mirror of an authoritative store will silently regress as the mirror drifts. "It's already on disk" is not justification.
+<!-- cat: data-integrity -->
 
 When a system has both an authoritative store (origin, API, source repo) and a local mirror
 (checkout, cache, replicated config), consuming code must read from the authoritative store
@@ -669,6 +711,7 @@ unless cache-invalidation semantics are explicit.
 
 ### P-049. Deny-List Growth Is an Upstream Failure
 > When a deny-list, ignore-list, or filter-list keeps growing, the failure is upstream of the list. Fix what generates entries, not the list.
+<!-- cat: reliability -->
 
 A deny-list is a record of past leaks, not a defense against future ones. The growth rate is
 the signal: when new entries land monthly and the list approaches three-digit length, nothing
@@ -687,6 +730,7 @@ prevents the antipattern at source.
 
 ### P-050. Exact-Shape Resolution for User-Supplied Identifiers
 > When resolving a user-supplied identifier to a filesystem artifact, require an exact canonical shape and refuse on zero-or-multiple matches. Never use unanchored substring globs in dispatch paths.
+<!-- cat: data-integrity -->
 
 Substring globs silently dispatch the wrong artifact when prefixes overlap (`foo` matches
 `foo-bar`). The bug is invisible until two artifacts share a prefix, at which point behavior
@@ -705,6 +749,7 @@ depends on filesystem iteration order.
 
 ### P-051. Rollback Mutation Surface Matches Protection Surface
 > Rollback mutations must be no wider than the guard that protected the forward mutation. If a lock covers three files, the rollback touches three files — not the whole repo.
+<!-- cat: reliability -->
 
 When a forward path uses a narrow guard and the rollback uses a wide primitive (a hard repo
 reset, a table truncate, a full cache flush), the rollback escapes the guard and clobbers
@@ -723,6 +768,7 @@ state the guard never protected — adjacent in-flight work gets wiped.
 
 ### P-052. Verify Remote Non-Landing Before Local Compensation
 > For ambiguous remote operations (push timeout, deploy timeout, RPC error after send), the operation may have succeeded with the acknowledgement lost. Verify remote state before compensating locally.
+<!-- cat: correctness -->
 
 Network operations have three outcomes, not two: succeeded, failed, and "you don't know."
 Timeouts and connection resets land in the third bucket. If a push times out and the local
@@ -742,6 +788,7 @@ on the remote and creating phantom-commit divergence.
 
 ### P-053. Retention Declared at Write-One
 > Every append-only table declares a retention policy at the PR that introduces the first writer. "No retention" is unbounded growth by default.
+<!-- cat: data-integrity -->
 
 Audit logs, event tables, and metrics tables grow at `writers × write_rate × payload × time`.
 Without an explicit retention policy up front, that product runs forever and the bill is paid
@@ -761,6 +808,7 @@ committed alongside the writer.
 
 ### P-054. Log State Changes, Not Evaluations
 > When a per-row evaluator chooses no-op based on guard rules, do not log the evaluation. Log only when state actually changed.
+<!-- cat: reliability -->
 
 Per-row evaluators (reconcilers, syncers, watchers) run on a tick over a large set and
 short-circuit most rows via guard rules. If every evaluation writes an audit row, the table
@@ -780,6 +828,7 @@ state changes; the noise is the evaluations.
 
 ### P-055. Compensate for Absent Signals
 > The operation didn't fail — the confirmation never arrived. Standard error handling covers failures; this covers silence.
+<!-- cat: correctness -->
 
 When the system depends on an event that should arrive but might not (callback not fired, hook
 not triggered, acknowledgment lost, process exited without notification), add a bounded
@@ -805,6 +854,7 @@ This generalizes the specific case of background-task liveness.
 
 ### P-056. Stateful Identity Is the Full Tuple
 > A session is not an ID. It's (ID + workdir + isolation context + capabilities + extras). Resume by ID alone and the session silently diverges.
+<!-- cat: data-integrity -->
 
 A stateful resource's identity is the tuple of ALL its defining properties, not just its
 primary key. When persisting, restoring, cloning, or resuming, every dimension must be
@@ -826,6 +876,7 @@ Extends P-025 from the mono-to-multi case to the general lifecycle case.
 
 ### P-057. Behavioral Safety Parity Across Parallel Implementations
 > When a destructive operation has more than one implementation, a safety fix to one must reach all of them — or collapse them to one. The forgotten copy is where the accident happens.
+<!-- cat: reliability -->
 
 When the same destructive operation is implemented more than once — e.g. a canonical code
 entrypoint and a shell/markdown reimplementation — a safety fix to one path silently leaves
@@ -846,6 +897,7 @@ BEHAVIORAL safety parity across paths that need not be byte-identical but must e
 
 ### P-058. Propagate Test-Hermetic Fixes to the Shared Production Call-Site
 > "CI will fail without X" means the test path needs X. Ask whether the production path shares the same dependency on X — it usually does.
+<!-- cat: testing -->
 
 When a correctness fix is motivated by "the test/CI will fail without X" — passing an explicit
 config kwarg, making an acceptance check pass over a global config — the same dependency on X
@@ -862,6 +914,7 @@ test-hermetic context leaves the production path with the original latent defect
 
 ### P-059. Extend the Canonical Primitive, Don't Reinvent It
 > Before adding a queue, state machine, watchdog, or cache, find the primitive that already does this and extend it. A review that keeps saying "route through X" means the design chose the wrong abstraction.
+<!-- cat: data-integrity -->
 
 Behavioral corollary of P-002 (Canonical Source): a mechanism usually has one canonical
 implementation already in the tree. Adding a parallel one — a second queue, a bespoke retry
@@ -881,6 +934,7 @@ in unfamiliar or external code, where the existing primitive is easy to miss.
 
 ### P-061. Bound Untrusted-Input Work by Its Actual Cost Curve
 > A single character-length cap cannot bound work whose cost is structural or whose paths differ by orders of magnitude. Bound the expensive work directly, and never co-gate a legitimate capability's output path.
+<!-- cat: security -->
 
 Byte-length is a proxy for cost, and it breaks two ways. Structural blowup: a sub-cap body
 expands to a huge render tree (a short list-marker string repeated thousands of times becomes
@@ -901,6 +955,7 @@ permit large labeled blocks and bound autodetect. Related to algorithmic-complex
 
 ### P-063. Never Truncate Aggregation Sources
 > A LIMIT on a query whose rows feed a total, count, or financial summary silently truncates data that downstream code treats as complete.
+<!-- cat: data-integrity -->
 
 When a query result is summed, counted, or aggregated, the aggregation is correct only if the
 query returned the full set. Adding a limit — for pagination, a "reasonable default," or to
@@ -920,6 +975,7 @@ failure is invisible on the total line.
 
 ### P-064. Key Guards on the Protected Artifact, Not a Proxy
 > A guard, gate, or ratchet keys on the primary protected artifact itself — its bytes/content — not a secondary proxy (a companion hash, a pinned constant, a sibling file).
+<!-- cat: correctness -->
 
 When a guard consults a stand-in rather than the thing itself, two gaps open: unprotected
 siblings (artifacts of the same class not in the proxy) and obfuscation vectors (rewrite the
@@ -940,6 +996,7 @@ artifact-integrity checks.
 
 ### P-065. Distinguish Measured-Zero from No-Data in Fallbacks
 > A metric's no-data fallback must be neutral, not the optimistic pole — especially when the metric is inverted or penalized downstream.
+<!-- cat: correctness -->
 
 Absence of a signal is not evidence of a favorable outcome (absence of evidence is not
 evidence of absence). When a scoring metric has a fallback for missing inputs, routing "no
@@ -960,6 +1017,7 @@ lands on a neutral default.
 
 ### P-066. Auto-Delete Only Provably-Untouched Rows
 > A guard that deletes a record because it "looks empty" must check every field that can hold intentional state, not just the obvious money or quantity column.
+<!-- cat: data-integrity -->
 
 Deciding a record is disposable from a single column destroys real data when the row carries
 intentional state elsewhere — a custom amount, notes, flags — with zero in the checked column.
@@ -978,6 +1036,7 @@ Re-creating the row resets it to defaults, so the deletion is lossy and silent.
 
 ### P-067. Isolate Untrusted Agents by Capability, Not Sandboxing
 > Ring-fencing a less-trusted AI agent is capability-scoping, not sandbox-fencing. A permission allowlist on a shell-capable agent is UX, not a boundary. Anything the model can place in a tool-arg is untrusted for auth, audit, and egress.
+<!-- cat: security -->
 
 You cannot contain a full agent by sandboxing it while leaving it credentials and unmediated
 egress. The durable boundary is capability: the agent process holds no scoped credentials
@@ -999,6 +1058,7 @@ prompt-injection defenses like the dual-LLM pattern.
 
 ### P-068. Design Boundaries Against the Observed Workflow, Ship Them Soft
 > Design security and validation boundaries around how people actually work, not the ideal workflow — and ship restrictive guards in a soft/audit mode so tightening is a flag flip, not a rework.
+<!-- cat: integration -->
 
 A guard hardened against an idealized workflow gets flipped off the moment it collides with
 real behavior, discarding the review rounds that built it. Study the real workflow before
@@ -1019,6 +1079,7 @@ discipline applied to boundaries whose "producers" are humans.
 
 ### P-069. Never Squash-Merge Across a Diverged Base
 > A feature branch built off base A, squash-merged into a diverged base B, silently drops code: the merge keeps B's version of concurrently-edited files with no conflict.
+<!-- cat: data-integrity -->
 
 When a branch's base has diverged from the target it merges into, a squash merge can resolve
 concurrently-edited files in favor of the target and discard the branch's changes — no
@@ -1037,6 +1098,7 @@ conflict, no warning. The PR looks merged; only some files (often just docs) act
 
 ### P-079. Reaching a Limit Is Not Success
 > Stopping because a cap, budget, or timeout was hit says nothing about whether the task was accomplished. Report the limit as a limit, never as completion.
+<!-- cat: correctness -->
 
 An agent or loop that terminates on a limit — a round cap, a token/time budget, a retry
 ceiling, a truncated tool result — has learned only that it ran out of allowance, not that
@@ -1057,3 +1119,223 @@ This generalizes P-036 (which scopes the idea to review-loop caps) to every kind
 - "Execution complete. Verification passed." emitted unconditionally, whether or not verification ran
 - Treating a truncated / rate-limited / timed-out tool result as evidence the underlying task succeeded
 - A `converged=True` signal that a caller cannot tell apart from a cap-halt
+
+### P-080. Test Fixtures Carry the Producer's Real Output Shape
+> A fixture must carry the exact shape the real producer emits, not an idealized one.
+<!-- cat: testing -->
+
+When a fixture asserts an idealized upstream shape while the real producer emits a generic
+default (e.g. `application/octet-stream` for every non-raster file), a boundary bug ships
+green through hundreds of passing tests and only a user sees the breakage. The test's value
+is precisely the mismatch between the ideal and the real.
+
+**Rules:**
+- Capture and assert against a real payload from the actual producer — the content-type, encoding, or generic default it truly sends — not a hand-written ideal.
+- When a producer returns a generic default for a whole class of inputs, put that default in the fixture so fallback logic keyed on "empty/missing" is actually exercised.
+
+**Anti-patterns:**
+- A fixture asserting a precise MIME type while the real source returns a generic one, hiding a classifier fallback that never runs
+- Hundreds of green tests over idealized payloads while the integration boundary is broken in production
+
+### P-081. Derive Asserted Facts From Ground Truth, Not Model-Supplied Variables
+> A fact a deterministic output asserts must be derived from ground truth, never read from a model-supplied variable.
+<!-- cat: correctness -->
+
+In a model-driven runtime, when deterministic output branches on a variable the model was
+told to set — especially with a benign default like "clean" — a model that omits the state
+on an exceptional path silently prints the success value. A defaulted model-supplied flag
+makes an omitted or mistyped state indistinguishable from the real one, so forgetting to set
+it fails OPEN into false success.
+
+**Rules:**
+- Derive an asserted status / count / verdict from what the harness can independently read — a store, an artifact, the filesystem — not from a value the model emitted.
+- Never default a correctness-bearing flag to its success value; an absent flag must fail closed, not read as "passed".
+
+**Anti-patterns:**
+- A residual-count branch keyed on a model-set variable defaulting to "clean", so an early-stop with unresolved work prints "done"
+- Trusting a model's `status: ok` when the harness could have checked the actual output
+
+### P-082. Sanitize Third-Party Responses Before Persisting or Logging
+> Providers embed live credentials in response fields; strip them at the ingest boundary before any durable sink.
+<!-- cat: security -->
+
+A verbatim store or log of a third-party response can persist a live secret — access tokens
+in paging URLs, signed URLs, refresh tokens, auth echoes in ordinary-looking fields. Treat
+inbound third-party responses as credential-bearing.
+
+**Rules:**
+- Redact known secret-bearing fields (or allowlist only the fields you need) at the ingest boundary, before the data reaches a table, cache, or log.
+- Assume URLs in a response may carry embedded tokens; do not log or persist them raw.
+
+**Anti-patterns:**
+- Storing a verbatim API response whose `paging.next` URL contains the access token
+- Logging a full third-party payload "for debugging" that includes a signed credential
+
+### P-083. Fix Recurring Failure Modes With a Mechanism at the Choke Point
+> When a failure mode recurs, fix it with a mechanism every path must traverse — a hook, a sentinel — not more instructions.
+<!-- cat: review-process -->
+
+An instructional guard (a doc, skill, or preamble telling an agent to behave) fails under
+real conditions — the same misbehavior recurs across callers despite the text. A structural
+guard at the choke point closes the failure by construction. Instructions are advisory;
+mechanisms are load-bearing.
+
+**Rules:**
+- Once a failure mode has recurred, reach for a mechanism at the shared seam — a sentinel emitted at the exact line every caller reads, a hook that vetoes the unsafe action — not another paragraph.
+- Put the guard where every path is forced through it, so a caller cannot skip it by not reading the instruction.
+
+**Anti-patterns:**
+- Adding a third "please remember to…" preamble after the first two failed
+- A safety rule that only binds callers who happen to read the doc
+
+### P-084. Run-It Gates Catch Defects Static Review Cannot
+> For DB, security, or concurrency work, a gate that RUNS the code against real-shaped data catches defects review structurally can't.
+<!-- cat: testing -->
+
+Static multi-model review, however many rounds, structurally misses defects that manifest
+only at execution — a privilege escalation, an overflow that silently mints wrong values, a
+runtime permission error. When correctness depends on runtime behavior against real data
+shapes, the marginal return on another review round is below the return on building the
+executed gate.
+
+**Rules:**
+- For correctness that depends on runtime behavior, build an empirical gate that runs the code against real-shaped data (copy-first against a production copy, an executed test battery).
+- Past a few review rounds on such work, invest in the run-it gate rather than more rounds.
+
+**Anti-patterns:**
+- Many rounds of adversarial review that all miss a bug the first real execution catches
+- Treating "the reviewers approved it" as sufficient for DB / security / concurrency correctness
+
+### P-085. Prefer a Decoupled Integration Seam Over Adapting a Dependency You Don't Own
+> Coupling to another team's fast-moving code compounds cost with every upstream change; prefer a stable seam you control.
+<!-- cat: integration -->
+
+Building on top of another team's fast-moving code — continuously adapting their internals to
+your needs — generates ongoing review and revision churn that scales with their velocity,
+often for low real-world value. A decoupled seam (a standalone service or connector the user
+attaches to their existing tool) trades that compounding coupling cost for a stable boundary
+you control.
+
+**Rules:**
+- When a capability can be delivered either by adapting a dependency you don't own or by a decoupled seam, prefer the seam unless the coupling clearly pays for itself.
+- Meet the user in the tool they already use rather than rebuilding the integration into your stack.
+
+**Anti-patterns:**
+- Continuously patching another team's internals to track their releases for a marginal feature
+- Rebuilding a third-party surface into your codebase when a thin connector would do
+
+### P-086. Instructions Don't Bind Already-Running Sessions
+> A rule that must constrain in-flight sessions belongs in the harness, not prose — a running session never reloads its instructions.
+<!-- cat: agent-runtime -->
+
+A prose rule takes effect only when a session loads it at startup. A session already running
+when the rule lands never sees it, and context compaction tuned for task accuracy can silently
+drop a constraint mid-run without measuring that it is gone. A constraint that must hold for
+in-flight sessions has to live where every tool call passes regardless of context state.
+
+**Rules:**
+- Put a constraint that must bind running sessions in a runtime mechanism — a PreToolUse hook, a tool-layer veto — not only in a document.
+- Treat "the instruction is in the prompt/doc" as binding only future sessions, never the ones already running.
+
+**Anti-patterns:**
+- A safety rule added to a doc that fails to stop a session whose context predates it
+- Relying on prose surviving a context compaction that optimizes for task accuracy, not constraint retention
+
+### P-087. A Baseline Measured in a Different Environment Is Not a Baseline
+> Run before and after in the same checkout, location, and load, or the diff is partly attributable to the environment.
+<!-- cat: correctness -->
+
+Comparing your branch's run in one place against the base branch's run in another (a different
+directory, machine, or load) attributes environmental noise to your change. Failures you read
+as regressions may be location-deterministic, not code-caused.
+
+**Rules:**
+- Measure before / after in the identical environment — same checkout, same location, same load — before trusting a regression delta.
+- When a failure looks like a regression, reproduce the baseline in the same environment before attributing it to your diff.
+
+**Anti-patterns:**
+- Reading a test delta between two different checkouts or machines as caused by your code
+- Attributing a location-deterministic failure to a change without re-running the baseline in place
+
+### P-089. Test a Gate on Both a Passing and a Failing Case
+> If a pass case and a fail case return the same verdict, you're measuring the wrong channel, not observing the gate.
+<!-- cat: testing -->
+
+A gate that signals its verdict on a channel you are not reading (a decision on stdout while
+you check exit code; a value swallowed by a pipe) reports every case identically — and the
+dangerous direction is silent, because a broken gate then reads as working. Testing only one
+side cannot distinguish "the gate works" from "I am reading the wrong channel".
+
+**Rules:**
+- Verify a gate with a case you expect to PASS and one you expect to FAIL, and confirm the verdicts differ.
+- If both cases return the same verdict, fix how you read the gate's signal before trusting it.
+
+**Anti-patterns:**
+- Verifying a guard by exit code when it signals via a structured decision and exits 0 either way
+- Concluding "the gate works" from a single passing (or single failing) case
+
+### P-090. Assert a Protection Functionally, Not by Its Configuration
+> Verify a protection by making the thing it guards against happen and checking it was observed — never by inspecting config.
+<!-- cat: testing -->
+
+Configuration proves a rule is listed, not that events are recorded or blocked. A ruleset can
+sit loaded-but-inactive; a full disk suspends logging; backlog overflow drops events — none
+show in the config. A protection everyone believes in, verified only by config, is how a gap
+survives unnoticed.
+
+**Rules:**
+- Trigger the guarded event and confirm the protection actually fired.
+- Treat config inspection as evidence the rule exists, never as evidence it works.
+
+**Anti-patterns:**
+- Concluding an audit or guard is active because it is listed in the config file
+- A protection that has silently not fired for weeks while everyone assumes it is on
+
+### P-091. Invert a Multi-Shape-Bypassable Guard to Fail-Closed
+> When a guard is bypassable in many shapes, invert it to fail-closed — but pair with tests that harmless cases stay unflagged.
+<!-- cat: review-process -->
+
+An allow/block guard that a reviewer keeps defeating with new shapes is a losing enumeration —
+there is always another shape. Terminate it by inverting the predicate: the guard is defeated
+unless proven intact. The inversion's own failure mode is over-firing, so it must be paired
+with harmless-case coverage, or a fail-always guard trains everyone to ignore its alert.
+
+**Rules:**
+- When widening a guard one bypass shape at a time is unbounded, invert to "unprotected unless proven intact".
+- Pair any fail-closed inversion with tests that provably-harmless cases stay unflagged, so it does not degrade into fail-always.
+
+**Anti-patterns:**
+- Adding a new predicate for each newly-discovered bypass shape, forever
+- A fail-closed guard with no harmless-case tests, so it over-fires and gets ignored
+
+### P-092. Read the Code Path Before Attributing a Failure to a Tool
+> Before reporting a tool as buggy off your own failed call, read its actual code path.
+<!-- cat: review-process -->
+
+A failure you hit with an ad-hoc invocation is evidence about your call, not about the tool —
+until you have read the tool's real path. Attributing your own mistake to someone else's code,
+stated confidently, propagates a false bug report that others spend a cycle disproving.
+
+**Rules:**
+- Read the tool's actual write / execute path before filing it as buggy based on a failure you just hit.
+- Distinguish "my call was wrong" from "the tool is wrong" with the code, not with the symptom.
+
+**Anti-patterns:**
+- Reporting a library bug from your own broken invocation without reading its implementation
+- A confidently-filed non-bug that costs the tool's owner a verification cycle
+
+### P-093. State a Guard From the Defect's Failure Mode, Not the Fix
+> A guard written in the same commit as its fix inherits the author's blind spot; phrase it from how the defect failed.
+<!-- cat: review-process -->
+
+A ratchet or assertion authored alongside its fix encodes the author's just-corrected
+understanding, so it can certify the exact defect it was added to catch. Derive the guard's
+assertion from the defect's failure mode, independently of the fix.
+
+**Rules:**
+- Phrase a guard from what the defect did wrong ("this must fire ONLY on its schedule"), not from the fix you just made ("this now has a trigger").
+- When adding a guard alongside a fix, test it against the original defective input to confirm it would have caught it.
+
+**Anti-patterns:**
+- A ratchet written with the fix that accepts the very defect it was meant to catch
+- Asserting the post-fix state instead of the failure mode, so a sibling defect slips through

@@ -46,8 +46,9 @@ In rich mode, auto-pull the full bodies of facts whose `domain` matches the brai
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/principles_context.py" --index --project-root .
 ```
 
-Scan the index. For any principle whose one-line rule is relevant to this work, pull its
-full body on demand with `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/principles_context.py" --show P-NNN [P-NNN ...] --project-root .`
+Scan the category routing table. For any category relevant to this work, expand its one-liners with
+`python3 "${CLAUDE_PLUGIN_ROOT}/scripts/principles_context.py" --category NAME --project-root .`, then pull the
+full body of a relevant principle with `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/principles_context.py" --show P-NNN [P-NNN ...] --project-root .`
 before applying or citing it — requesting a parent id (e.g. `P-017`) includes its
 sub-principles. Cite violations by P-NNN.
 

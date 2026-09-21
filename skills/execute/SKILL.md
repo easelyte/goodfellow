@@ -52,8 +52,9 @@ Also read the plugin-shipped universal design principles and apply them at the c
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/principles_context.py" --index --project-root .
 ```
 
-Scan the index. For any principle whose one-line rule is relevant to this work, pull its
-full body on demand with `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/principles_context.py" --show P-NNN [P-NNN ...] --project-root .`
+Scan the category routing table. For any category relevant to this work, expand its one-liners with
+`python3 "${CLAUDE_PLUGIN_ROOT}/scripts/principles_context.py" --category NAME --project-root .`, then pull the
+full body of a relevant principle with `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/principles_context.py" --show P-NNN [P-NNN ...] --project-root .`
 before applying or citing it — requesting a parent id (e.g. `P-017`) includes its
 sub-principles. Cite violations by P-NNN.
 

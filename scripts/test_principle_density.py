@@ -26,7 +26,9 @@ def _measure(force_web):
         plugin_root=PLUGIN_ROOT, project_root=PLUGIN_ROOT, force_web=force_web
     )
     _, tok, _ = m.measure(index)
-    return tok, len(entries), web_active
+    # Tier-1 rows (vital-few + category routing rows) are what the always-loaded
+    # budget caps — not the total corpus, which grows on demand.
+    return tok, pc.index_entry_count(entries), web_active
 
 
 def test_core_index_within_cap():

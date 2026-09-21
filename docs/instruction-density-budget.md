@@ -47,56 +47,78 @@ crowding out the work they were meant to guide.
 
 ## The fix: progressive disclosure
 
-Principles now load the way Agent Skills already do — a lightweight always-present
-menu, with full detail pulled only when relevant:
+Principles now load the way Agent Skills — and this box's own memory system — already
+do: a lightweight always-present menu that routes by topic, with detail pulled only
+when relevant. **Three tiers**, so the corpus can grow without inflating what loads
+every run:
 
-- **Always injected: the INDEX.** `principles_context.py --index` emits each
-  principle's `P-NNN` id, title, and one-line rule (the blockquote). ~2.8k tokens
-  for the whole core set — the compressed rule is enough to recognize a relevant or
-  violated principle by id.
-- **On demand: the body.** Once the model has scanned the index and identified the
-  principles that bear on the current task or diff, it pulls their full bodies with
-  `principles_context.py --show P-003 P-020`. Requesting a parent id (`P-017`)
-  includes its sub-principles (`P-017a`, `P-017b`).
+- **Tier 1 — always injected: the tiered INDEX.** `principles_context.py --index`
+  emits the *vital-few* full one-liners (see §C) **plus a category routing table** —
+  one row per category (`security`, `data-integrity`, `correctness`, `testing`,
+  `review-process`, `reliability`, `integration`, `agent-runtime`, `ui`) listing its
+  member `P-NNN` ids, *without* each principle's one-liner. Adding a principle adds
+  one id to a category row (~2 tokens), not a ~45-token one-liner — so tier 1 stays
+  flat as the corpus grows. This is the same shape as this repo's `MEMORY.md`
+  (vital-few + a domain routing table); category membership is set per principle by
+  an inline `<!-- cat: NAME -->` marker.
+- **Tier 2 — on demand: a category's one-liners.** Seeing a category relevant to the
+  task, the model expands it with `principles_context.py --category testing` to get
+  the `P-NNN` + title + one-liner for every principle in it.
+- **Tier 3 — on demand: the body.** It then pulls the full bodies that bear on the
+  work with `principles_context.py --show P-003 P-020`. Requesting a parent id
+  (`P-017`) includes its sub-principles (`P-017a`, `P-017b`).
 - **Legacy full dump** (`--emit`) is retained for any caller that genuinely wants
   the whole corpus, but the chain skills no longer use it.
 
-Result — what actually loads every run:
+Result — what actually loads every run (tier 1 only):
 
-| Injected set | Tokens (est) | Entries |
+| Injected set | Tokens (est) | Tier-1 rows |
 |---|---:|---:|
-| core index | ~2,800 | 62 |
-| core + web index | ~3,200 | 72 |
+| core index | ~720 | 16 (8 vital + 8 categories) |
+| core + web index | ~800 | 17 |
 
-An ~83% cut in always-loaded principle tokens, with full detail one command away.
+An ~96% cut from the pre-disclosure full-corpus injection, and flat under corpus
+growth — a new principle costs one id in a category row, full detail two commands away.
 
 ## A. The budget
 
-The **index** is the number that matters: it competes for the model's
+The **tier-1 index** is the number that matters: it competes for the model's
 instruction-adherence capacity on every run. The full corpus does not — bodies load
-on demand.
+on demand. The caps are measured against tier 1 (vital-few one-liners + the category
+routing table), and the **entry cap counts tier-1 rows** (`index_entry_count` =
+vital-few present + distinct categories), *not* the total corpus — so the corpus can
+grow indefinitely while tier 1 stays flat.
 
-| Scope | Token cap | Entry cap | Now | Verdict |
+| Scope | Token cap | Tier-1 row cap | Now | Verdict |
 |---|---:|---:|---|---|
-| core index (default, every user) | **3,000** | **80** | ~2,800 / 62 | within; ~2 principles of headroom |
-| core + web index (opt-in) | **3,600** | **95** | ~3,200 / 72 | within; web is chosen extra budget |
-| full corpus (bodies) | *advisory* | — | ~16,800 | not always-loaded; WARN only |
+| core index (default, every user) | **3,000** | **80** | ~720 / 16 | within; large headroom under growth |
+| core + web index (opt-in) | **3,600** | **95** | ~800 / 17 | within; web is chosen extra budget |
+| full corpus (bodies) | *advisory* | — | ~20,500 / 75 entries | not always-loaded; WARN only |
 
-The two index caps are enforced by `scripts/test_principle_density.py` (runs in CI).
+The two tier-1 caps are enforced by `scripts/test_principle_density.py` (runs in CI).
 The full-corpus figure is measured and printed but **not** asserted — it no longer
 sits in the always-loaded window. Flipping the full corpus to a hard cap is an
 operator call, not a default.
 
 ### B. The growth rule (the load-bearing part)
 
-**At or over a cap, growth is displacement, not accumulation.** To add a principle
-once the index is at its ceiling, you must merge it into, subsume it under, or delete
-another one — not simply append. This is the discipline that keeps "knowledge
-compounds" from degrading into "knowledge crowds out." The CI ratchet makes it
-checkable: a PR that pushes the index over cap fails until it trades rather than adds.
+**Adding an ordinary principle is now cheap — it routes to a category.** Under the
+tiered index, a new principle adds its body to the corpus and its id to a category
+row; tier 1 grows by ~2 tokens, not a one-liner. So the corpus can compound without
+crowding out the always-loaded window. Tag it with `<!-- cat: NAME -->` and it lands
+in the right routing row.
 
-Corollary: keep one-liners tight. The blockquote *is* the always-loaded rule; the
-elaboration belongs in the body, which loads on demand.
+**Displacement now applies only to tier 1.** The ceiling still bites for the two
+things that *do* load every run: the `VITAL_FEW` set and the category list. Promoting
+a principle into `VITAL_FEW`, or adding a whole new category, must trade against the
+tier-1 budget — merge, subsume, or drop rather than append. The CI ratchet enforces
+this: a PR that pushes tier 1 over cap (too many vital-few one-liners, or category
+proliferation) fails until it trades.
+
+Corollary: keep one-liners tight and don't over-split categories. The blockquote *is*
+the tier-2 rule and a vital-few one-liner *is* always-loaded; elaboration belongs in
+the body, which loads on demand. A handful of broad categories routes better than
+dozens of narrow ones.
 
 ## C. Placement
 

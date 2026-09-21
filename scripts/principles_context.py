@@ -135,6 +135,8 @@ _HDR = re.compile(r"^(#{2,4})\s+(P-\d+[a-z]?)\.\s+(.+?)\s*$")
 # silently vanish from the index (and from the density ratchet, which counts
 # only parsed entries).
 _HDR_LOOSE = re.compile(r"^#{2,4}\s+P-")
+# Inline routing marker: `<!-- cat: testing -->`. Lowercase kebab category name.
+_CAT = re.compile(r"<!--\s*cat:\s*([a-z0-9][a-z0-9-]*)\s*-->")
 
 
 def parse_principles(text, source=""):
@@ -172,12 +174,20 @@ def parse_principles(text, source=""):
                 end = i2
                 break
         body = "\n".join(lines[i:end]).rstrip()
+        # Routing category (tiered index): an inline `<!-- cat: <name> -->` marker
+        # anywhere in the principle body assigns it to a category. Untagged
+        # principles route to "general". Mirrors this box's per-memory `domain:`
+        # frontmatter: category membership is what keeps a principle in the
+        # on-demand corpus without inflating the always-loaded index.
+        cat_m = _CAT.search(body)
+        cat = cat_m.group(1) if cat_m else "general"
         entries.append(
             {
                 "id": pid,
                 "level": level,
                 "title": title,
                 "oneliner": oneliner,
+                "cat": cat,
                 "body": body,
                 "source": source,
             }
@@ -196,8 +206,7 @@ def load_entries(plugin_root, project_root):
     for e in entries:
         if e["id"] in seen:
             raise ConfigError(
-                f"duplicate principle id {e['id']} "
-                f"({seen[e['id']]} and {e['source']})"
+                f"duplicate principle id {e['id']} ({seen[e['id']]} and {e['source']})"
             )
         seen[e["id"]] = e["source"]
     return entries
@@ -210,34 +219,98 @@ def _index_line(e):
     return f"{prefix}{e['id']}. {e['title']}"
 
 
-def build_index(entries):
-    """Render the always-injected index: id + title + one-line rule per principle.
+# One-line descriptions for the category routing table (tier 1). A category with
+# no label here still renders (its raw name); labels just make the table readable.
+CATEGORY_LABELS = {
+    "security": "authorization, egress, secrets, untrusted input",
+    "data-integrity": "canonical source, idempotency, migrations, identifiers",
+    "correctness": "check-act ordering, ground truth, behavior under limits",
+    "testing": "fixtures, run-it gates, gate verification, baselines",
+    "review-process": "adversarial review, cross-model diversity, guard design",
+    "reliability": "fail-visible, persistence, concurrency, boundaries",
+    "integration": "seams, extending vs reinventing dependencies",
+    "agent-runtime": "model-driven runtimes, harness vs prose, disclosure",
+    "ui": "UI/UX surface, design tokens",
+    "general": "uncategorized",
+}
 
-    Vital-few first (primacy), everything else in file order, vital-few ids
-    recapped on the last line (recency)."""
+
+def _categories(entries):
+    """Ordered {category: [entry, ...]} over all entries, category order by first
+    appearance so the table is stable and file-driven."""
+    order = []
+    groups = {}
+    for e in entries:
+        c = e.get("cat", "general")
+        if c not in groups:
+            groups[c] = []
+            order.append(c)
+        groups[c].append(e)
+    return [(c, groups[c]) for c in order]
+
+
+def index_entry_count(entries):
+    """Tier-1 row count: vital-few present + distinct categories. This — NOT the
+    total corpus size — is what the always-loaded budget caps, because the tiered
+    index only ever renders these rows regardless of how large the corpus grows."""
+    by_id = {e["id"]: e for e in entries}
+    vital = sum(1 for i in VITAL_FEW if i in by_id)
+    cats = len({e.get("cat", "general") for e in entries})
+    return vital + cats
+
+
+def build_index(entries):
+    """Render the always-injected TIER-1 index (progressive disclosure).
+
+    Two always-loaded parts, both bounded so the corpus can grow without inflating
+    what loads every run (mirrors this box's `MEMORY.md`: vital-few + a routing
+    table, everything else on demand):
+      - VITAL_FEW full one-liners (primacy at the top, recap at the bottom).
+      - A CATEGORY ROUTING TABLE — one row per category with its member ids (no
+        per-principle one-liners). The model scans it, then expands the relevant
+        category with `--category <name>` (tier 2) and reads full bodies with
+        `--show P-NNN` (tier 3)."""
     by_id = {e["id"]: e for e in entries}
     vital = [by_id[i] for i in VITAL_FEW if i in by_id]
-    vital_ids = {e["id"] for e in vital}
-    rest = [e for e in entries if e["id"] not in vital_ids]
 
     out = [
-        "# Design principles — index (progressive disclosure)",
+        "# Design principles — index (progressive disclosure, tiered)",
         "#",
-        "# P-NNN id + title + one-line rule for each seeded principle. Full bodies are",
-        "# NOT injected — pull the ones relevant to this task/diff on demand:",
-        '#   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/principles_context.py" --show P-003 P-020',
-        "# Scan the index, expand what's relevant, then apply. Cite violations by P-NNN.",
+        "# Always-loaded = the vital-few one-liners + a category routing table (ids",
+        "# only). Full one-liners and bodies load ON DEMAND:",
+        "#   --category testing      # tier 2: one-liners for a whole category",
+        "#   --show P-003 P-020      # tier 3: full bodies of specific principles",
+        "# Scan the table, expand the categories relevant to this task/diff, then apply.",
+        "# Cite violations by P-NNN.",
         "",
     ]
     if vital:
         out.append("## Most load-bearing (safety / data-loss / irreversibility)")
         out.extend(_index_line(e) for e in vital)
         out.append("")
-    out.append("## All principles")
-    out.extend(_index_line(e) for e in rest)
+    out.append("## Categories (expand with --category <name>)")
+    for cat, members in _categories(entries):
+        label = CATEGORY_LABELS.get(cat, "")
+        ids = ", ".join(e["id"] for e in members)
+        desc = f" — {label}" if label else ""
+        out.append(f"- {cat} ({len(members)}){desc}: {ids}")
     if vital:
         out.append("")
         out.append("Most load-bearing, one line: " + ", ".join(e["id"] for e in vital))
+    return "\n".join(out) + "\n"
+
+
+def show_category(entries, name):
+    """Tier 2: emit the id + title + one-liner for every principle in a category.
+
+    Unknown category produces a visible marker (fail-visible, P-003) rather than
+    silent empty output."""
+    members = [e for e in entries if e.get("cat", "general") == name]
+    if not members:
+        known = ", ".join(sorted({e.get("cat", "general") for e in entries}))
+        return f"> category {name!r}: no principles (known categories: {known})\n"
+    out = [f"# {name} — {CATEGORY_LABELS.get(name, name)}", ""]
+    out.extend(_index_line(e) for e in members)
     return "\n".join(out) + "\n"
 
 
@@ -292,6 +365,12 @@ def main(argv=None):
         help="Print the FULL body of the given principle id(s), on demand.",
     )
     mode.add_argument(
+        "--category",
+        metavar="NAME",
+        help="Tier 2: print id + title + one-liner for every principle in a "
+        "category (expand a routing-table row from --index).",
+    )
+    mode.add_argument(
         "--emit",
         action="store_true",
         help="Legacy: print every principle body (full corpus). Chain skills use "
@@ -316,6 +395,11 @@ def main(argv=None):
                 plugin_root=plugin_root, project_root=args.project_root
             )
             sys.stdout.write(show_principles(entries, args.show))
+        elif args.category:
+            entries = load_entries(
+                plugin_root=plugin_root, project_root=args.project_root
+            )
+            sys.stdout.write(show_category(entries, args.category))
         else:
             for f in resolve_principle_files(
                 plugin_root=plugin_root, project_root=args.project_root
