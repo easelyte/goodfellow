@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+- **Worktree-isolated parallel implementers.** `execute` can fan out a phase's independent tasks
+  across parallel implementer agents, each in its own runtime-isolated git worktree branched off a
+  checkpoint commit, with results reconciled by merge. Because no two children write the same working
+  tree, concurrent implementers can't clobber or strand each other's commits — isolation is enforced
+  at the runtime layer, not by a prose instruction to the child, and file overlap becomes a
+  merge-cleanliness hint rather than a corruption hazard. Serial stays the default; fan-out is the
+  justified exception (floor ~3 genuinely independent tasks, sized against the runtime concurrency
+  cap), and `execute` falls back to serial when runtime-enforced isolation isn't available.
+- **Progressive disclosure for seeded principles.** Chain runs now inject only the principle INDEX
+  (each `P-NNN` id + title + one-line rule) and pull full bodies on demand via `--show P-NNN`,
+  mirroring the Agent Skills loading model. Cuts the always-loaded principle footprint from ~17k to
+  ~2.8k tokens (core corpus). A CI density ratchet (`measure_principle_density.py`) keeps the
+  always-injected index under a research-derived cap, so principle growth displaces rather than
+  accumulates. Budget, growth rule, and placement documented in `docs/instruction-density-budget.md`.
+- **Judge lens tag + stronger no-Codex reviewer default.** The judge decision object gains an
+  optional, fail-open `lens` field threaded through the validator, `review_judge`, loop store
+  (`--lens`), and per-lens tuning attribution — turning reviewer-lens tuning from prose-only into
+  measurable, with an explicit `other` (measured) distinguished from missing/malformed lens
+  (`unattributed`, no-data) so absent provenance can't emit a false tuning signal. Separately, the
+  no-Codex fallback reviewer now defaults to the stronger model, so the fallback path (which has no
+  cross-family reviewer) is no longer a strength inversion; the Codex-present path is unchanged.
 - **Tool-layer enforcement guards (PreToolUse).** A new `PreToolUse` hook (`hooks/hooks.json` →
   `scripts/guard_engine.py`) enforces expensive-to-reverse constraints at the tool layer instead of
   in prose a compaction can silently drop. Ships three built-in universal guards on by default (no

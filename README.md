@@ -13,8 +13,6 @@
   <img alt="Version 0.2.0" src="https://img.shields.io/badge/version-0.2.0-7c3aed?style=flat-square">
 </p>
 
-> Named after Ian Goodfellow, who invented adversarial networks. Your good fellow for shipping code.
-
 An opinionated development lifecycle for Claude Code.
 Your system gets smarter every time you ship.
 
@@ -212,6 +210,15 @@ auto-dispatch spec-review. Routing is by intent: **clear intent → `brainstorm`
 questions); **fuzzy or high-stakes intent → `grill`** (explicit invocation only — `/goodfellow:grill`
 or "grill me on X" / "interview me about X"; a relentless one-question-at-a-time interview that
 self-terminates when its decision ledger is empty). `grill` never auto-selects over `brainstorm`.
+
+`execute` runs a plan's tasks **serially by default**. When a phase has enough genuinely independent
+work (roughly ≥3 tasks with no dependency edge between them), it can fan out **worktree-isolated
+parallel implementers** — one agent per task, each running in its own runtime-isolated git worktree
+branched off a checkpoint commit, with results reconciled by merge. Because no two children ever
+write the same working tree, concurrent implementers can't clobber or strand each other's commits;
+the isolation is enforced at the runtime layer (not by prose), and file overlap becomes a
+merge-cleanliness hint rather than a corruption hazard. Fan-out is the justified exception, not a
+default mode — below the floor, or without runtime-enforced isolation, `execute` stays serial.
 
 ### Review and Triage (2 skills)
 
