@@ -247,7 +247,11 @@ has_hunks() {
 # to no principle section rather than failing the review.
 emit_principles() {
   local plugin_root="${CLAUDE_PLUGIN_ROOT:-$(cd "${SCRIPT_DIR}/.." && pwd)}"
-  python3 "${SCRIPT_DIR}/principles_context.py" --index --plugin-root "$plugin_root" \
+  # --index-flat (not --index): this is a one-shot reviewer prompt, so the child
+  # cannot expand a category routing row on demand. It needs every principle's
+  # one-liner inline; the tiered --index would give bare P-NNN ids for non-vital
+  # principles and the reviewer could not check them.
+  python3 "${SCRIPT_DIR}/principles_context.py" --index-flat --plugin-root "$plugin_root" \
     --project-root . 2>/dev/null || true
 }
 

@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- **Tiered principle index — the corpus grows without inflating what loads every run.** The
+  always-injected `--index` no longer emits every principle's one-liner (which capped the corpus at
+  ~80 entries before displacement). It now emits the vital-few one-liners **plus a category routing
+  table** — one row per category (`security`, `data-integrity`, `correctness`, `testing`,
+  `review-process`, `reliability`, `integration`, `agent-runtime`, `ui`) listing member `P-NNN` ids
+  only. New tier-2 command `--category NAME` expands a category's one-liners on demand; `--show P-NNN`
+  (tier 3) still pulls full bodies. Category membership is set per principle by an inline
+  `<!-- cat: NAME -->` marker (untagged → `general`). The density ratchet now caps **tier-1 rows**
+  (vital-few + categories), not the total corpus, so a new principle costs ~2 index tokens instead of
+  a ~45-token one-liner. Core tier-1 index dropped from ~2,800 tok to ~720. Same shape as a
+  routing-table-plus-on-demand-registry memory system. Chain skills updated to the tiered flow;
+  `docs/instruction-density-budget.md` rewritten for the three tiers.
+- **14 seed principles added (P-080–P-093).** Now that the index is tiered, the seed corpus carries
+  the full backlog: test-fixture producer shape, derive-facts-from-ground-truth, sanitize third-party
+  responses, mechanism-at-the-choke-point, run-it gates, decoupled integration seams, instructions
+  don't bind already-running sessions, environment-matched baselines, reusable-id join-key safety
+  (web), gate-verification on both verdicts, functional protection assertion, fail-closed guard
+  inversion, read-the-code before blaming a tool, and stating a guard from the defect's failure mode.
 - **Worktree-isolated parallel implementers.** `execute` can fan out a phase's independent tasks
   across parallel implementer agents, each in its own runtime-isolated git worktree branched off a
   checkpoint commit, with results reconciled by merge. Because no two children write the same working

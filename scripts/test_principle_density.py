@@ -26,7 +26,9 @@ def _measure(force_web):
         plugin_root=PLUGIN_ROOT, project_root=PLUGIN_ROOT, force_web=force_web
     )
     _, tok, _ = m.measure(index)
-    return tok, len(entries), web_active
+    # Tier-1 rows (vital-few + category routing rows) are what the always-loaded
+    # budget caps — not the total corpus, which grows on demand.
+    return tok, pc.index_entry_count(entries), web_active
 
 
 def test_core_index_within_cap():
@@ -95,3 +97,73 @@ def test_malformed_header_fails_loud(tmp_path):
     not silently disappear."""
     with pytest.raises(pc.ConfigError):
         pc.parse_principles("### P-080 — Drifted Header\n> rule.\n", source="bad.md")
+
+
+# --- tiered index + category routing (feat: category routing) ---
+
+def _parse(text):
+    return pc.parse_principles(text, source="t.md")
+
+
+def test_cat_marker_assigns_category():
+    [e] = _parse("### P-900. X\n> rule.\n<!-- cat: testing -->\n\nbody\n")
+    assert e["cat"] == "testing"
+
+
+def test_untagged_routes_to_general():
+    [e] = _parse("### P-900. X\n> rule.\n\nbody, no marker\n")
+    assert e["cat"] == "general"
+
+
+def test_cat_scoped_to_own_segment_not_child():
+    """F2 regression: an untagged PARENT with a tagged sub-principle must route to
+    `general` — the child's marker must not leak onto the parent, even though the
+    parent's body includes the child."""
+    text = (
+        "### P-900. Parent\n> parent rule.\n\nparent body\n\n"
+        "#### P-900a. Child\n> child rule.\n<!-- cat: security -->\n\nchild body\n"
+    )
+    entries = {e["id"]: e for e in _parse(text)}
+    assert entries["P-900"]["cat"] == "general", "child category leaked to parent"
+    assert entries["P-900a"]["cat"] == "security"
+
+
+def test_tagged_parent_keeps_own_category_over_child():
+    text = (
+        "### P-900. Parent\n> parent rule.\n<!-- cat: correctness -->\n\nbody\n\n"
+        "#### P-900a. Child\n> child rule.\n<!-- cat: security -->\n\nchild\n"
+    )
+    entries = {e["id"]: e for e in _parse(text)}
+    assert entries["P-900"]["cat"] == "correctness"
+    assert entries["P-900a"]["cat"] == "security"
+
+
+def test_tiered_index_omits_nonvital_oneliners():
+    """The tiered --index shows vital-few one-liners + a category table (ids only);
+    a non-vital principle's one-liner must NOT appear inline (that is the whole
+    point of the budget-flat index)."""
+    entries = pc.load_entries(plugin_root=PLUGIN_ROOT, project_root=PLUGIN_ROOT)
+    nonvital = next(
+        e for e in entries if e["id"] not in pc.VITAL_FEW and e["oneliner"]
+    )
+    idx = pc.build_index(entries)
+    assert nonvital["id"] in idx, "id should be in a category row"
+    assert nonvital["oneliner"] not in idx, "non-vital one-liner must not be inline"
+
+
+def test_index_flat_includes_all_oneliners():
+    """F1 regression: the flat index (used by the review bridge) must carry EVERY
+    principle's one-liner inline, including non-vital ones, so a one-shot reviewer
+    prompt can check them without expanding a category."""
+    entries = pc.load_entries(plugin_root=PLUGIN_ROOT, project_root=PLUGIN_ROOT)
+    flat = pc.build_index_flat(entries)
+    nonvital = next(
+        e for e in entries if e["id"] not in pc.VITAL_FEW and e["oneliner"]
+    )
+    assert nonvital["oneliner"] in flat, "flat index dropped a non-vital one-liner"
+
+
+def test_show_category_unknown_is_visible():
+    entries = pc.load_entries(plugin_root=PLUGIN_ROOT, project_root=PLUGIN_ROOT)
+    out = pc.show_category(entries, "nonexistent-cat")
+    assert "no principles" in out

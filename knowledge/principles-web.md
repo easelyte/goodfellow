@@ -10,6 +10,7 @@ Stack-agnostic rules live in `principles.md` (always read).
 
 ### P-004. RLS Is Row-Level Only
 > Postgres RLS cannot restrict column access — only row access.
+<!-- cat: security -->
 
 Understand what RLS can and cannot do before relying on it as your access layer.
 
@@ -27,6 +28,7 @@ Understand what RLS can and cannot do before relying on it as your access layer.
 
 ### P-005. Don't Mirror External State in React
 > If the DOM element has its own state machine, don't duplicate it in React.
+<!-- cat: ui -->
 
 Browser APIs (video elements, intersection observers, audio, canvas) maintain their own
 state. Copying that into React via `useState` creates stale closures, race conditions, and
@@ -50,6 +52,7 @@ event-ordering bugs.
 
 ### P-006. Dates Are Timezone-Dependent
 > `toISOString()` is always UTC. "Today" is not.
+<!-- cat: correctness -->
 
 Date comparisons in user-facing applications must use the business timezone. Mixing
 timestamp math with date-only strings produces off-by-one errors near timezone boundaries.
@@ -65,6 +68,7 @@ timestamp math with date-only strings produces off-by-one errors near timezone b
 
 ### P-009. Next.js Route Mechanics
 > Route groups are URL-invisible. `revalidatePath` doesn't cascade.
+<!-- cat: ui -->
 
 Know the framework's actual behavior, not the intuitive assumption.
 
@@ -76,6 +80,7 @@ Know the framework's actual behavior, not the intuitive assumption.
 
 ### P-010. Postgres Migration Safety
 > Incremental migrations are for existing databases. Fresh installs need a single schema file.
+<!-- cat: data-integrity -->
 
 Migration chains accumulate assumptions. An enum default set in an early migration can't be
 auto-cast when a later migration changes the enum type.
@@ -89,6 +94,7 @@ auto-cast when a later migration changes the enum type.
 
 ### P-013. Global CSS Has Non-Obvious Platform Interactions
 > `scroll-behavior: smooth` on the root causes jitter on mobile momentum scroll.
+<!-- cat: ui -->
 
 Global CSS properties interact with native browser behaviors in platform-specific ways.
 Desktop testing doesn't catch mobile regressions.
@@ -101,6 +107,7 @@ Desktop testing doesn't catch mobile regressions.
 
 ### P-029. Visibility-Gated Columns Enforced at the Data Layer
 > If forgetting a `WHERE` clause is a data leak, the `WHERE` doesn't belong at the call site.
+<!-- cat: security -->
 
 Generalizes soft-delete scopes (`deleted_at IS NULL`) to any boolean gate: `published`,
 `approved`, `archived`, `active`, `client_visible`. Four call sites all missing the same
@@ -120,6 +127,7 @@ filter on the same table is an architecture problem, not a discipline problem.
 
 ### P-031. Controlled Inputs Need Escape Hatches for HTML Behavior
 > React's controlled-component model does not match HTML input semantics. Bridge the gap explicitly.
+<!-- cat: ui -->
 
 Extends P-005. HTML form controls maintain their own value semantics; `useState` forces a
 typed value. The two disagree in specific, common cases — and the fix is more care at the
@@ -138,6 +146,7 @@ boundary, not more state.
 
 ### P-062. Design Tokens Carry Semantic Role and Shape
 > A token is a semantic role, not just a value. One literal serving two opposite roles needs two tokens; a token whose value is a CSS shorthand can only be consumed through that shorthand property.
+<!-- cat: ui -->
 
 Design-token systems fail silently under theming and mechanical swaps when a token's role and
 value shape are ignored. Role coupling: one color used as both a surface background and as
@@ -159,6 +168,7 @@ declaration is dropped, a silent no-op). Mirrors the primitive-vs-semantic token
 
 ### P-070. Optimistic Concurrent Edits: Field-Scoped Writes, Worst-First Status
 > Write only the field that changed, never a full-record snapshot (which replays stale copies of every other field). Derive a shared status worst-first — a later success must not clear another operation's unacknowledged failure.
+<!-- cat: ui -->
 
 Two silent failure modes in optimistic multi-client editing. Full-snapshot save: writing the
 whole record on any field change lets one client's stale mirror clobber another client's
@@ -177,3 +187,20 @@ worst-first derivation. Last-write-wins gives no warning and no exception.
 - Saving all fields on every keystroke, replaying stale sibling fields over concurrent edits
 - Two async save streams both writing one "Saved/Error" status unconditionally
 - Gating reconciliation on the store's dedup return, so a reload-mid-flight leaves a stuck optimistic row
+
+### P-088. A Reusable Identifier Is Not a Safe Cross-Entity Join Key
+> A deletable-and-recreatable global id can change owners; scope any projection through it to the owning tenant.
+<!-- cat: security -->
+
+A primary key that can be deleted and later reissued to a different owner is not a stable
+identity across time. A subselect that projects a joined field keyed only on that id leaks the
+id's CURRENT owner's data into a row that legitimately references it — the enclosing query being
+owner-scoped does not protect the JOIN.
+
+**Rules:**
+- Add the owner / tenant predicate to the join itself (`AND x.owner_id = parent.owner_id`), even when the enclosing query is already owner-scoped.
+- Treat a reusable global PK as unsafe to project across entities without re-scoping to the current owner.
+
+**Anti-patterns:**
+- A subselect projecting another table's field keyed only on a global id that has since changed owners
+- Assuming an owner-scoped outer query protects an unscoped JOIN through a reusable id

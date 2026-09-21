@@ -142,13 +142,15 @@ def main(argv=None):
     args = ap.parse_args(argv)
 
     plugin_root = _plugin_root(args.plugin_root)
-    entries, index, full, web_active = gather(
-        plugin_root, args.project_root, args.web
-    )
+    entries, index, full, web_active = gather(plugin_root, args.project_root, args.web)
 
     i_c, i_tok, i_ins = measure(index)
     f_c, f_tok, f_ins = measure(full)
-    n_entries = len(entries)
+    # Cap the TIER-1 index size (vital-few + category routing rows), NOT the total
+    # corpus: the tiered index renders only those rows, so the corpus can grow on
+    # demand without inflating what loads every run.
+    n_entries = pc.index_entry_count(entries)
+    n_corpus = len(entries)
     tok_cap = INDEX_TOKEN_CAP_WEB if web_active else INDEX_TOKEN_CAP
     entry_cap = INDEX_ENTRY_CAP_WEB if web_active else INDEX_ENTRY_CAP
     over = i_tok > tok_cap or n_entries > entry_cap
@@ -164,7 +166,11 @@ def main(argv=None):
                         "instructions": i_ins,
                         "entries": n_entries,
                     },
-                    "full_corpus": {"tokens": f_tok, "instructions": f_ins},
+                    "full_corpus": {
+                        "tokens": f_tok,
+                        "instructions": f_ins,
+                        "entries": n_corpus,
+                    },
                     "caps": {
                         "index_tokens": tok_cap,
                         "index_entries": entry_cap,
@@ -179,8 +185,8 @@ def main(argv=None):
         print("Goodfellow principle density")
         print("-" * 64)
         print(f"{'':<20}{'tokens~':>10}{'instr':>8}{'entries':>9}")
-        print(f"{'INDEX (always)':<20}{i_tok:>10}{i_ins:>8}{n_entries:>9}")
-        print(f"{'FULL (on demand)':<20}{f_tok:>10}{f_ins:>8}{'':>9}")
+        print(f"{'INDEX (tier-1)':<20}{i_tok:>10}{i_ins:>8}{n_entries:>9}")
+        print(f"{'FULL (on demand)':<20}{f_tok:>10}{f_ins:>8}{n_corpus:>9}")
         print("-" * 64)
         print(
             f"Index cap ({'core+web' if web_active else 'core'}): {tok_cap} tok / {entry_cap} entries  "
