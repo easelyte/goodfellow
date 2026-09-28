@@ -253,7 +253,7 @@ def run_tests(
     ).replace("{junit}", shlex.quote(junit))
     env = dict(os.environ)
     env.pop("PYTHONPATH", None)
-    rc, _out, _err = proc_group.run(cmd, cwd, env, timeout)
+    rc, _out, _err = proc_group.run(cmd, cwd, env, timeout, sweep=True)
     if rc is None:
         return None
     if returncodes is not None:

@@ -21,9 +21,9 @@ import subprocess
 import tempfile
 import threading
 from pathlib import Path
-from typing import Dict, Optional, Set, Tuple
+from typing import Dict, Optional, Tuple
 
-_live: Set[int] = set()
+_live: Dict[int, Optional[Path]] = {}  # pgid -> private cwd to sweep (or None)
 _lock = threading.Lock()
 _installed = False
 
@@ -37,14 +37,16 @@ def _kill_group(pgid: int) -> None:
 
 def kill_all() -> None:
     with _lock:
-        groups = list(_live)
+        groups = list(_live.items())
         _live.clear()
-    for pgid in groups:
+    for pgid, sweep_root in groups:
         _kill_group(pgid)
+        if sweep_root is not None:
+            sweep_cwd(sweep_root)
 
 
 def _on_signal(signum, _frame):
-    kill_all()
+    kill_all()  # includes the sweeps, so nothing waits on the tool's finally
     signal.signal(signum, signal.SIG_DFL)
     os.kill(os.getpid(), signum)
 
@@ -69,11 +71,15 @@ def run(
     cwd: Path,
     env: Dict[str, str],
     timeout: Optional[float],
+    sweep: bool = False,
 ) -> Tuple[Optional[int], str, str]:
     """Run `cmd` through the shell in its own process group.
 
     Returns (returncode, stdout, stderr); returncode is None on timeout. The
     group is always killed before returning, so nothing it started outlives it.
+    With sweep=True, `cwd` must be a private directory (a sandbox): after the
+    run, and on exit or a termination signal, any process still working inside
+    it is killed too. That catches children that left the group (setsid).
     """
     install_handlers()
     # Output goes to files, not pipes: a background child that inherited a pipe
@@ -92,7 +98,7 @@ def run(
         )
         pgid = proc.pid  # session leader: its pid is the group id
         with _lock:
-            _live.add(pgid)
+            _live[pgid] = Path(cwd) if sweep else None
         try:
             try:
                 rc: Optional[int] = proc.wait(timeout=timeout)
@@ -103,8 +109,10 @@ def run(
             # it started (background children included) outlives the run.
             _kill_group(pgid)
             proc.wait()
+            if sweep:
+                sweep_cwd(Path(cwd))
             with _lock:
-                _live.discard(pgid)
+                _live.pop(pgid, None)
         out_f.seek(0)
         err_f.seek(0)
         return rc, out_f.read(), err_f.read()

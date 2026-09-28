@@ -465,7 +465,7 @@ def run_tests(
     env["GIT_CEILING_DIRECTORIES"] = str(cwd.parent)
     if workdir is not None and env.get("PYTHONPATH"):
         env["PYTHONPATH"] = remap_pythonpath(env["PYTHONPATH"], workdir, cwd)
-    rc, _out, _err = proc_group.run(cmd, cwd, env, timeout)
+    rc, _out, _err = proc_group.run(cmd, cwd, env, timeout, sweep=True)
     if rc is None:
         return "timeout"
     return status_for_returncode(rc, error_codes)

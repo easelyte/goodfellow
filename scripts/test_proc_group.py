@@ -105,3 +105,43 @@ def test_sigterm_to_the_tool_kills_its_running_groups(tmp_path):
     finally:
         if tool.poll() is None:
             tool.kill()
+
+
+def test_detached_child_in_the_run_directory_dies_with_the_run(tmp_path):
+    # setsid puts the child in its own session, outside the killed group; the
+    # sweep of the run's directory still catches it.
+    m = _marker()
+    rc, _out, _err = pg.run(
+        f"setsid sleep {m} & sleep {m}",
+        tmp_path,
+        dict(os.environ),
+        timeout=1,
+        sweep=True,
+    )
+    assert rc is None
+    assert _gone(m), f"left running: {_alive(m)}"
+
+
+def test_sigterm_also_kills_a_detached_child(tmp_path):
+    m = _marker()
+    script = (
+        "import os, sys, pathlib\n"
+        f"sys.path.insert(0, {str(Path(pg.__file__).parent)!r})\n"
+        "import proc_group\n"
+        f"proc_group.run('setsid sleep {m} & wait', pathlib.Path('.'), "
+        "dict(os.environ), 600, sweep=True)\n"
+    )
+    tool = subprocess.Popen([sys.executable, "-c", script], cwd=tmp_path)
+    try:
+        deadline = time.time() + 5
+        while not _alive(m) and time.time() < deadline:
+            time.sleep(0.05)
+        assert _alive(m), "the tool never started its command"
+        tool.send_signal(signal.SIGTERM)
+        tool.wait(timeout=5)
+        assert _gone(m), f"left running after SIGTERM: {_alive(m)}"
+    finally:
+        if tool.poll() is None:
+            tool.kill()
+        for pid in _alive(m):
+            os.kill(pid, signal.SIGKILL)
