@@ -49,14 +49,18 @@ jobs:
       - name: Check versions and extract notes
         id: notes
         run: |
-          # Versions are checked against the tagged commit. On a manual re-run the notes
-          # come from main's CHANGELOG.md, so a correction merged to main reaches the release.
+          # Versions are checked against the tagged commit (--root .). On a manual re-run
+          # the notes and the checker both come from main, so a correction merged to main
+          # reaches the release even for a tag cut before the checker learned --changelog.
+          script=scripts/release_notes.py
           args=()
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            git show origin/main:scripts/release_notes.py > "$RUNNER_TEMP/release_notes.py"
             git show origin/main:CHANGELOG.md > "$RUNNER_TEMP/CHANGELOG.main.md"
+            script="$RUNNER_TEMP/release_notes.py"
             args+=(--changelog "$RUNNER_TEMP/CHANGELOG.main.md")
           fi
-          python scripts/release_notes.py notes --tag "$TAG" "${args[@]}" \
+          python "$script" notes --tag "$TAG" --root . "${args[@]}" \
             --out "$RUNNER_TEMP/notes.md" >> "$GITHUB_OUTPUT"
 
       - name: Run tests
