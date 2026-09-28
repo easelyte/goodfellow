@@ -45,7 +45,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/mutation_check.py" --base "$BASE"
 
 - Exit 0: every mutant killed, or nothing in scope, or no path list (it says `SKIPPED`).
 - Exit 1: each surviving mutant is a major finding. Kill it with a test before opening the PR, or write in the PR why it is equivalent (the mutated code behaves identically). Survivors neither killed nor explained are filed as loops per §5.
-- Exit 2: red baseline or bad base, so the check did not run. Exit 3: the time budget ran out, so the result is incomplete. Neither is a pass (P-079).
+- Exit 2: red baseline, bad base, or a configured path list that does not exist, so the check did not run. Exit 3: the time budget ran out, so the result is incomplete. Neither is a pass (P-079).
 
 ## 2. Review
 

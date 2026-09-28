@@ -231,9 +231,14 @@ def parse_junit(path: Path) -> Dict[str, Tuple[str, Optional[str], str]]:
 
 
 def run_tests(
-    cwd: Path, tests: List[str], cmd_template: str, timeout: int
+    cwd: Path,
+    tests: List[str],
+    cmd_template: str,
+    timeout: int,
+    returncodes: Optional[List[int]] = None,
 ) -> Optional[Dict[str, Tuple[str, Optional[str], str]]]:
-    """Run the test command in cwd; return parsed JUnit, or None if no report."""
+    """Run the test command in cwd; return parsed JUnit, or None if no report.
+    The runner's exit code is appended to `returncodes` when given."""
     fd, junit = tempfile.mkstemp(prefix="red-check-", suffix=".xml")
     os.close(fd)
     os.unlink(junit)
@@ -243,7 +248,7 @@ def run_tests(
     env = dict(os.environ)
     env.pop("PYTHONPATH", None)
     try:
-        subprocess.run(
+        proc = subprocess.run(
             cmd,
             shell=True,
             cwd=str(cwd),
@@ -254,6 +259,8 @@ def run_tests(
         )
     except subprocess.TimeoutExpired:
         return None
+    if returncodes is not None:
+        returncodes.append(proc.returncode)
     try:
         if not os.path.exists(junit) or os.path.getsize(junit) == 0:
             return None
@@ -295,7 +302,15 @@ def check(
         # so tests that write files never touch the real checkout.
         head_copy = tmp / "head"
         _copy_worktree(workdir, head_copy)
-        head = run_tests(head_copy, files, cmd_template, timeout)
+        head_rc: List[int] = []
+        head = run_tests(head_copy, files, cmd_template, timeout, head_rc)
+        if head and head_rc and head_rc[0] != 0:
+            if all(tag in ("pass", "skipped") for tag, _t, _m in head.values()):
+                raise RedCheckError(
+                    f"the test command exited {head_rc[0]} on the current checkout "
+                    "but its report shows no failing test; the report is partial, "
+                    "so no verdict is trustworthy"
+                )
         if not head:
             raise RedCheckError(
                 "the test command produced no JUnit report (or one with no test "

@@ -410,3 +410,25 @@ def test_report_with_no_testcases_fails_closed(tmp_path):
     cmd = "printf '<testsuites/>' > {junit} # {tests}"
     proc = _run(repo, "--base", base, "--test-cmd", cmd)
     assert proc.returncode == 2, proc.stdout + proc.stderr
+
+
+def test_head_runner_failing_without_a_reported_failure_fails_closed(tmp_path):
+    # A report that shows only passes while the runner exits nonzero is partial:
+    # some test was dropped, so no verdict is trustworthy.
+    repo, base = _repo(tmp_path)
+    _commit(
+        repo,
+        {
+            "calc.py": FIXED_CALC,
+            "test_calc.py": BASE_TESTS
+            + "\n\ndef test_x():\n    assert clamp(-1) == 0\n",
+        },
+        "t",
+    )
+    cmd = (
+        f"{sys.executable} -m pytest -q -p no:cacheprovider {{tests}} "
+        "--junitxml={junit}; exit 3"
+    )
+    proc = _run(repo, "--base", base, "--test-cmd", cmd)
+    assert proc.returncode == 2, proc.stdout + proc.stderr
+    assert "exit" in proc.stderr

@@ -58,7 +58,7 @@ import tempfile
 import threading
 import time
 from pathlib import Path
-from typing import Dict, Iterator, List, NamedTuple, Optional, Set
+from typing import Dict, Iterator, List, NamedTuple, Optional, Set, Tuple
 
 DEFAULT_TEST_CMD = (
     f"{shlex.quote(sys.executable)} -m pytest -x -q -p no:cacheprovider {{tests}}"
@@ -409,6 +409,42 @@ def remap_pythonpath(value: str, workdir: Path, sandbox: Path) -> str:
     return os.pathsep.join(out)
 
 
+def _manifest(root: Path) -> Dict[str, Tuple[int, int]]:
+    out = {}
+    for dirpath, _dirs, files in os.walk(root):
+        for name in files:
+            p = Path(dirpath) / name
+            st = p.lstat()
+            out[str(p.relative_to(root))] = (st.st_size, st.st_mtime_ns)
+    return out
+
+
+def _reset_sandbox(
+    w: Path, pristine: Dict[str, Tuple[int, int]], workdir: Path
+) -> None:
+    """Undo whatever a test run left behind: delete new files, restore changed
+    ones from the checkout, so every mutant starts from the same state."""
+    for dirpath, dirs, files in os.walk(w, topdown=False):
+        for name in files:
+            p = Path(dirpath) / name
+            rel = str(p.relative_to(w))
+            if rel not in pristine:
+                p.unlink()
+            else:
+                st = p.lstat()
+                if (st.st_size, st.st_mtime_ns) != pristine[rel]:
+                    p.unlink()
+                    shutil.copy2(workdir / rel, p, follow_symlinks=False)
+        for name in dirs:
+            d = Path(dirpath) / name
+            if not d.is_symlink() and not any(d.iterdir()):
+                d.rmdir()
+    for rel in pristine:
+        if not (w / rel).exists() and not (w / rel).is_symlink():
+            (w / rel).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(workdir / rel, w / rel, follow_symlinks=False)
+
+
 def run_tests(
     cwd: Path,
     cmd: str,
@@ -456,7 +492,11 @@ def check(a: argparse.Namespace, workdir: Path) -> dict:
         patterns = list(a.files)
     else:
         pf = resolve_paths_file(a.paths_file, workdir)
-        if pf is None or not pf.exists():
+        if pf is not None and not pf.exists():
+            # An explicitly configured list that is missing is a typo, not an
+            # opt-out: never let it turn the check into a silent skip.
+            raise CheckError(f"high-stakes path list not found: {pf}")
+        if pf is None:
             summary["skipped"] = (
                 "no high-stakes path list (--paths-file / "
                 "$GOODFELLOW_HIGH_STAKES_PATHS / .goodfellow/high_stakes_paths.txt)"
@@ -498,12 +538,14 @@ def check(a: argparse.Namespace, workdir: Path) -> dict:
             w = tmp / f"w{k}"
             _copy_tree(workdir, w)
             workers.append(w)
+        pristine = _manifest(workers[0])
         t0 = time.time()
         if run_tests(workers[0], cmd, a.baseline_timeout, workdir) != "survived":
             raise CheckError(
                 "baseline is not green in the sandbox copy; fix the suite (or "
                 "--test-cmd) before measuring mutants"
             )
+        _reset_sandbox(workers[0], pristine, workdir)
         per_mutant = a.timeout or max(30, int((time.time() - t0) * 5) + 10)
         deadline = time.time() + a.budget
         free = list(workers)
@@ -532,6 +574,7 @@ def check(a: argparse.Namespace, workdir: Path) -> dict:
                     target.unlink()
                 target.write_text(sources[path])
                 os.chmod(target, mode)
+                _reset_sandbox(w, pristine, workdir)
                 with lock:
                     free.append(w)
             return rec

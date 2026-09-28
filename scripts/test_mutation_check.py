@@ -397,3 +397,43 @@ def test_deletion_only_change_is_measured_around_the_gap(tmp_path):
     # Pure deletion: the lines around the gap (def, return) are mutated.
     assert data["targets"] == ["gate.py"]
     assert {r["line"] for r in data["results"]} == {2}
+
+
+def test_explicit_path_list_that_does_not_exist_fails_closed(tmp_path):
+    repo, base = _repo(tmp_path, WEAK_TESTS, paths=None)
+    proc = _run(
+        repo,
+        "--base",
+        base,
+        paths_file=False,
+        env={"GOODFELLOW_HIGH_STAKES_PATHS": str(tmp_path / "typo.txt")},
+    )
+    assert proc.returncode == 2, proc.stdout + proc.stderr
+    proc = _run(
+        repo,
+        "--base",
+        base,
+        "--paths-file",
+        str(tmp_path / "typo.txt"),
+        paths_file=False,
+    )
+    assert proc.returncode == 2
+
+
+def test_files_left_by_a_run_do_not_leak_into_the_next(tmp_path):
+    # Each run creates a marker and fails if one is already there. With one
+    # worker, leaked state would fail every mutant for the wrong reason and
+    # report the behaviour-neutral mutants below as killed.
+    tests = (
+        "import os\nfrom gate import allowed\n\n\n"
+        "def test_state():\n"
+        "    assert not os.path.exists('state.db')\n"
+        "    open('state.db', 'w').close()\n"
+        "    assert allowed(100)\n"
+    )
+    repo, base = _repo(tmp_path, tests)
+    proc = _run(repo, "--base", base, "--workers", "1")
+    data = json.loads(proc.stdout)
+    survivors = {(s["line"], s["op"]) for s in data["survivors"]}
+    assert (6, "cmp_boundary") in survivors, proc.stdout
+    assert proc.returncode == 1
