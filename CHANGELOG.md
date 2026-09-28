@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Plugin icon.** Added a square brand icon (`docs/assets/goodfellow-icon.svg`) and an `icon` field
+  in `plugin.json`, clearing the directory-policy "add an icon" warning. The mark squares the hero's
+  adversarial lattice — a generator network reflected across a dashed seam into a dimmed
+  discriminator — and reads on light, dark, and down to 48px.
+
 - **Tiered principle index — the corpus grows without inflating what loads every run.** The
   always-injected `--index` no longer emits every principle's one-liner (which capped the corpus at
   ~80 entries before displacement). It now emits the vital-few one-liners **plus a category routing
