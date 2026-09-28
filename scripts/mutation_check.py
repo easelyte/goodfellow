@@ -154,23 +154,69 @@ def _call_name(func: ast.AST) -> Tuple[str, str]:
 
 
 def _open_writes(call: ast.Call) -> bool:
-    mode = None
-    if len(call.args) >= 2 and isinstance(call.args[1], ast.Constant):
-        mode = call.args[1].value
+    """True for open() in a writing mode, or with a mode we cannot read."""
+    mode_node: Optional[ast.AST] = call.args[1] if len(call.args) >= 2 else None
     for kw in call.keywords:
-        if kw.arg == "mode" and isinstance(kw.value, ast.Constant):
-            mode = kw.value.value
-    return isinstance(mode, str) and any(c in mode for c in "wax+")
+        if kw.arg == "mode":
+            mode_node = kw.value
+    if mode_node is None:
+        return False  # default "r"
+    if not (isinstance(mode_node, ast.Constant) and isinstance(mode_node.value, str)):
+        return True  # unknown mode: fail closed
+    return any(c in mode_node.value for c in "wax+")
+
+
+_RISKY_MODULES = {"os", "signal", "subprocess", "shutil", "asyncio", "pty"}
+_DYNAMIC_IMPORTS = {"__import__", "import_module"}
 
 
 def side_effect_sites(src: str) -> List[Site]:
-    """Call sites in `src` that signal processes, delete, write, or spawn."""
+    """Call sites in `src` that signal processes, delete, write, or spawn.
+
+    Aliases are resolved (`import os as o`, `from os import kill as k`), and
+    anything this scan cannot see through is reported as a process site, so
+    the caller fails closed: getattr() on a risky module, dynamic imports,
+    ctypes, and open() with a mode that is not a literal.
+    """
+    tree = ast.parse(src)
+    module_alias: Dict[str, str] = {}  # local name -> module
+    name_alias: Dict[str, str] = {}  # local name -> original function name
     sites: List[Site] = []
-    for node in ast.walk(ast.parse(src)):
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for al in node.names:
+                top = al.name.split(".")[0]
+                module_alias[al.asname or top] = top
+                if top in ("ctypes", "multiprocessing"):
+                    sites.append(Site(node.lineno, "process", f"import {al.name}"))
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            top = node.module.split(".")[0]
+            if top in ("ctypes", "multiprocessing"):
+                sites.append(Site(node.lineno, "process", f"from {node.module} import"))
+            for al in node.names:
+                name_alias[al.asname or al.name] = al.name
+                if al.name in _RISKY_MODULES:
+                    module_alias[al.asname or al.name] = al.name
+
+    for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
         recv, name = _call_name(node.func)
+        recv = module_alias.get(recv, recv)
+        if not recv:
+            name = name_alias.get(name, name)
         label = f"{recv}.{name}" if recv else name
+        if name == "getattr" and node.args:
+            target = node.args[0]
+            if (
+                isinstance(target, ast.Name)
+                and module_alias.get(target.id) in _RISKY_MODULES
+            ):
+                sites.append(Site(node.lineno, "process", f"getattr({target.id}, ...)"))
+            continue
+        if name in _DYNAMIC_IMPORTS:
+            sites.append(Site(node.lineno, "process", label))
+            continue
         if name in _SIGNAL_CALLS:
             kind = "signal"
         elif name in _DELETE_CALLS:
@@ -182,7 +228,7 @@ def side_effect_sites(src: str) -> List[Site]:
         else:
             continue
         sites.append(Site(node.lineno, kind, label))
-    return sorted(sites)
+    return sorted(set(sites))
 
 
 class CheckError(RuntimeError):

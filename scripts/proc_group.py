@@ -163,6 +163,14 @@ def _inside(cwd: str, prefix: str) -> bool:
     return cwd == prefix or cwd.startswith(prefix + os.sep)
 
 
+def _below_root(cwd: str, root_parts: Tuple[str, ...]) -> bool:
+    """A second containment check, built differently from `_inside` (path
+    components, not string prefixes), so one flipped comparison in either
+    cannot widen the sweep past the sandbox root."""
+    parts = Path(cwd).parts
+    return len(parts) >= len(root_parts) and parts[: len(root_parts)] == root_parts
+
+
 def _ancestors(procs: List[ProcInfo], me: int) -> Set[int]:
     parent = {p.pid: p.ppid for p in procs}
     seen: Set[int] = set()
@@ -192,7 +200,9 @@ def sweep_cwd(
     The containment check is not trusted on its own. Independently of it:
       - `root` (resolved with realpath) must be strictly below the temp base,
         never the temp base itself, `/`, or empty; otherwise nothing is done;
-      - a candidate's own cwd must also be strictly below the temp base;
+      - a candidate's own cwd must also be strictly below the temp base, and
+        below the root by a second, independently written path-component
+        check;
       - pid 1, this process, its ancestors, and processes of other users are
         never signalled;
       - if more than `max_kills` processes qualify, it signals none (a sweep
@@ -209,6 +219,8 @@ def sweep_cwd(
         print(f"proc_group: refusing to sweep {str(root)!r}", file=sys.stderr)
         return 0
 
+    root_parts = Path(prefix).parts
+
     def targets() -> List[ProcInfo]:
         procs = lister()
         protected = _ancestors(procs, me) | {0, 1, me}
@@ -219,6 +231,7 @@ def sweep_cwd(
             and p.uid == uid
             and p.cwd.startswith(base + os.sep)
             and _inside(p.cwd, prefix)
+            and _below_root(p.cwd, root_parts)
         ]
 
     first = targets()

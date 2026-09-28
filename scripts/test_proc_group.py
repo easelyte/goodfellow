@@ -163,6 +163,8 @@ def test_incident_mutant_still_kills_nothing_outside_the_temp_base():
     # Five matches would be under the cap; only the temp-base guard stands.
     _sweep(box, fn=mutant.sweep_cwd, max_kills=20)
     assert not {50, 51, 52, 53} & set(box.killed()), box.calls
+    # A peer sandbox under the same temp base is outside the root: untouched.
+    assert 54 not in box.killed(), box.calls
     assert 1 not in box.killed() and 800 not in box.killed()
 
 

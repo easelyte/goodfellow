@@ -618,3 +618,28 @@ def test_isolated_really_runs_in_its_own_pid_namespace(tmp_path):
     # stop() has no test, so its mutants survive (exit 1); the point is that
     # the run happened, inside the namespace.
     assert data["mutants"] > 0 and data["ran"] == data["mutants"], proc.stderr
+
+
+def test_aliased_and_indirect_side_effects_are_found():
+    src = (
+        "import os as o\n"
+        "import importlib\n"
+        "from os import kill as terminate\n"
+        "from shutil import rmtree as nuke\n"
+        "\n"
+        "def a(pid):\n    terminate(pid, 9)\n"
+        "def b(d):\n    nuke(d)\n"
+        "def c(pid):\n    o.kill(pid, 9)\n"
+        "def d(p, mode):\n    open(p, mode)\n"
+        "def e(pid):\n    getattr(o, 'kill')(pid, 9)\n"
+        "def f():\n    importlib.import_module('subprocess')\n"
+        "def g():\n    import ctypes\n"
+    )
+    kinds = {(s.line, s.kind) for s in mc.side_effect_sites(src)}
+    assert (7, "signal") in kinds  # aliased from-import
+    assert (9, "delete") in kinds  # aliased from-import
+    assert (11, "signal") in kinds  # aliased module
+    assert (13, "write") in kinds  # open() with a mode we cannot read
+    assert (15, "process") in kinds  # indirect lookup: fail closed
+    assert (17, "process") in kinds  # dynamic import: fail closed
+    assert (19, "process") in kinds  # ctypes can call anything
