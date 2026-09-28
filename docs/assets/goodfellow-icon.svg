@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-label="goodfellow">
+  <title>goodfellow</title>
+  <desc>Adversarial lattice: a generator network reflected across a seam into a discriminator.</desc>
+
+  <!-- surface -->
+  <rect x="6" y="6" width="500" height="500" rx="104" fill="#0d1117" stroke="#21262d" stroke-width="2"/>
+
+  <g transform="translate(256 256) scale(1.2) translate(-256 -256)">
+  <g stroke-linecap="round">
+    <!-- generator edges: inputs -> hidden -->
+    <g stroke="#8b5cf6" stroke-width="2">
+      <line x1="132" y1="176" x2="212" y2="214"/>
+      <line x1="132" y1="176" x2="212" y2="298"/>
+      <line x1="132" y1="256" x2="212" y2="214"/>
+      <line x1="132" y1="256" x2="212" y2="298"/>
+      <line x1="132" y1="336" x2="212" y2="214"/>
+      <line x1="132" y1="336" x2="212" y2="298"/>
+    </g>
+    <!-- adversarial crossings over the seam -->
+    <g stroke="#a78bfa" stroke-width="2.2" opacity="0.85">
+      <line x1="212" y1="214" x2="300" y2="214"/>
+      <line x1="212" y1="214" x2="300" y2="298"/>
+      <line x1="212" y1="298" x2="300" y2="214"/>
+      <line x1="212" y1="298" x2="300" y2="298"/>
+    </g>
+    <!-- discriminator edges (the echo): hidden -> outputs -->
+    <g stroke="#8b5cf6" stroke-width="2" opacity="0.45">
+      <line x1="300" y1="214" x2="380" y2="176"/>
+      <line x1="300" y1="214" x2="380" y2="256"/>
+      <line x1="300" y1="214" x2="380" y2="336"/>
+      <line x1="300" y1="298" x2="380" y2="176"/>
+      <line x1="300" y1="298" x2="380" y2="256"/>
+      <line x1="300" y1="298" x2="380" y2="336"/>
+    </g>
+  </g>
+
+  <!-- seam: the adversarial boundary -->
+  <line x1="256" y1="138" x2="256" y2="374" stroke="#8b5cf6" stroke-width="2" opacity="0.4" stroke-dasharray="6 9"/>
+
+  <!-- generator nodes -->
+  <g fill="#0d1117" stroke="#8b5cf6" stroke-width="2.6">
+    <circle cx="132" cy="176" r="10"/><circle cx="132" cy="256" r="10"/><circle cx="132" cy="336" r="10"/>
+    <circle cx="212" cy="214" r="10"/><circle cx="212" cy="298" r="10"/>
+  </g>
+  <!-- discriminator nodes (dimmed echo) -->
+  <g fill="#0d1117" stroke="#8b5cf6" stroke-width="2.6" opacity="0.5">
+    <circle cx="300" cy="214" r="10"/><circle cx="300" cy="298" r="10"/>
+    <circle cx="380" cy="176" r="10"/><circle cx="380" cy="256" r="10"/><circle cx="380" cy="336" r="10"/>
+  </g>
+  </g>
+</svg>

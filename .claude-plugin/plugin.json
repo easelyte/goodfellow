@@ -8,5 +8,6 @@
   },
   "repository": "https://github.com/easelyte/goodfellow",
   "license": "MIT",
+  "icon": "./docs/assets/goodfellow-icon.svg",
   "keywords": ["lifecycle", "review", "adversarial", "knowledge", "codex", "goodfellow"]
 }
