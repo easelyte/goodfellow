@@ -88,7 +88,7 @@ def test_extract_does_not_match_a_version_prefix():
 
 def test_extract_empty_section_raises():
     text = GOOD.replace("### Added\n\n- Feature C.\n\n", "")
-    with pytest.raises(rn.ReleaseError, match="empty"):
+    with pytest.raises(rn.ReleaseError, match="no change entries"):
         rn.extract(text, "0.2.0")
 
 
@@ -201,3 +201,42 @@ def test_lint_command_fails_on_bad_changelog(tmp_path):
 def test_repo_changelog_passes_lint():
     root = Path(__file__).resolve().parent.parent
     assert rn.main(["lint", "--root", str(root)]) == 0
+
+
+# --- review follow-ups -----------------------------------------------------------------
+
+
+def test_extract_heading_only_section_raises():
+    text = GOOD.replace("### Added\n\n- Feature C.\n", "### Added\n")
+    with pytest.raises(rn.ReleaseError, match="no change entries"):
+        rn.extract(text, "0.2.0")
+
+
+def test_lint_rejects_dated_section_without_entries():
+    text = GOOD.replace("### Added\n\n- Feature C.\n", "### Added\n")
+    assert any("0.2.0" in e and "no change entries" in e for e in rn.lint(text))
+
+
+def test_lint_allows_empty_unreleased():
+    text = GOOD.replace("### Added\n\n- Something new.\n\n", "")
+    assert rn.lint(text) == []
+
+
+def test_extract_keeps_reference_definitions_the_section_uses():
+    text = GOOD.replace(
+        "- Bug B.\n", "- Bug B. See the [migration guide][guide].\n\n[guide]: https://example.com/m\n"
+    )
+    notes = rn.extract(text, "0.3.0")
+    assert notes.endswith("[migration guide][guide].\n\n[guide]: https://example.com/m")
+
+
+def test_notes_reads_changelog_override_but_versions_from_root(tmp_path):
+    root = _project(tmp_path, GOOD, "0.3.0", "0.3.0")
+    fixed = tmp_path / "main-CHANGELOG.md"
+    fixed.write_text(GOOD.replace("- Bug B.", "- Bug B, corrected."), encoding="utf-8")
+    out = tmp_path / "notes.md"
+    rc = rn.main(
+        ["notes", "--tag", "v0.3.0", "--root", str(root), "--changelog", str(fixed), "--out", str(out)]
+    )
+    assert rc == 0
+    assert "- Bug B, corrected." in out.read_text(encoding="utf-8")

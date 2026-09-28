@@ -11,12 +11,14 @@ Commands:
     release_notes.py lint [--root DIR]
         Validate CHANGELOG.md structure. Run in CI on every push.
 
-    release_notes.py notes --tag vX.Y.Z [--root DIR] [--out FILE]
+    release_notes.py notes --tag vX.Y.Z [--root DIR] [--changelog FILE] [--out FILE]
         Check that the tag, pyproject.toml, .claude-plugin/plugin.json and a dated
         CHANGELOG section all name the same version, then write that section to FILE
         (stdout when omitted). Prints ``version=`` and ``prerelease=`` lines for the
         workflow on stdout when --out is given. Exits 1 on any disagreement, so a
-        release is never published with notes for the wrong version.
+        release is never published with notes for the wrong version. --changelog reads the
+        notes from another CHANGELOG.md (main's, when correcting a published release) while
+        versions are still checked in DIR.
 
 Standard library only.
 """
@@ -37,7 +39,8 @@ _H2_RE = re.compile(r"^## (?P<rest>.*)$")
 _VERSION_H2_RE = re.compile(
     rf"^\[(?P<version>{_SEMVER})\] - (?P<date>\d{{4}}-\d{{2}}-\d{{2}})$"
 )
-_LINK_DEF_RE = re.compile(r"^\[[^\]]+\]:\s+\S+")
+_LINK_DEF_RE = re.compile(r"^\[(?P<label>[^\]]+)\]:\s+\S+")
+_ENTRY_RE = re.compile(r"^\s*[-*+] \S")
 
 
 class ReleaseError(Exception):
@@ -57,8 +60,20 @@ def _sections(text: str) -> list[tuple[str, list[str]]]:
 
 
 def _strip_body(lines: list[str]) -> str:
-    body = [ln for ln in lines if not _LINK_DEF_RE.match(ln)]
+    """Drop link reference definitions the section does not use (e.g. the version
+    compare links at the bottom of the file); keep the ones its entries reference."""
+    content = "\n".join(ln for ln in lines if not _LINK_DEF_RE.match(ln)).lower()
+    body = []
+    for ln in lines:
+        m = _LINK_DEF_RE.match(ln)
+        if m and f"[{m.group('label').lower()}]" not in content:
+            continue
+        body.append(ln)
     return "\n".join(body).strip()
+
+
+def _has_entries(lines: list[str]) -> bool:
+    return any(_ENTRY_RE.match(ln) for ln in lines)
 
 
 def extract(text: str, version: str) -> str:
@@ -66,10 +81,9 @@ def extract(text: str, version: str) -> str:
     for heading, body in _sections(text):
         m = _VERSION_H2_RE.match(heading)
         if m and m.group("version") == version:
-            notes = _strip_body(body)
-            if not notes:
-                raise ReleaseError(f"CHANGELOG.md section [{version}] is empty")
-            return notes
+            if not _has_entries(body):
+                raise ReleaseError(f"CHANGELOG.md section [{version}] has no change entries")
+            return _strip_body(body)
     raise ReleaseError(f"CHANGELOG.md has no [{version}] section with a date")
 
 
@@ -112,6 +126,8 @@ def lint(text: str) -> list[str]:
                     f"[{version}] is out of order: versions must be listed newest first"
                 )
             seen.append(version)
+            if not _has_entries(body):
+                errors.append(f"[{version}] has no change entries")
         for line in body:
             if line.startswith("### "):
                 kind = line[4:].strip()
@@ -137,8 +153,14 @@ def _pyproject_version(path: Path) -> str:
     raise ReleaseError("no [project] version in pyproject.toml")
 
 
-def release_notes(root: Path, tag: str) -> tuple[str, str, bool]:
-    """Validate a release tag against the repo and return (version, notes, prerelease)."""
+def release_notes(
+    root: Path, tag: str, changelog: Path | None = None
+) -> tuple[str, str, bool]:
+    """Validate a release tag against the repo and return (version, notes, prerelease).
+
+    Versions are always read from ``root`` (the tagged checkout). ``changelog`` lets the
+    notes come from a newer CHANGELOG.md, e.g. main's, when correcting a published release.
+    """
     m = _TAG_RE.match(tag)
     if not m:
         raise ReleaseError(f"tag '{tag}' is not vMAJOR.MINOR.PATCH[-prerelease]")
@@ -153,7 +175,7 @@ def release_notes(root: Path, tag: str) -> tuple[str, str, bool]:
         raise ReleaseError(
             f"tag {tag} but plugin.json version is {plugin.get('version')}"
         )
-    text = (root / "CHANGELOG.md").read_text(encoding="utf-8")
+    text = (changelog or root / "CHANGELOG.md").read_text(encoding="utf-8")
     problems = lint(text)
     if problems:
         raise ReleaseError("CHANGELOG.md is invalid: " + "; ".join(problems))
@@ -169,6 +191,9 @@ def main(argv: list[str] | None = None) -> int:
     p_notes.add_argument("--tag", required=True)
     p_notes.add_argument("--root", default=str(Path(__file__).resolve().parent.parent))
     p_notes.add_argument("--out")
+    p_notes.add_argument(
+        "--changelog", help="read notes from this CHANGELOG.md instead of ROOT/CHANGELOG.md"
+    )
     args = parser.parse_args(argv)
     root = Path(args.root)
 
@@ -181,7 +206,8 @@ def main(argv: list[str] | None = None) -> int:
         return 1 if problems else 0
 
     try:
-        version, notes, prerelease = release_notes(root, args.tag)
+        changelog = Path(args.changelog) if args.changelog else None
+        version, notes, prerelease = release_notes(root, args.tag, changelog)
     except ReleaseError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1

@@ -94,7 +94,9 @@ what users need to do.
 ## Fixing a release
 
 - **Wrong notes:** fix `CHANGELOG.md` on `main`, then re-run the workflow for the existing tag:
-  `gh workflow run release.yml -f tag=vX.Y.Z`. It updates the release in place.
+  `gh workflow run release.yml -f tag=vX.Y.Z`. A manual run checks versions against the tag but
+  takes the notes from `main`'s CHANGELOG, and updates the release in place without changing which
+  release is marked latest.
 - **Broken release:** do not move or delete a published tag. Fix forward with a patch release
   (for example `v0.3.1` after `v0.3.0`), and mark the broken release as such in its notes if users need to avoid it.
 - **Workflow failed before publishing:** fix the cause on `main`. If the tag itself is wrong (for

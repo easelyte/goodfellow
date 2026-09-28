@@ -48,7 +48,16 @@ jobs:
 
       - name: Check versions and extract notes
         id: notes
-        run: python scripts/release_notes.py notes --tag "$TAG" --out "$RUNNER_TEMP/notes.md" >> "$GITHUB_OUTPUT"
+        run: |
+          # Versions are checked against the tagged commit. On a manual re-run the notes
+          # come from main's CHANGELOG.md, so a correction merged to main reaches the release.
+          args=()
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            git show origin/main:CHANGELOG.md > "$RUNNER_TEMP/CHANGELOG.main.md"
+            args+=(--changelog "$RUNNER_TEMP/CHANGELOG.main.md")
+          fi
+          python scripts/release_notes.py notes --tag "$TAG" "${args[@]}" \
+            --out "$RUNNER_TEMP/notes.md" >> "$GITHUB_OUTPUT"
 
       - name: Run tests
         run: |
@@ -60,10 +69,12 @@ jobs:
           VERSION: ${{ steps.notes.outputs.version }}
           PRERELEASE: ${{ steps.notes.outputs.prerelease }}
         run: |
+          # No --latest: GitHub picks the latest release by version and date, so re-running
+          # an older tag never takes the Latest badge from a newer release.
           flags=()
-          if [ "$PRERELEASE" = "true" ]; then flags+=(--prerelease); else flags+=(--latest); fi
+          if [ "$PRERELEASE" = "true" ]; then flags+=(--prerelease); fi
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release edit "$TAG" --title "Goodfellow $VERSION" --notes-file "$RUNNER_TEMP/notes.md" "${flags[@]}"
+            gh release edit "$TAG" --title "Goodfellow $VERSION" --notes-file "$RUNNER_TEMP/notes.md"
           else
             gh release create "$TAG" --verify-tag --title "Goodfellow $VERSION" \
               --notes-file "$RUNNER_TEMP/notes.md" "${flags[@]}"
