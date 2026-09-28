@@ -1,0 +1,17 @@
+# Copy to .goodfellow/high_stakes_paths.txt in your project (or point
+# $GOODFELLOW_HIGH_STAKES_PATHS at a file of your own).
+#
+# High-stakes paths are where a test that cannot fail costs the most: code that
+# decides allow or deny, go or no-go, what gets deleted or kept, money, and
+# alert or health verdicts. The plan skill asks for an expected red and a
+# deliberate break for tasks here, and ship's optional mutation check
+# (scripts/mutation_check.py) mutates the lines a branch changed in these files.
+#
+# One glob per line, matched against the repo-relative path.
+# `*` stays inside one directory; `**` spans any number of directories.
+
+src/auth/**
+**/permissions*.py
+**/*_policy.py
+billing/**
+jobs/retention.py

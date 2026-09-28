@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- **Tests that can fail.** Goodfellow now asks for evidence that a test could fail, not just that it
+  passes. `plan` names each behaviour task's expected red (an assertion message, never "function not
+  defined") and, on high-stakes paths, the fail-closed branches, boundaries and one deliberate break
+  per rule. `execute` is test-first with a right-reason red, never edits an expected value to match
+  output, and breaks high-stakes code on purpose (on a saved copy) to confirm a test notices. The
+  Codex diff reviewer gained a `<test_quality>` block (source-grep tests, negatives denied for an
+  unrelated reason, unpinned fail-open branches and boundaries, bent expectations), and the plan
+  reviewer flags high-stakes tasks with no expected red. New principles P-094 to P-096.
+- **`scripts/red_check.py`.** Replays a branch's new tests against the base in a temporary worktree
+  and requires an assertion failure there and a pass on the branch (`OK` / `WRONG_REASON` /
+  `NOT_RED` / `NOT_GREEN`, plus `NEW_SYMBOL` for tests of code the base lacks). Runner-agnostic via JUnit XML; pytest by default. Wired into `ship`.
+- **`scripts/mutation_check.py`.** Opt-in, diff-scoped mutation testing: mutates only the Python
+  lines a branch changed in files matching `.goodfellow/high_stakes_paths.txt`, in throwaway copies,
+  under a time budget, and reports every surviving mutant. Budget exhaustion is reported as
+  incomplete (exit 3), never as a pass. Wired into `ship` as an optional step.
+
 - **Plugin icon.** Added a square brand icon (`docs/assets/goodfellow-icon.svg`) and an `icon` field
   in `plugin.json`, clearing the directory-policy "add an icon" warning. The mark squares the hero's
   adversarial lattice — a generator network reflected across a dashed seam into a dimmed

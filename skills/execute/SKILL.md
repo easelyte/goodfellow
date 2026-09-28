@@ -141,8 +141,13 @@ Read the task body, acceptance criteria, and dependencies. Check that dependenci
 ### 2b. Check gotchas
 Scan the task's target files/modules against knowledge gotchas. If a gotcha matches, surface it before implementing: "Knowledge gotcha: <entry>. Accounting for this in implementation."
 
-### 2c. Implement
-Write the code/config/docs the task specifies. Follow acceptance criteria.
+### 2c. Implement test-first
+Write the code/config/docs the task specifies. Follow acceptance criteria. For any task that adds or changes behaviour:
+
+1. **Red for the right reason (P-094).** Write the task's tests first, run them, and read the failure. It must be an assertion failure that names the expected behaviour. An ImportError, NameError, AttributeError or collection error does not count: add a stub that returns a wrong answer, rerun, and get the assertion red.
+2. **Green.** Implement until the tests pass. **Never edit an expected value to match the output.** Change an expectation only when you can state why the old one was wrong, and say so in the task report.
+3. **Deliberate break (P-095), high-stakes tasks.** For each break the plan names (at least one per rule): save a copy (`cp <file> <file>.orig`), apply the break, run the tests, confirm one goes red, then restore with `mv <file>.orig <file>`. Never restore with `git checkout -- <file>`, `git restore` or `git stash`: those also discard your uncommitted real edits.
+4. **Record the evidence** for the task: each new test's red message, and each break with the test that caught it. ship copies it into the PR.
 
 ### 2d. Verify
 After implementation, run verification:
@@ -154,6 +159,14 @@ After implementation, run verification:
 - Test files matching changed modules → discover and run them
 
 If verification fails: fix the issue before proceeding. Do not silently continue.
+
+**Optional mechanical red check.** Once the task's tests exist, replay them against the base to confirm each new test fails there on an assertion and passes here (runner-agnostic via JUnit; see `--test-cmd`):
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/red_check.py" --base <base-branch>
+# 0 = every new test OK; 1 = a WRONG_REASON / NOT_RED / NOT_GREEN verdict: fix the test;
+# 2 = the check itself failed (unknown base, runner wrote no report): not a pass.
+```
 
 ### 2e. Mark complete
 Note the task as done. Proceed to next task.

@@ -23,6 +23,30 @@ Run verification on the entire diff:
 
 If verification fails: surface errors, do not proceed to review.
 
+### 1a. Tests that can fail
+
+Set `BASE` to the branch you will open the PR against (e.g. `origin/main`).
+
+**Red evidence (P-094).** Every new test must fail on the base with an assertion, then pass:
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/red_check.py" --base "$BASE"
+```
+
+- Exit 0: record the verdicts for the PR's Test evidence section. `NEW_SYMBOL` means the test calls code the base does not have, so a replay cannot show its red; cite the stub-first assertion red from execute instead.
+- Exit 1: each `WRONG_REASON` / `NOT_RED` / `NOT_GREEN` verdict is a review finding: major, or blocker on a high-stakes path. Fix the test (stub a wrong answer first, or make it assert the changed behaviour).
+- Exit 2: the check did not run. Report it as not run, never as passed. For runners other than pytest, pass `--test-cmd` with `{tests}` and `{junit}` placeholders.
+
+**Mutation check on high-stakes paths (P-095, optional).** Runs only when you keep a high-stakes path list (`.goodfellow/high_stakes_paths.txt`, one glob per line; see `configs/high_stakes_paths.example.txt`). It mutates only the Python lines this branch changed in those files, in throwaway copies, and reports every mutant the tests miss:
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/mutation_check.py" --base "$BASE"
+```
+
+- Exit 0: every mutant killed, or nothing in scope, or no path list (it says `SKIPPED`).
+- Exit 1: each surviving mutant is a major finding. Kill it with a test before opening the PR, or write in the PR why it is equivalent (the mutated code behaves identically). Survivors neither killed nor explained are filed as loops per §5.
+- Exit 2: red baseline or bad base, so the check did not run. Exit 3: the time budget ran out, so the result is incomplete. Neither is a pass (P-079).
+
 ## 2. Review
 
 ### Standard mode (default)
@@ -140,6 +164,11 @@ findings still deferred, write "Halted at hard cap (round N)", not "Converged at
 ```
 ## Summary
 <what changed>
+
+## Test evidence
+- Red: <each new test and the assertion it failed with on the base> (red_check: N OK)
+- Deliberate breaks: <break -> test that caught it>
+- Mutation (high-stakes paths): K/M killed; <each survivor: killed by <test> or equivalent because <reason>> (or: not configured)
 
 ## Review stats
 - Converged at round N, M findings resolved, K knowledge entries referenced

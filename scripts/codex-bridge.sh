@@ -278,6 +278,16 @@ Prioritize failures that are expensive, dangerous, or hard to detect:
 Actively try to disprove the change. Trace how bad inputs, retries, concurrent actions, or partially completed operations move through the code. Look for violated invariants, missing guards, unhandled failure paths, and assumptions that stop being true under stress.
 </review_method>
 
+<test_quality>
+Tests in the diff are evidence only if they could fail. For every test the change adds or edits, check:
+- Behaviour, not source text: a test that reads a source or doc file and asserts a string is present proves wiring exists, not that it works. It may accompany a test that runs the real entry point, never replace one.
+- Negatives denied for the right reason: a deny/reject/error-path test must fail because of the rule under test, not for an unrelated reason (missing fixture, bad input shape, an earlier guard, an exception the setup raised). Name the unrelated reason when you see one.
+- Error branches pinned: a new or changed error / except / fallback branch in allow/deny, gate, deletion, money or verdict logic needs a test pinning its outcome. Flag an untested branch that would fail-open (treat an error as success or allow) if its return value were flipped.
+- Boundaries pinned: a changed comparison, threshold, limit or off-by-one needs a boundary test on both sides of the edge.
+- Expectations not bent: an expected value edited in the same diff to match new output, with no stated reason the old expectation was wrong, is a finding.
+A missing or theatrical test on high-stakes logic is Tier 2 at least; Tier 1 when the untested branch fails open.
+</test_quality>
+
 <finding_bar>
 Each finding answers:
 1. What can go wrong?
@@ -322,6 +332,7 @@ Prioritize plan defects that will cause execution failure:
 - wrong execution order — task N references something only created by task N+M
 - parallel-conflict risks — tasks marked parallel that mutate shared state
 - missing tests; missing rollback paths; missing migration safety
+- tests that cannot fail: a task on allow/deny, gate, deletion, money or verdict logic whose test plan names no expected red (the assertion message the new test fails with before the change) or no deliberate break the test must catch
 - risky assumptions about library/framework/API behavior stated as fact
 - missing observability — failures during execution would be invisible
 - API/symbol/path drift — plan references things that don't exist or have different signatures than claimed
