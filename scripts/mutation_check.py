@@ -174,13 +174,14 @@ def side_effect_sites(src: str) -> List[Site]:
     """Call sites in `src` that signal processes, delete, write, or spawn.
 
     Aliases are resolved (`import os as o`, `from os import kill as k`), and
-    anything this scan cannot see through is reported as a process site, so
-    the caller fails closed: getattr() on a risky module, dynamic imports,
-    ctypes, and open() with a mode that is not a literal.
+    anything this scan cannot see through is reported so the caller fails
+    closed: getattr() on a risky module, dynamic imports and ctypes are
+    "opaque" (they need --fakes), and open() with a non-literal mode is a
+    write.
     """
     tree = ast.parse(src)
     module_alias: Dict[str, str] = {}  # local name -> module
-    name_alias: Dict[str, str] = {}  # local name -> original function name
+    name_alias: Dict[str, Tuple[str, str]] = {}  # local name -> (module, name)
     sites: List[Site] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -188,13 +189,13 @@ def side_effect_sites(src: str) -> List[Site]:
                 top = al.name.split(".")[0]
                 module_alias[al.asname or top] = top
                 if top in ("ctypes", "multiprocessing"):
-                    sites.append(Site(node.lineno, "process", f"import {al.name}"))
+                    sites.append(Site(node.lineno, "opaque", f"import {al.name}"))
         elif isinstance(node, ast.ImportFrom) and node.module:
             top = node.module.split(".")[0]
             if top in ("ctypes", "multiprocessing"):
-                sites.append(Site(node.lineno, "process", f"from {node.module} import"))
+                sites.append(Site(node.lineno, "opaque", f"from {node.module} import"))
             for al in node.names:
-                name_alias[al.asname or al.name] = al.name
+                name_alias[al.asname or al.name] = (top, al.name)
                 if al.name in _RISKY_MODULES:
                     module_alias[al.asname or al.name] = al.name
 
@@ -203,8 +204,8 @@ def side_effect_sites(src: str) -> List[Site]:
             continue
         recv, name = _call_name(node.func)
         recv = module_alias.get(recv, recv)
-        if not recv:
-            name = name_alias.get(name, name)
+        if not recv and name in name_alias:
+            recv, name = name_alias[name]
         label = f"{recv}.{name}" if recv else name
         if name == "getattr" and node.args:
             target = node.args[0]
@@ -212,10 +213,10 @@ def side_effect_sites(src: str) -> List[Site]:
                 isinstance(target, ast.Name)
                 and module_alias.get(target.id) in _RISKY_MODULES
             ):
-                sites.append(Site(node.lineno, "process", f"getattr({target.id}, ...)"))
+                sites.append(Site(node.lineno, "opaque", f"getattr({target.id}, ...)"))
             continue
         if name in _DYNAMIC_IMPORTS:
-            sites.append(Site(node.lineno, "process", label))
+            sites.append(Site(node.lineno, "opaque", label))
             continue
         if name in _SIGNAL_CALLS:
             kind = "signal"
@@ -229,6 +230,16 @@ def side_effect_sites(src: str) -> List[Site]:
             continue
         sites.append(Site(node.lineno, kind, label))
     return sorted(set(sites))
+
+
+def isolation_suffices(kind: str) -> bool:
+    """A PID namespace contains signals and spawned processes, nothing else."""
+    return kind in ("signal", "process")
+
+
+def needs_fakes(kind: str) -> bool:
+    """Filesystem effects, and calls this scan cannot see through, need fakes."""
+    return not isolation_suffices(kind)
 
 
 class CheckError(RuntimeError):
@@ -653,9 +664,9 @@ def check(a: argparse.Namespace, workdir: Path) -> dict:
         try:
             for site in side_effect_sites((workdir / path).read_text()):
                 line = f"{path}:{site.line} {site.kind} ({site.call})"
-                (
-                    process_sites if site.kind in ("signal", "process") else fs_sites
-                ).append(line)
+                (process_sites if isolation_suffices(site.kind) else fs_sites).append(
+                    line
+                )
         except SyntaxError as exc:
             raise CheckError(f"{path}: cannot parse ({exc})") from exc
     problems = []
@@ -670,9 +681,9 @@ def check(a: argparse.Namespace, workdir: Path) -> dict:
         )
     if fs_sites and not a.fakes:
         problems.append(
-            "deletes or writes files (a mutant can aim it at the real checkout "
-            "or any path the user can write; a PID namespace does not contain "
-            "that):\n  "
+            "deletes or writes files, or makes calls this check cannot see "
+            "through (a mutant can aim them at the real checkout or any path "
+            "the user can write; a PID namespace does not contain that):\n  "
             + "\n  ".join(fs_sites)
             + "\n  -> pass --fakes only if the tests replace these calls with "
             "fakes or point them at temporary directories"

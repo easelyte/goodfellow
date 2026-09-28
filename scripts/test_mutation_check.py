@@ -640,6 +640,43 @@ def test_aliased_and_indirect_side_effects_are_found():
     assert (9, "delete") in kinds  # aliased from-import
     assert (11, "signal") in kinds  # aliased module
     assert (13, "write") in kinds  # open() with a mode we cannot read
-    assert (15, "process") in kinds  # indirect lookup: fail closed
-    assert (17, "process") in kinds  # dynamic import: fail closed
-    assert (19, "process") in kinds  # ctypes can call anything
+    assert (15, "opaque") in kinds  # indirect lookup: fail closed
+    assert (17, "opaque") in kinds  # dynamic import: fail closed
+    assert (19, "opaque") in kinds  # ctypes can call anything
+
+
+def test_aliased_process_functions_are_found():
+    src = (
+        "from subprocess import run as launch\n"
+        "from os import system as shell\n"
+        "def a(c):\n    launch(c)\n"
+        "def b(c):\n    shell(c)\n"
+    )
+    kinds = {(s.line, s.kind) for s in mc.side_effect_sites(src)}
+    assert {(4, "process"), (6, "process")} <= kinds
+
+
+def test_opaque_calls_need_fakes_even_when_isolated():
+    src = "import shutil\ndef p(d):\n    getattr(shutil, 'rmtree')(d)\n"
+    (site,) = mc.side_effect_sites(src)
+    assert site.kind == "opaque"
+    assert mc.needs_fakes(site.kind) and not mc.isolation_suffices(site.kind)
+    assert mc.isolation_suffices("signal") and mc.isolation_suffices("process")
+    assert mc.needs_fakes("delete") and mc.needs_fakes("write")
+
+
+@pytest.mark.skipif(shutil.which("unshare") is None, reason="needs unshare")
+def test_opaque_target_is_refused_even_with_isolation(tmp_path):
+    repo, base = _repo(tmp_path, STRONG_TESTS)
+    _write(
+        repo,
+        {
+            "gate.py": GATE
+            + "\n\nimport shutil\n\n\ndef p(d):\n    getattr(shutil, 'rmtree')(d)\n"
+        },
+    )
+    proc = _run(repo, "--base", base, "--isolated")
+    if "cannot create" in proc.stderr:
+        pytest.skip("no PID namespace available here")
+    assert proc.returncode == 2
+    assert "opaque" in proc.stderr and "--fakes" in proc.stderr
