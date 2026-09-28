@@ -9,10 +9,13 @@ that has never been shown to reject a bad test is a check that can't fail.
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import subprocess
 import sys
-import time
 from pathlib import Path
+
+import pytest
 
 import red_check
 
@@ -435,19 +438,90 @@ def test_head_runner_failing_without_a_reported_failure_fails_closed(tmp_path):
     assert "exit" in proc.stderr
 
 
+def _pidns_prefix():
+    unshare = shutil.which("unshare")
+    if not unshare:
+        return None
+    variants = [[]] if os.geteuid() == 0 else []
+    variants.append(["--user", "--map-root-user"])
+    for extra in variants:
+        cmd = [unshare, *extra, "--pid", "--fork", "--mount-proc"]
+        try:
+            ok = subprocess.run(
+                [*cmd, "sh", "-c", "test $$ -eq 1"], capture_output=True, timeout=10
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        if ok.returncode == 0:
+            return cmd
+    return None
+
+
+PIDNS = _pidns_prefix()
+
+# Runs as pid 1 of a private PID namespace: starts the tool, waits for it, then
+# lists every other live process in the namespace. Anything listed is a leak.
+IN_NS = """
+import json, os, pathlib, subprocess, sys, time
+argv = json.loads(sys.argv[1])
+try:
+    p = subprocess.run(argv, capture_output=True, text=True, timeout=60)
+    rc, out, err = p.returncode, p.stdout, p.stderr
+except subprocess.TimeoutExpired as exc:
+    rc, out, err = 'hung', exc.stdout or '', exc.stderr or ''
+    out = out.decode() if isinstance(out, bytes) else out
+    err = err.decode() if isinstance(err, bytes) else err
+time.sleep(0.5)
+left = []
+for e in pathlib.Path('/proc').iterdir():
+    if e.name.isdigit() and int(e.name) != 1:
+        try:
+            st = (e / 'stat').read_text().split(') ', 1)[1][0]
+            cmd = (e / 'cmdline').read_bytes().replace(b'\\0', b' ').decode()
+        except OSError:
+            continue
+        if st != 'Z':
+            left.append(cmd)
+print(json.dumps({'rc': rc, 'stdout': out, 'stderr': err, 'left': left}))
+"""
+
+
+def _run_in_pidns(argv, env=None):
+    proc = subprocess.run(
+        [*PIDNS, sys.executable, "-c", IN_NS, json.dumps(argv)],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        env={**os.environ, **(env or {})},
+    )
+    assert proc.returncode == 0, proc.stderr
+    return json.loads(proc.stdout)
+
+
+@pytest.mark.skipif(PIDNS is None, reason="cannot create a PID namespace")
 def test_timed_out_runner_leaves_no_process_behind(tmp_path):
+    # Live process test: runs inside its own PID namespace.
     repo, base = _repo(tmp_path)
     _commit(
         repo,
         {"test_calc.py": BASE_TESTS + "\n\ndef test_x():\n    assert clamp(-1) == 0\n"},
         "t",
     )
-    marker = "437.25813"
-    cmd = f"sh -c 'sleep {marker}' & sleep {marker} # {{tests}} {{junit}}"
-    proc = _run(repo, "--base", base, "--test-cmd", cmd, "--timeout", "2")
-    assert proc.returncode == 2
-    time.sleep(0.5)
-    left = subprocess.run(
-        ["pgrep", "-f", f"sleep {marker}"], capture_output=True, text=True
+    cmd = "sh -c 'sleep 300' & sleep 300 # {tests} {junit}"
+    out = _run_in_pidns(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "--workdir",
+            str(repo),
+            "--json",
+            "--base",
+            base,
+            "--test-cmd",
+            cmd,
+            "--timeout",
+            "2",
+        ]
     )
-    assert left.stdout.strip() == "", f"left running: {left.stdout}"
+    assert out["rc"] != "hung" and out["left"] == [], out
+    assert out["rc"] == 2, out

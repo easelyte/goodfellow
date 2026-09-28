@@ -362,6 +362,7 @@ def test_diff_prompt_carries_test_theater_checks():
         "fail-open",  # error branches nobody pins
         "boundary",  # changed boundary with no boundary test
         "expected value",  # expectations edited to match output
+        "isolated namespace",  # real kill/delete/write paths only under fakes or isolation
     ):
         assert check in block, f"test_quality block is missing the {check!r} check"
 

@@ -285,6 +285,7 @@ Tests in the diff are evidence only if they could fail. For every test the chang
 - Error branches pinned: a new or changed error / except / fallback branch in allow/deny, gate, deletion, money or verdict logic needs a test pinning its outcome. Flag an untested branch that would fail-open (treat an error as success or allow) if its return value were flipped.
 - Boundaries pinned: a changed comparison, threshold, limit or off-by-one needs a boundary test on both sides of the edge.
 - Expectations not bent: an expected value edited in the same diff to match new output, with no stated reason the old expectation was wrong, is a finding.
+- Side effects contained: tests (and deliberate breaks or mutation runs) of code that signals processes, deletes, or writes real resources must use fakes or run in an isolated namespace. A test that calls the real kill/delete path against the real machine is a finding: a flipped check in that code under test hits every process or file it can see.
 A missing or theatrical test on high-stakes logic is Tier 2 at least; Tier 1 when the untested branch fails open.
 </test_quality>
 

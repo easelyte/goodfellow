@@ -18,7 +18,13 @@
   under a time budget, and reports every surviving mutant. Budget exhaustion is reported as
   incomplete (exit 3), never as a pass. Wired into `ship` as an optional step. Every test run gets its
   own process group that is killed on timeout, exit and termination signals (`scripts/proc_group.py`),
-  runs at `nice` 10, and uses at most `min(4, CPUs/2)` workers by default.
+  runs at `nice` 10, and uses at most `min(4, CPUs/2)` workers by default. Code that sends
+  signals, spawns processes, deletes or writes files is never mutated outside a fake or an isolated
+  namespace: signal/spawn targets need `--isolated` (the check re-runs inside its own PID namespace)
+  or `--fakes`; delete/write targets need `--fakes`. The sandbox sweep is guarded independently of its
+  containment check (temp-base only, never pid 1, self, ancestors or other users, TERM before KILL,
+  signals nothing above 20 matches), and its tests use a fake process table; live process tests run
+  only inside their own PID namespace.
 
 - **Plugin icon.** Added a square brand icon (`docs/assets/goodfellow-icon.svg`) and an `icon` field
   in `plugin.json`, clearing the directory-policy "add an icon" warning. The mark squares the hero's

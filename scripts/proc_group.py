@@ -9,7 +9,10 @@ that leaks one busy process per timeout.
 Here every command runs in its own session (a new process group). On timeout,
 on normal exit (atexit) and on SIGTERM / SIGINT / SIGHUP, the whole group is
 killed. `sweep_cwd` is a last line of defence before deleting a sandbox: it
-kills any process whose working directory is still inside it (Linux /proc).
+stops processes whose working directory is still inside it (Linux /proc),
+behind guards that do not depend on its own containment check (see its
+docstring). Signalling code like this must only ever be tested against fakes
+or inside its own PID namespace, and never mutation-tested on a live machine.
 """
 
 from __future__ import annotations
@@ -18,19 +21,27 @@ import atexit
 import os
 import signal
 import subprocess
+import sys
 import tempfile
 import threading
+import time
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Callable, Dict, List, NamedTuple, Optional, Set, Tuple
 
+MAX_SWEEP_KILLS = 20
 _live: Dict[int, Optional[Path]] = {}  # pgid -> private cwd to sweep (or None)
 _lock = threading.Lock()
 _installed = False
 
 
-def _kill_group(pgid: int) -> None:
+def _kill_group(pgid: int, killpg=os.killpg, own_pgrp: Optional[int] = None) -> None:
+    """SIGKILL a process group we created. Never group 0/1/negative (the
+    caller's group, init, every process) nor our own group."""
+    own = os.getpgrp() if own_pgrp is None else own_pgrp
+    if pgid <= 1 or pgid == own:
+        return
     try:
-        os.killpg(pgid, signal.SIGKILL)
+        killpg(pgid, signal.SIGKILL)
     except (ProcessLookupError, PermissionError):
         pass
 
@@ -118,27 +129,118 @@ def run(
         return rc, out_f.read(), err_f.read()
 
 
-def sweep_cwd(root: Path) -> int:
-    """Kill processes whose cwd is inside `root`. Returns how many were killed.
-    A no-op where /proc is unavailable."""
+class ProcInfo(NamedTuple):
+    pid: int
+    ppid: int
+    uid: int
+    cwd: str  # realpath of the working directory ("" if unreadable)
+
+
+def list_processes() -> List[ProcInfo]:
+    """The real process table from /proc (empty where /proc is unavailable)."""
+    out: List[ProcInfo] = []
     proc_dir = Path("/proc")
     if not proc_dir.is_dir():
-        return 0
-    prefix = str(Path(root).resolve())
-    killed = 0
+        return out
     for entry in proc_dir.iterdir():
-        if not entry.name.isdigit() or int(entry.name) == os.getpid():
+        if not entry.name.isdigit():
             continue
         try:
+            stat = (entry / "stat").read_text()
+            ppid = int(stat.rsplit(")", 1)[1].split()[1])
+            uid = entry.stat().st_uid
             cwd = os.readlink(entry / "cwd")
-        except OSError:
+        except (OSError, ValueError, IndexError):
             continue
         if cwd.endswith(" (deleted)"):
             cwd = cwd[: -len(" (deleted)")]
-        if cwd == prefix or cwd.startswith(prefix + os.sep):
-            try:
-                os.kill(int(entry.name), signal.SIGKILL)
-                killed += 1
-            except (ProcessLookupError, PermissionError):
-                pass
-    return killed
+        out.append(ProcInfo(int(entry.name), ppid, uid, os.path.realpath(cwd)))
+    return out
+
+
+def _inside(cwd: str, prefix: str) -> bool:
+    """True when `cwd` is `prefix` or below it."""
+    return cwd == prefix or cwd.startswith(prefix + os.sep)
+
+
+def _ancestors(procs: List[ProcInfo], me: int) -> Set[int]:
+    parent = {p.pid: p.ppid for p in procs}
+    seen: Set[int] = set()
+    cur = me
+    while cur in parent and cur not in seen:
+        seen.add(cur)
+        cur = parent[cur]
+    seen.add(cur)
+    return seen
+
+
+def sweep_cwd(
+    root,
+    *,
+    lister: Optional[Callable[[], List[ProcInfo]]] = None,
+    killer: Optional[Callable[[int, int], None]] = None,
+    sleep: Callable[[float], None] = time.sleep,
+    temp_base: Optional[str] = None,
+    max_kills: int = MAX_SWEEP_KILLS,
+    grace: float = 0.5,
+    me: Optional[int] = None,
+    uid: Optional[int] = None,
+) -> int:
+    """Stop processes whose working directory is inside `root`, a private
+    sandbox. Returns how many were signalled.
+
+    The containment check is not trusted on its own. Independently of it:
+      - `root` (resolved with realpath) must be strictly below the temp base,
+        never the temp base itself, `/`, or empty; otherwise nothing is done;
+      - a candidate's own cwd must also be strictly below the temp base;
+      - pid 1, this process, its ancestors, and processes of other users are
+        never signalled;
+      - if more than `max_kills` processes qualify, it signals none (a sweep
+        that wide means something is wrong, not that the sandbox is busy);
+      - SIGTERM first, SIGKILL only for those still there after `grace`.
+    """
+    lister = lister or list_processes
+    killer = killer or os.kill
+    me = os.getpid() if me is None else me
+    uid = os.getuid() if uid is None else uid
+    base = os.path.realpath(temp_base or tempfile.gettempdir())
+    prefix = os.path.realpath(str(root)) if str(root) else ""
+    if not prefix or prefix == os.sep or not prefix.startswith(base + os.sep):
+        print(f"proc_group: refusing to sweep {str(root)!r}", file=sys.stderr)
+        return 0
+
+    def targets() -> List[ProcInfo]:
+        procs = lister()
+        protected = _ancestors(procs, me) | {0, 1, me}
+        return [
+            p
+            for p in procs
+            if p.pid not in protected
+            and p.uid == uid
+            and p.cwd.startswith(base + os.sep)
+            and _inside(p.cwd, prefix)
+        ]
+
+    first = targets()
+    if len(first) > max_kills:
+        print(
+            f"proc_group: sweep of {prefix} matched {len(first)} processes "
+            f"(cap {max_kills}); signalling none",
+            file=sys.stderr,
+        )
+        return 0
+    for p in first:
+        try:
+            killer(p.pid, signal.SIGTERM)
+        except (ProcessLookupError, PermissionError):
+            pass
+    if first:
+        sleep(grace)
+        wanted = {p.pid for p in first}
+        for p in targets():
+            if p.pid in wanted:
+                try:
+                    killer(p.pid, signal.SIGKILL)
+                except (ProcessLookupError, PermissionError):
+                    pass
+    return len(first)

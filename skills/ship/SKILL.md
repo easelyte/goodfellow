@@ -45,7 +45,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/mutation_check.py" --base "$BASE"
 
 - Exit 0: every mutant killed, or nothing in scope, or no path list (it says `SKIPPED`).
 - Exit 1: each surviving mutant is a major finding. Kill it with a test before opening the PR, or write in the PR why it is equivalent (the mutated code behaves identically). Survivors neither killed nor explained are filed as loops per §5.
-- Exit 2: red baseline, bad base, or a configured path list that does not exist, so the check did not run. Exit 3: the time budget ran out, so the result is incomplete. Neither is a pass (P-079).
+- Exit 2: red baseline, bad base, or a configured path list that does not exist, so the check did not run. It also refuses (exit 2) a target that sends signals, spawns processes, deletes or writes files. **Never mutation-test code that signals, deletes or writes real resources outside a fake or an isolated namespace**: a mutant can aim those calls at the wrong target, for example every process on the machine instead of one child. For signal/spawn code, `--isolated` runs the whole check inside its own PID namespace (`unshare --pid --fork --mount-proc`; it fails closed if none can be made). For delete/write code, a PID namespace does not help: pass `--fakes` only when the tests replace those calls with fakes or temp directories. Otherwise leave the file out of the mutation run and rely on the deliberate-break evidence. Exit 3: the time budget ran out, so the result is incomplete. Neither is a pass (P-079).
 
 ## 2. Review
 

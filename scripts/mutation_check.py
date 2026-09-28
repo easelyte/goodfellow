@@ -17,6 +17,15 @@ and reports every mutant the tests fail to notice (a SURVIVOR).
     `not`, negated `if`, flipped bool, int +1, arithmetic swap, `return X` to
     `return None`, `raise` to `pass` (fail-open), dropped call statement,
     break/continue swap.
+  - Refused: never mutation-test code that signals, deletes or writes real
+    resources outside a fake or an isolated namespace. A mutant can turn "kill
+    our child" into "kill every process on the machine", and a sandbox copy of
+    the files does not contain that. A target that signals or spawns processes
+    needs --isolated (every run happens inside a private PID namespace, where
+    only the check's own processes are visible) or --fakes; a target that
+    deletes or writes files needs --fakes (the tests replace those calls with
+    fakes or temp directories), because a PID namespace does not protect the
+    filesystem.
   - Not mutated ("arid"): print and logging calls, `if __name__ == "__main__"`,
     `sys.path` edits, docstrings, and any line carrying `# pragma: no mutate`.
 
@@ -36,7 +45,9 @@ other than Python are not generated; such files are listed as `unsupported`.
 
 Exit codes: 0 every mutant killed (or nothing in scope, or no path list and not
 --require-paths); 1 at least one survivor; 2 fail-closed (unknown base, red
-baseline, no path list with --require-paths); 3 incomplete (time budget ran out
+baseline, no path list with --require-paths, a missing configured path list, or
+a target with real side effects and no --isolated / --fakes, or --isolated
+where no PID namespace can be created); 3 incomplete (time budget ran out
 before every mutant ran, or a mutant run ended in a runner error such as
 "command not found" rather than a test result; neither is a pass).
 """
@@ -97,6 +108,81 @@ LOG_METHODS = {
     "critical",
     "log",
 }
+
+
+class Site(NamedTuple):
+    line: int
+    kind: str
+    call: str
+
+
+# Calls that act on real resources outside the sandbox. A mutant of code that
+# makes them can aim them at the wrong target: flip the "is this pid ours?"
+# check and a cleanup routine kills every process on the machine. Such targets
+# are refused unless the operator says the tests run against a fake or in an
+# isolated namespace (--isolated).
+_SIGNAL_CALLS = {"kill", "killpg", "pidfd_send_signal", "pthread_kill", "send_signal"}
+_DELETE_CALLS = {"remove", "unlink", "rmdir", "removedirs", "rmtree"}
+_PROCESS_CALLS = {
+    "system",
+    "popen",
+    "Popen",
+    "run",
+    "call",
+    "check_call",
+    "check_output",
+    "spawnv",
+    "spawnl",
+    "execv",
+    "execvp",
+    "execl",
+    "execlp",
+}
+_WRITE_CALLS = {"write_text", "write_bytes", "rename", "replace", "move", "truncate"}
+_PROCESS_MODULES = {"subprocess", "os", "asyncio"}
+
+
+def _call_name(func: ast.AST) -> Tuple[str, str]:
+    """(receiver, name) for a call target, e.g. ("os", "kill") or ("", "open")."""
+    if isinstance(func, ast.Attribute):
+        recv = func.value
+        base = recv.id if isinstance(recv, ast.Name) else ""
+        return base, func.attr
+    if isinstance(func, ast.Name):
+        return "", func.id
+    return "", ""
+
+
+def _open_writes(call: ast.Call) -> bool:
+    mode = None
+    if len(call.args) >= 2 and isinstance(call.args[1], ast.Constant):
+        mode = call.args[1].value
+    for kw in call.keywords:
+        if kw.arg == "mode" and isinstance(kw.value, ast.Constant):
+            mode = kw.value.value
+    return isinstance(mode, str) and any(c in mode for c in "wax+")
+
+
+def side_effect_sites(src: str) -> List[Site]:
+    """Call sites in `src` that signal processes, delete, write, or spawn."""
+    sites: List[Site] = []
+    for node in ast.walk(ast.parse(src)):
+        if not isinstance(node, ast.Call):
+            continue
+        recv, name = _call_name(node.func)
+        label = f"{recv}.{name}" if recv else name
+        if name in _SIGNAL_CALLS:
+            kind = "signal"
+        elif name in _DELETE_CALLS:
+            kind = "delete"
+        elif name in _WRITE_CALLS or (name == "open" and _open_writes(node)):
+            kind = "write"
+        elif name in _PROCESS_CALLS and (recv in _PROCESS_MODULES or name == "Popen"):
+            kind = "process"
+        else:
+            continue
+        sites.append(Site(node.lineno, kind, label))
+    return sorted(sites)
 
 
 class CheckError(RuntimeError):
@@ -516,6 +602,41 @@ def check(a: argparse.Namespace, workdir: Path) -> dict:
 
     mutants = []
     sources: Dict[str, str] = {}
+    process_sites, fs_sites = [], []
+    for path in summary["targets"]:
+        try:
+            for site in side_effect_sites((workdir / path).read_text()):
+                line = f"{path}:{site.line} {site.kind} ({site.call})"
+                (
+                    process_sites if site.kind in ("signal", "process") else fs_sites
+                ).append(line)
+        except SyntaxError as exc:
+            raise CheckError(f"{path}: cannot parse ({exc})") from exc
+    problems = []
+    if process_sites and not (a.isolated or a.fakes):
+        problems.append(
+            "signals or spawns processes (a mutant can aim it at every process "
+            "on the machine):\n  "
+            + "\n  ".join(process_sites)
+            + "\n  -> pass --isolated to run every test inside its own PID "
+            "namespace (unshare --pid --fork --mount-proc), or use fakes and "
+            "--fakes"
+        )
+    if fs_sites and not a.fakes:
+        problems.append(
+            "deletes or writes files (a mutant can aim it at the real checkout "
+            "or any path the user can write; a PID namespace does not contain "
+            "that):\n  "
+            + "\n  ".join(fs_sites)
+            + "\n  -> pass --fakes only if the tests replace these calls with "
+            "fakes or point them at temporary directories"
+        )
+    if problems:
+        raise CheckError(
+            "refusing to mutate code that acts on real resources. It "
+            + "\nIt ".join(problems)
+        )
+    summary["pid_namespace"] = os.getpid() == 1
     for path in summary["targets"]:
         src = (workdir / path).read_text()
         sources[path] = src
@@ -601,6 +722,44 @@ def check(a: argparse.Namespace, workdir: Path) -> dict:
     return summary
 
 
+_IN_PIDNS = "GOODFELLOW_MUTATION_IN_PIDNS"
+
+
+def _unshare_cmd() -> Optional[List[str]]:
+    """An unshare prefix that yields a private PID namespace, or None."""
+    unshare = os.environ.get("GOODFELLOW_UNSHARE") or shutil.which("unshare")
+    if not unshare:
+        return None
+    variants = [[]] if os.geteuid() == 0 else []
+    variants.append(["--user", "--map-root-user"])
+    for extra in variants:
+        cmd = [unshare, *extra, "--pid", "--fork", "--mount-proc"]
+        try:
+            probe = subprocess.run(
+                [*cmd, "sh", "-c", "test $$ -eq 1"], capture_output=True, timeout=10
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        if probe.returncode == 0:
+            return cmd
+    return None
+
+
+def _reexec_in_pid_namespace(argv: List[str]) -> int:
+    cmd = _unshare_cmd()
+    if cmd is None:
+        print(
+            "mutation-check BLOCK: --isolated, but cannot create a PID namespace "
+            "(unshare missing or not permitted); refusing to run unisolated",
+            file=sys.stderr,
+        )
+        return 2
+    env = {**os.environ, _IN_PIDNS: "1"}
+    return subprocess.run(
+        [*cmd, sys.executable, str(Path(__file__).resolve()), *argv], env=env
+    ).returncode
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--base", required=True, help="base ref (e.g. origin/main)")
@@ -647,8 +806,29 @@ def main(argv: Optional[List[str]] = None) -> int:
         default=",".join(str(c) for c in sorted(RUNNER_ERROR_CODES)),
         help="test-command exit codes meaning 'could not run' (not a kill)",
     )
+    ap.add_argument(
+        "--isolated",
+        action="store_true",
+        help="re-run inside a private PID namespace (unshare --pid --fork "
+        "--mount-proc), so mutants of code that signals or spawns processes can "
+        "only see the check's own processes; fails closed if none can be made",
+    )
+    ap.add_argument(
+        "--fakes",
+        action="store_true",
+        help="confirm the tests replace real side effects (deletes, writes, "
+        "signals, spawns) with fakes or temp directories",
+    )
     ap.add_argument("--json", action="store_true")
     a = ap.parse_args(argv)
+    if a.isolated and os.environ.get(_IN_PIDNS) != "1":
+        return _reexec_in_pid_namespace(sys.argv[1:] if argv is None else argv)
+    if a.isolated and os.getpid() != 1:
+        print(
+            "mutation-check BLOCK: --isolated but not in a PID namespace",
+            file=sys.stderr,
+        )
+        return 2
     workdir = Path(a.workdir).resolve()
     a.workers = max(1, min(a.workers, os.cpu_count() or 1))
     if a.nice > 0 and hasattr(os, "nice"):

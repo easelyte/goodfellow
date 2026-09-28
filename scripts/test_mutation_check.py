@@ -11,9 +11,11 @@ import hashlib
 import json
 import os
 import subprocess
+import shutil
 import sys
-import time
 from pathlib import Path
+
+import pytest
 
 import mutation_check as mc
 
@@ -440,38 +442,179 @@ def test_files_left_by_a_run_do_not_leak_into_the_next(tmp_path):
     assert proc.returncode == 1
 
 
-def _procs_under(root: Path) -> list:
-    hits = []
-    prefix = str(root.resolve())
-    for entry in Path("/proc").iterdir():
-        if not entry.name.isdigit():
-            continue
+def _pidns_prefix():
+    unshare = shutil.which("unshare")
+    if not unshare:
+        return None
+    variants = [[]] if os.geteuid() == 0 else []
+    variants.append(["--user", "--map-root-user"])
+    for extra in variants:
+        cmd = [unshare, *extra, "--pid", "--fork", "--mount-proc"]
         try:
-            cwd = os.readlink(entry / "cwd").replace(" (deleted)", "")
-            state = (entry / "stat").read_text().split(") ", 1)[1][0]
+            ok = subprocess.run(
+                [*cmd, "sh", "-c", "test $$ -eq 1"], capture_output=True, timeout=10
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        if ok.returncode == 0:
+            return cmd
+    return None
+
+
+PIDNS = _pidns_prefix()
+
+# Runs as pid 1 of a private PID namespace: starts the tool, waits for it, then
+# lists every other live process in the namespace. Anything listed is a leak.
+IN_NS = """
+import json, os, pathlib, subprocess, sys, time
+argv = json.loads(sys.argv[1])
+try:
+    p = subprocess.run(argv, capture_output=True, text=True, timeout=60)
+    rc, out, err = p.returncode, p.stdout, p.stderr
+except subprocess.TimeoutExpired as exc:
+    rc, out, err = 'hung', exc.stdout or '', exc.stderr or ''
+    out = out.decode() if isinstance(out, bytes) else out
+    err = err.decode() if isinstance(err, bytes) else err
+time.sleep(0.5)
+left = []
+for e in pathlib.Path('/proc').iterdir():
+    if e.name.isdigit() and int(e.name) != 1:
+        try:
+            st = (e / 'stat').read_text().split(') ', 1)[1][0]
+            cmd = (e / 'cmdline').read_bytes().replace(b'\\0', b' ').decode()
         except OSError:
             continue
-        if cwd.startswith(prefix) and state != "Z":
-            hits.append((int(entry.name), cwd))
-    return hits
+        if st != 'Z':
+            left.append(cmd)
+print(json.dumps({'rc': rc, 'stdout': out, 'stderr': err, 'left': left}))
+"""
 
 
+def _run_in_pidns(argv, env=None):
+    proc = subprocess.run(
+        [*PIDNS, sys.executable, "-c", IN_NS, json.dumps(argv)],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        env={**os.environ, **(env or {})},
+    )
+    assert proc.returncode == 0, proc.stderr
+    return json.loads(proc.stdout)
+
+
+@pytest.mark.skipif(PIDNS is None, reason="cannot create a PID namespace")
 def test_timed_out_mutants_leave_no_process_behind(tmp_path):
     # The binop mutant turns the loop infinite. The runner process it hangs
     # (a grandchild of the shell) must die with the timeout, not run on.
+    # Live process test: runs inside its own PID namespace.
     loop = "def countdown(n):\n    while n > 0:\n        n = n - 1\n    return n\n"
     tests = (
         "from gate import countdown\n\n\ndef test_c():\n    assert countdown(3) == 0\n"
     )
     repo, base = _repo(tmp_path, tests)
     _write(repo, {"gate.py": loop})
-    scratch = tmp_path / "scratch"
-    scratch.mkdir()
-    data = json.loads(
-        _run(
-            repo, "--base", base, "--timeout", "2", env={"TMPDIR": str(scratch)}
-        ).stdout
+    out = _run_in_pidns(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "--workdir",
+            str(repo),
+            "--json",
+            "--workers",
+            "2",
+            "--paths-file",
+            str(repo / "high_stakes_paths.txt"),
+            "--base",
+            base,
+            "--timeout",
+            "2",
+        ]
     )
+    assert out["rc"] != "hung" and out["left"] == [], out
+    data = json.loads(out["stdout"])
     assert any(r["status"] == "timeout" for r in data["results"])
-    time.sleep(0.5)
-    assert _procs_under(scratch) == []
+
+
+# --- refusing targets with real side effects --------------------------------
+
+DANGEROUS = (
+    "import os, signal, shutil, subprocess\n"
+    "from pathlib import Path\n\n\n"
+    "def stop(pid):\n    os.kill(pid, signal.SIGTERM)\n\n\n"
+    "def purge(d):\n    shutil.rmtree(d)\n\n\n"
+    "def drop(p):\n    Path(p).unlink()\n\n\n"
+    "def save(p, s):\n    open(p, 'w').write(s)\n\n\n"
+    "def run(cmd):\n    subprocess.run(cmd)\n\n\n"
+    "def pure(x):\n    return x > 1\n"
+)
+
+
+def test_side_effect_sites_are_found():
+    kinds = {(s.line, s.kind) for s in mc.side_effect_sites(DANGEROUS)}
+    assert (6, "signal") in kinds
+    assert (10, "delete") in kinds
+    assert (14, "delete") in kinds
+    assert (18, "write") in kinds
+    assert (22, "process") in kinds
+    assert not any(line == 26 for line, _k in kinds)
+
+
+def test_reading_a_file_is_not_a_side_effect():
+    src = "def load(p):\n    return open(p).read() + open(p, 'rb').read().decode()\n"
+    assert mc.side_effect_sites(src) == []
+
+
+KILLER = GATE + "\n\nimport os\n\n\ndef stop(pid):\n    os.kill(pid, 9)\n"
+DELETER = GATE + "\n\nimport shutil\n\n\ndef purge(d):\n    shutil.rmtree(d)\n"
+
+
+def test_target_that_signals_is_refused_without_isolation(tmp_path):
+    repo, base = _repo(tmp_path, STRONG_TESTS)
+    _write(repo, {"gate.py": KILLER})
+    proc = _run(repo, "--base", base)
+    assert proc.returncode == 2, proc.stdout + proc.stderr
+    assert "gate.py:15 signal (os.kill)" in proc.stderr
+    assert "--isolated" in proc.stderr
+
+
+@pytest.mark.skipif(shutil.which("unshare") is None, reason="needs unshare")
+def test_target_that_deletes_needs_fakes_even_when_isolated(tmp_path):
+    # A PID namespace does not contain filesystem damage: --isolated alone is
+    # not enough for delete/write sites.
+    repo, base = _repo(tmp_path, STRONG_TESTS)
+    _write(repo, {"gate.py": DELETER})
+    proc = _run(repo, "--base", base, "--isolated")
+    if "cannot create" in proc.stderr:
+        pytest.skip("no PID namespace available here")
+    assert proc.returncode == 2
+    assert (
+        "gate.py:15 delete (shutil.rmtree)" in proc.stderr and "--fakes" in proc.stderr
+    )
+    # With fakes confirmed it runs. purge() has no test, so its mutants survive.
+    proc = _run(repo, "--base", base, "--fakes")
+    assert "refusing" not in proc.stderr
+    assert json.loads(proc.stdout)["mutants"] > 0
+
+
+def test_isolated_fails_closed_when_no_namespace_can_be_made(tmp_path):
+    repo, base = _repo(tmp_path, STRONG_TESTS)
+    _write(repo, {"gate.py": KILLER})
+    proc = _run(
+        repo, "--base", base, "--isolated", env={"GOODFELLOW_UNSHARE": "/nonexistent"}
+    )
+    assert proc.returncode == 2
+    assert "namespace" in proc.stderr
+
+
+@pytest.mark.skipif(shutil.which("unshare") is None, reason="needs unshare")
+def test_isolated_really_runs_in_its_own_pid_namespace(tmp_path):
+    repo, base = _repo(tmp_path, STRONG_TESTS)
+    _write(repo, {"gate.py": KILLER})
+    proc = _run(repo, "--base", base, "--isolated")
+    if "cannot create" in proc.stderr:
+        pytest.skip("no PID namespace available here")
+    data = json.loads(proc.stdout)
+    assert data["pid_namespace"] is True
+    # stop() has no test, so its mutants survive (exit 1); the point is that
+    # the run happened, inside the namespace.
+    assert data["mutants"] > 0 and data["ran"] == data["mutants"], proc.stderr

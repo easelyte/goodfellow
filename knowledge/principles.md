@@ -1372,11 +1372,13 @@ touched on high-stakes paths, it costs minutes per change, not hours.
 - For each rule the change implements, name one deliberate break (flip the comparison, return the allow verdict from the error branch, drop the raise) and confirm the new test goes red on it. Apply the break to a saved copy or a throwaway sandbox, never by discarding working-tree changes.
 - Pin every fail-closed error branch and every changed boundary with a test on each side of the edge.
 - Treat a surviving mutant on a high-stakes line as a finding: kill it with a test, or write down why it is equivalent.
+- Never run breaks or mutants of code that signals processes, deletes, or writes real resources outside a fake or an isolated namespace. A sandbox copy of the files does not contain a mutant that kills every process it can see.
 
 **Anti-patterns:**
 - An error path that can be flipped from deny to allow with every test still green
 - A boundary change with tests only far from the edge
 - Restoring a deliberately broken file with a command that also wipes the real edits
+- Mutation-testing a process-cleanup routine on a live machine
 
 ### P-096. Test Behaviour Through the Real Entry Point, Not the Source Text
 > A test that greps source for a string proves the string is there, not that the code behind it runs.

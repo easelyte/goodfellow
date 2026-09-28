@@ -146,7 +146,7 @@ Write the code/config/docs the task specifies. Follow acceptance criteria. For a
 
 1. **Red for the right reason (P-094).** Write the task's tests first, run them, and read the failure. It must be an assertion failure that names the expected behaviour. An ImportError, NameError, AttributeError or collection error does not count: add a stub that returns a wrong answer, rerun, and get the assertion red.
 2. **Green.** Implement until the tests pass. **Never edit an expected value to match the output.** Change an expectation only when you can state why the old one was wrong, and say so in the task report.
-3. **Deliberate break (P-095), high-stakes tasks.** For each break the plan names (at least one per rule): save a copy (`cp <file> <file>.orig`), apply the break, run the tests, confirm one goes red, then restore with `mv <file>.orig <file>`. Never restore with `git checkout -- <file>`, `git restore` or `git stash`: those also discard your uncommitted real edits.
+3. **Deliberate break (P-095), high-stakes tasks.** For each break the plan names (at least one per rule): save a copy (`cp <file> <file>.orig`), apply the break, run the tests, confirm one goes red, then restore with `mv <file>.orig <file>`. Never restore with `git checkout -- <file>`, `git restore` or `git stash`: those also discard your uncommitted real edits. If the code sends signals, deletes, writes outside a temp directory or spawns processes, run the broken copy only against fakes or in an isolated namespace: a break that flips "is this ours?" turns cleanup code against the whole machine.
 4. **Record the evidence** for the task: each new test's red message, and each break with the test that caught it. ship copies it into the PR.
 
 ### 2d. Verify
