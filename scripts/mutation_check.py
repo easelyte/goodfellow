@@ -60,10 +60,18 @@ import time
 from pathlib import Path
 from typing import Dict, Iterator, List, NamedTuple, Optional, Set, Tuple
 
+_HERE = str(Path(__file__).resolve().parent)
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
+
+import proc_group  # noqa: E402
+
 DEFAULT_TEST_CMD = (
     f"{shlex.quote(sys.executable)} -m pytest -x -q -p no:cacheprovider {{tests}}"
 )
 PRAGMA = "pragma: no mutate"
+# Mutation runs are background work: stay well below the machine's capacity.
+DEFAULT_WORKERS = max(1, min(4, (os.cpu_count() or 2) // 2))
 
 CMP_SWAP = {
     ast.Eq: ast.NotEq,
@@ -457,19 +465,10 @@ def run_tests(
     env["GIT_CEILING_DIRECTORIES"] = str(cwd.parent)
     if workdir is not None and env.get("PYTHONPATH"):
         env["PYTHONPATH"] = remap_pythonpath(env["PYTHONPATH"], workdir, cwd)
-    try:
-        p = subprocess.run(
-            cmd,
-            shell=True,
-            cwd=str(cwd),
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            env=env,
-        )
-    except subprocess.TimeoutExpired:
+    rc, _out, _err = proc_group.run(cmd, cwd, env, timeout)
+    if rc is None:
         return "timeout"
-    return status_for_returncode(p.returncode, error_codes)
+    return status_for_returncode(rc, error_codes)
 
 
 def check(a: argparse.Namespace, workdir: Path) -> dict:
@@ -582,6 +581,8 @@ def check(a: argparse.Namespace, workdir: Path) -> dict:
         with cf.ThreadPoolExecutor(max_workers=len(workers)) as ex:
             results = list(ex.map(job, mutants))
     finally:
+        proc_group.kill_all()
+        proc_group.sweep_cwd(tmp)  # anything still running inside a sandbox
         shutil.rmtree(tmp, ignore_errors=True)
 
     ran = [r for r in results if r["status"] not in ("skipped_budget", "error")]
@@ -624,7 +625,18 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument(
         "--tests", nargs="+", default=[], help="test files/ids (default: whole suite)"
     )
-    ap.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) - 1))
+    ap.add_argument(
+        "--workers",
+        type=int,
+        default=DEFAULT_WORKERS,
+        help=f"parallel sandboxes (default {DEFAULT_WORKERS}; capped at the CPU count)",
+    )
+    ap.add_argument(
+        "--nice",
+        type=int,
+        default=10,
+        help="niceness added to this process and its test runs (0 to disable)",
+    )
     ap.add_argument("--timeout", type=int, default=0, help="per-mutant seconds")
     ap.add_argument("--baseline-timeout", type=int, default=900)
     ap.add_argument(
@@ -638,6 +650,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--json", action="store_true")
     a = ap.parse_args(argv)
     workdir = Path(a.workdir).resolve()
+    a.workers = max(1, min(a.workers, os.cpu_count() or 1))
+    if a.nice > 0 and hasattr(os, "nice"):
+        os.nice(a.nice)  # inherited by every test run
+    proc_group.install_handlers()
 
     try:
         s = check(a, workdir)

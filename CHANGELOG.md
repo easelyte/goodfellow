@@ -16,7 +16,9 @@
 - **`scripts/mutation_check.py`.** Opt-in, diff-scoped mutation testing: mutates only the Python
   lines a branch changed in files matching `.goodfellow/high_stakes_paths.txt`, in throwaway copies,
   under a time budget, and reports every surviving mutant. Budget exhaustion is reported as
-  incomplete (exit 3), never as a pass. Wired into `ship` as an optional step.
+  incomplete (exit 3), never as a pass. Wired into `ship` as an optional step. Every test run gets its
+  own process group that is killed on timeout, exit and termination signals (`scripts/proc_group.py`),
+  runs at `nice` 10, and uses at most `min(4, CPUs/2)` workers by default.
 
 - **Plugin icon.** Added a square brand icon (`docs/assets/goodfellow-icon.svg`) and an `icon` field
   in `plugin.json`, clearing the directory-policy "add an icon" warning. The mark squares the hero's

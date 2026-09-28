@@ -12,6 +12,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import mutation_check as mc
@@ -437,3 +438,40 @@ def test_files_left_by_a_run_do_not_leak_into_the_next(tmp_path):
     survivors = {(s["line"], s["op"]) for s in data["survivors"]}
     assert (6, "cmp_boundary") in survivors, proc.stdout
     assert proc.returncode == 1
+
+
+def _procs_under(root: Path) -> list:
+    hits = []
+    prefix = str(root.resolve())
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            cwd = os.readlink(entry / "cwd").replace(" (deleted)", "")
+            state = (entry / "stat").read_text().split(") ", 1)[1][0]
+        except OSError:
+            continue
+        if cwd.startswith(prefix) and state != "Z":
+            hits.append((int(entry.name), cwd))
+    return hits
+
+
+def test_timed_out_mutants_leave_no_process_behind(tmp_path):
+    # The binop mutant turns the loop infinite. The runner process it hangs
+    # (a grandchild of the shell) must die with the timeout, not run on.
+    loop = "def countdown(n):\n    while n > 0:\n        n = n - 1\n    return n\n"
+    tests = (
+        "from gate import countdown\n\n\ndef test_c():\n    assert countdown(3) == 0\n"
+    )
+    repo, base = _repo(tmp_path, tests)
+    _write(repo, {"gate.py": loop})
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    data = json.loads(
+        _run(
+            repo, "--base", base, "--timeout", "2", env={"TMPDIR": str(scratch)}
+        ).stdout
+    )
+    assert any(r["status"] == "timeout" for r in data["results"])
+    time.sleep(0.5)
+    assert _procs_under(scratch) == []

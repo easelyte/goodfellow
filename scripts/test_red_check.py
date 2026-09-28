@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import red_check
@@ -432,3 +433,21 @@ def test_head_runner_failing_without_a_reported_failure_fails_closed(tmp_path):
     proc = _run(repo, "--base", base, "--test-cmd", cmd)
     assert proc.returncode == 2, proc.stdout + proc.stderr
     assert "exit" in proc.stderr
+
+
+def test_timed_out_runner_leaves_no_process_behind(tmp_path):
+    repo, base = _repo(tmp_path)
+    _commit(
+        repo,
+        {"test_calc.py": BASE_TESTS + "\n\ndef test_x():\n    assert clamp(-1) == 0\n"},
+        "t",
+    )
+    marker = "437.25813"
+    cmd = f"sh -c 'sleep {marker}' & sleep {marker} # {{tests}} {{junit}}"
+    proc = _run(repo, "--base", base, "--test-cmd", cmd, "--timeout", "2")
+    assert proc.returncode == 2
+    time.sleep(0.5)
+    left = subprocess.run(
+        ["pgrep", "-f", f"sleep {marker}"], capture_output=True, text=True
+    )
+    assert left.stdout.strip() == "", f"left running: {left.stdout}"

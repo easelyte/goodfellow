@@ -68,6 +68,12 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
+_HERE = str(Path(__file__).resolve().parent)
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
+
+import proc_group  # noqa: E402
+
 DEFAULT_TEST_CMD = (
     f"{shlex.quote(sys.executable)} -m pytest -q -p no:cacheprovider "
     "--continue-on-collection-errors {tests} --junitxml={junit}"
@@ -247,20 +253,11 @@ def run_tests(
     ).replace("{junit}", shlex.quote(junit))
     env = dict(os.environ)
     env.pop("PYTHONPATH", None)
-    try:
-        proc = subprocess.run(
-            cmd,
-            shell=True,
-            cwd=str(cwd),
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            env=env,
-        )
-    except subprocess.TimeoutExpired:
+    rc, _out, _err = proc_group.run(cmd, cwd, env, timeout)
+    if rc is None:
         return None
     if returncodes is not None:
-        returncodes.append(proc.returncode)
+        returncodes.append(rc)
     try:
         if not os.path.exists(junit) or os.path.getsize(junit) == 0:
             return None
@@ -331,6 +328,7 @@ def check(
         base_run = run_tests(wt, files, cmd_template, timeout) or {}
     finally:
         _git(workdir, ["worktree", "remove", "--force", str(wt)], check=False)
+        proc_group.sweep_cwd(tmp)
         shutil.rmtree(tmp, ignore_errors=True)
         _git(workdir, ["worktree", "prune"], check=False)
 
@@ -429,6 +427,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     a = ap.parse_args(argv)
 
     workdir = Path(a.workdir).resolve()
+    proc_group.install_handlers()
     try:
         results, unreplayed = check(
             workdir,
