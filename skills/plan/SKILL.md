@@ -68,6 +68,12 @@ date: YYYY-MM-DD
 - Spec-coverage map (every spec section → plan task)
 - Effort estimates per phase
 
+**Test design per task** (P-094, P-095, P-096). Every task that adds or changes behaviour names its tests and the **expected red**: the assertion message each new test fails with before the change. "Fails with function not defined" is not a red; when the symbol is new, the first step is a stub that returns a wrong answer, so the red comes from the assertion. For tasks on **high-stakes paths** (the globs in `.goodfellow/high_stakes_paths.txt` if you keep one; otherwise allow/deny, gates, deletion and retention, money, alert or verdict logic), also name:
+- the fail-closed error branches and exact boundaries the tests pin, with a case on each side of each edge;
+- one deliberate break per rule that the tests must catch (flip the comparison, return the allow verdict from the error branch, drop the raise);
+- for code that signals processes, deletes or writes real resources: the fake or isolated namespace (for example `unshare --pid`) its tests and breaks run in. Such code is never tested or mutated against the live machine;
+- the real entry point the tests drive. A source-text check may accompany a behaviour test, never replace one.
+
 **Scope bias: exhaustive.** Enumerate every task the spec implies. Don't truncate to look simpler.
 
 **Principles pass:** for each task, check: does the proposed implementation introduce a principle violation per `.goodfellow/knowledge.md`? Fix in-spec or note as deliberate exception.

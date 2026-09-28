@@ -1339,3 +1339,60 @@ assertion from the defect's failure mode, independently of the fix.
 **Anti-patterns:**
 - A ratchet written with the fix that accepts the very defect it was meant to catch
 - Asserting the post-fix state instead of the failure mode, so a sibling defect slips through
+
+### P-094. A New Test Must Fail for the Right Reason Before It Passes
+> A test that goes red only because the symbol is missing, or never goes red at all, proves nothing about the behaviour it names.
+<!-- cat: testing -->
+
+Test-first only works when the red is the assertion you wrote. An ImportError, NameError or
+collection error on the first run says "the code is not there yet"; it would say the same thing
+about a test that asserts the wrong answer. A test written after the code, that passes on the
+first run, has never been seen to detect anything.
+
+**Rules:**
+- Before implementing, run the new test and read the failure: it must be an assertion failure naming the expected behaviour. If the symbol does not exist yet, add a stub that returns a wrong answer first, so the red comes from the assertion.
+- For high-stakes logic (allow/deny, gates, deletion and retention, money, alert or verdict logic), write the expected red into the plan, and check it mechanically where you can (replay the new tests against the base and require an assertion failure there).
+- Never edit an expected value to match the output. Change an expectation only with a stated reason the old one was wrong.
+
+**Anti-patterns:**
+- "Expected: FAIL with function not defined" as the red step of a TDD plan
+- A test that passes on its first-ever run, accepted as proof the fix works
+- Updating the asserted number until the suite goes green
+
+### P-095. Prove a Test Can Fail: Break the Code on Purpose
+> After green, break the line the test protects and confirm the test notices. A test that survives the break was not protecting it.
+<!-- cat: testing -->
+
+Coverage says a line ran, not that any assertion depends on it. On guard, gate and verdict code
+the dangerous break is the quiet one: an error branch that returns "ok", a `>=` that became `>`,
+a `raise` that became `pass`. Mutation testing automates the check; scoped to the lines a change
+touched on high-stakes paths, it costs minutes per change, not hours.
+
+**Rules:**
+- For each rule the change implements, name one deliberate break (flip the comparison, return the allow verdict from the error branch, drop the raise) and confirm the new test goes red on it. Apply the break to a saved copy or a throwaway sandbox, never by discarding working-tree changes.
+- Pin every fail-closed error branch and every changed boundary with a test on each side of the edge.
+- Treat a surviving mutant on a high-stakes line as a finding: kill it with a test, or write down why it is equivalent.
+- Never run breaks or mutants of code that signals processes, deletes, or writes real resources outside a fake or an isolated namespace. A sandbox copy of the files does not contain a mutant that kills every process it can see.
+
+**Anti-patterns:**
+- An error path that can be flipped from deny to allow with every test still green
+- A boundary change with tests only far from the edge
+- Restoring a deliberately broken file with a command that also wipes the real edits
+- Mutation-testing a process-cleanup routine on a live machine
+
+### P-096. Test Behaviour Through the Real Entry Point, Not the Source Text
+> A test that greps source for a string proves the string is there, not that the code behind it runs.
+<!-- cat: testing -->
+
+Source-grep "tests" are tempting at wiring sites (a hook registered, a flag passed, a prompt
+fragment present) because they are quick and never flaky. They also pass when the wiring is dead,
+misordered, or bypassed. Mocks that replace the unit under test fail the same way.
+
+**Rules:**
+- Exercise the real entry point (the CLI, the hook, the exported function) with an input that should be allowed and one that should be denied, and assert on the observed outcome.
+- A text-presence check may accompany a behaviour test (for prose or prompts that cannot be executed), never replace one for code.
+- Prefer a property test (Hypothesis, fast-check) where an invariant exists, over hand-picked examples.
+
+**Anti-patterns:**
+- Asserting a guard is wired by finding its name in a config or source file
+- Mocking the function under test and asserting the mock was called

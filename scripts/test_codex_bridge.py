@@ -334,3 +334,42 @@ def test_generator_prompt_cites_p_nnn_and_no_scrubbed_tokens():
         # No bare upstream rule-id citation forms (R### / V# / PNN unhyphenated).
         assert not re.search(r"\bR[0-9]{3}\b", prompt)
         assert not re.search(r"\bV[1-9]\b", prompt)
+
+
+def _dry_run_prompt(args):
+    with tempfile.TemporaryDirectory() as d:
+        tmp = Path(d)
+        subprocess.run(["git", "init", "-q"], cwd=tmp, check=True)
+        (tmp / "a.txt").write_text("x\n")
+        spec = _spec_file(tmp, "# Doc\nbody\n")
+        args = [str(spec) if a == "{doc}" else a for a in args]
+        r = Bridge(tmp).run(args, env={"GOODFELLOW_CODEX_DRY_RUN": "1"})
+        assert r.returncode == 0, r.stderr
+        return Path(_last_line(r.stdout)).read_text()
+
+
+def _test_quality_block(prompt):
+    m = re.search(r"<test_quality>(.*?)</test_quality>", prompt, re.S)
+    return m.group(1) if m else None
+
+
+def test_diff_prompt_carries_test_theater_checks():
+    block = _test_quality_block(_dry_run_prompt(["--kind", "diff", "--uncommitted"]))
+    assert block is not None, "diff review prompt has no <test_quality> block"
+    for check in (
+        "source",  # tests that grep source text instead of running it
+        "unrelated reason",  # negative case denied for the wrong reason
+        "fail-open",  # error branches nobody pins
+        "boundary",  # changed boundary with no boundary test
+        "expected value",  # expectations edited to match output
+        "isolated namespace",  # real kill/delete/write paths only under fakes or isolation
+    ):
+        assert check in block, f"test_quality block is missing the {check!r} check"
+
+
+def test_plan_prompt_asks_for_provable_tests_but_spec_prompt_does_not():
+    plan = _dry_run_prompt(["--kind", "plan", "--file", "{doc}"])
+    assert "expected red" in plan
+    spec = _dry_run_prompt(["--kind", "spec", "--file", "{doc}"])
+    assert _test_quality_block(spec) is None
+    assert "expected red" not in spec
