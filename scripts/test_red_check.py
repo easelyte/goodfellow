@@ -128,6 +128,8 @@ def test_import_error_at_collection_is_new_symbol(tmp_path):
     proc = _run(repo, "--base", base)
     assert _verdicts(proc) == {"test_triple::test_triple": "NEW_SYMBOL"}, proc.stdout
     assert proc.returncode == 0
+    (result,) = json.loads(proc.stdout)["results"]
+    assert "triple" in result["base_message"], result
 
 
 def test_crash_in_existing_code_is_wrong_reason(tmp_path):
@@ -146,6 +148,23 @@ def test_crash_in_existing_code_is_wrong_reason(tmp_path):
     proc = _run(repo, "--base", base)
     assert _verdicts(proc) == {"test_calc::test_floor": "WRONG_REASON"}, proc.stdout
     assert proc.returncode == 1
+
+
+def test_new_test_in_a_new_directory_is_replayed(tmp_path):
+    repo, base = _repo(tmp_path)
+    _commit(
+        repo,
+        {
+            "calc.py": FIXED_CALC,
+            "tests/test_more.py": "import sys, pathlib\n"
+            "sys.path.insert(0, str(pathlib.Path(__file__).parents[1]))\n"
+            "from calc import clamp\n\n\ndef test_neg():\n    assert clamp(-2) == 0\n",
+        },
+        "tests dir",
+    )
+    proc = _run(repo, "--base", base)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert list(_verdicts(proc).values()) == ["OK"], proc.stdout
 
 
 def test_test_that_passes_on_base_is_not_red(tmp_path):
@@ -265,6 +284,8 @@ def test_missing_symbol_detection():
 def test_classify_failure_messages():
     c = red_check.classify_outcome
     assert c("failure", None, "assert 1 == 2") == "assertion"
+    assert c("failure", None, "expect(received).toBe(expected)") == "assertion"
+    assert c("failure", "ValueError", "") == "exception"
     assert c("failure", None, "AssertionError: nope") == "assertion"
     assert (
         c("failure", None, "Failed: DID NOT RAISE <class 'ValueError'>") == "assertion"
