@@ -263,7 +263,8 @@ def test_changed_lines_from_zero_context_diff():
         "diff --git a/y.py b/y.py\nnew file mode 100644\n--- /dev/null\n+++ b/y.py\n"
         "@@ -0,0 +1,2 @@\n+p\n+q\n"
     )
-    assert mc.changed_lines(diff) == {"x.py": {4, 5, 6, 13}, "y.py": {1, 2}}
+    # A pure deletion (-20,2 +22,0) marks the lines on either side of the gap.
+    assert mc.changed_lines(diff) == {"x.py": {4, 5, 6, 13, 22, 23}, "y.py": {1, 2}}
 
 
 def test_path_globs():
@@ -350,8 +351,12 @@ def test_mutants_keep_the_shebang_line():
 def test_runner_errors_are_not_kills():
     assert mc.status_for_returncode(0) == "survived"
     assert mc.status_for_returncode(1) == "killed"
-    for rc in (4, 5, 126, 127):
+    for rc in (3, 4, 5, 126, 127):
         assert mc.status_for_returncode(rc) == "error"
+    # 2 stays a kill by default: pytest's "interrupted" is how a mutant that
+    # breaks import at collection shows up, and make reports failures as 2.
+    assert mc.status_for_returncode(2) == "killed"
+    assert mc.status_for_returncode(2, {2}) == "error"
 
 
 def test_pythonpath_into_the_checkout_is_remapped_to_the_sandbox(tmp_path):
@@ -361,3 +366,34 @@ def test_pythonpath_into_the_checkout_is_remapped_to_the_sandbox(tmp_path):
         [str(sandbox / "src"), "/elsewhere", "rel"]
     )
     assert mc.remap_pythonpath(str(repo), repo, sandbox) == str(sandbox)
+
+
+def test_deletion_only_change_is_measured_around_the_gap(tmp_path):
+    guard = (
+        "def delete(user, admin):\n"
+        "    if not admin:\n"
+        "        raise PermissionError(user)\n"
+        "    return 'deleted'\n"
+    )
+    tests = (
+        "from gate import delete\n\n\ndef test_admin():\n    assert delete('u', True)\n"
+    )
+    repo, base = _repo(tmp_path, tests)
+    _write(repo, {"gate.py": guard})
+    _git(repo, "add", "gate.py")
+    _git(repo, "commit", "-q", "-m", "guard")
+    base2 = _git(repo, "rev-parse", "HEAD")
+    _write(
+        repo,
+        {
+            "gate.py": guard.replace(
+                "    if not admin:\n        raise PermissionError(user)\n", ""
+            )
+        },
+    )
+    _git(repo, "add", "gate.py")
+    _git(repo, "commit", "-q", "-m", "drop guard")
+    data = json.loads(_run(repo, "--base", base2).stdout)
+    # Pure deletion: the lines around the gap (def, return) are mutated.
+    assert data["targets"] == ["gate.py"]
+    assert {r["line"] for r in data["results"]} == {2}

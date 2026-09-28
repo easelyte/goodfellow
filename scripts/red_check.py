@@ -21,7 +21,10 @@ Verdicts per new test:
                 during development. Not a failure unless --strict.
   NOT_RED       already passes on the base: it does not detect the change
   NOT_GREEN     fails on head
-  SKIPPED
+  SKIPPED       skipped on head or base, so it never proved anything
+  UNCLEAR       red on the base with a failure this tool cannot classify
+                (no assertion type, no known assertion message); teach it
+                with --assertion-type or --assertion-pattern
 
 How it works (never touches your checkout): the test command runs in a
 throwaway copy of your working tree, and in a temporary `git worktree` of the
@@ -40,10 +43,13 @@ pass --test-cmd with `{tests}` and `{junit}` placeholders, e.g.
 the base's own version of the same files. A test whose body changed but whose
 name did not is not re-checked; rename it or pass --all-tests.
 
-Exit codes: 0 no WRONG_REASON / NOT_RED / NOT_GREEN verdict (NEW_SYMBOL is
-reported, and counts as bad under --strict; no new tests passes unless
---require-tests); 1 at least one bad verdict; 2 fail-closed (unknown base, runner produced no
-report on head, git failure).
+Exit codes:
+  0  no WRONG_REASON / NOT_RED / NOT_GREEN / SKIPPED / UNCLEAR verdict
+     (NEW_SYMBOL is reported, and counts as bad under --strict; finding no new
+     tests passes unless --require-tests)
+  1  at least one bad verdict
+  2  fail-closed: unknown base, no report (or an empty one) on head,
+     duplicate test ids, git failure
 """
 
 from __future__ import annotations
@@ -82,6 +88,7 @@ DEFAULT_TEST_GLOBS = (
 # wrong". Anything else that names an exception class means the test crashed.
 ASSERTION_TYPES = ("AssertionError", "AssertError", "Failed", "ExpectationFailed")
 _ASSERT_PREFIX = re.compile(r"^(assert\b|Failed:|DID NOT RAISE)")
+_EXPECT_CALL = re.compile(r"\bexpect\(")
 _EXC_PREFIX = re.compile(r"^([A-Za-z_][\w.]*(?:Error|Exception|Exit|Interrupt))\b")
 
 
@@ -100,11 +107,31 @@ class RedCheckError(RuntimeError):
     """Something prevented a trustworthy verdict: fail closed (exit 2)."""
 
 
+def verdict_for(head_kind: str, base_kind: str, base_message: str) -> str:
+    """One new test's verdict from its head outcome and its base outcome."""
+    if head_kind == "skipped":
+        return "SKIPPED"
+    if head_kind != "pass":
+        return "NOT_GREEN"
+    if base_kind == "pass":
+        return "NOT_RED"
+    if base_kind == "assertion":
+        return "OK"
+    if base_kind == "skipped":
+        return "SKIPPED"
+    if base_kind == "unknown":
+        return "UNCLEAR"
+    if is_missing_symbol(base_message):
+        return "NEW_SYMBOL"
+    return "WRONG_REASON"
+
+
 def classify_outcome(
     tag: str,
     typ: Optional[str],
     message: Optional[str],
     extra_assertion_types: Sequence[str] = (),
+    patterns: Sequence[str] = (),
 ) -> str:
     """Map one JUnit outcome to pass / skipped / assertion / exception."""
     if tag == "pass":
@@ -121,12 +148,16 @@ def classify_outcome(
             return "assertion"
     if _ASSERT_PREFIX.match(msg):
         return "assertion"
+    if any(re.search(p, msg) for p in patterns):
+        return "assertion"
     m = _EXC_PREFIX.match(msg)
     if m:
         return "assertion" if m.group(1).split(".")[-1] in allowed else "exception"
     if typ and _EXC_PREFIX.match(typ.split(".")[-1]):
         return "exception"
-    return "assertion"
+    if _EXPECT_CALL.search(msg):
+        return "assertion"  # Jest / Vitest style expect(...) matcher failure
+    return "unknown"
 
 
 def _git(workdir: Path, args: List[str], check: bool = True) -> str:
@@ -249,6 +280,7 @@ def check(
     globs: Sequence[str],
     extra_assertion_types: Sequence[str],
     all_tests: bool,
+    assertion_patterns: Sequence[str] = (),
 ) -> Tuple[List[dict], List[str]]:
     _git(workdir, ["rev-parse", "--verify", "--quiet", f"{base}^{{commit}}"])
     merge_base = _git(workdir, ["merge-base", base, "HEAD"]).strip()
@@ -264,10 +296,11 @@ def check(
         head_copy = tmp / "head"
         _copy_worktree(workdir, head_copy)
         head = run_tests(head_copy, files, cmd_template, timeout)
-        if head is None:
+        if not head:
             raise RedCheckError(
-                "the test command produced no JUnit report on the current "
-                "checkout; cannot judge anything (check --test-cmd)"
+                "the test command produced no JUnit report (or one with no test "
+                "cases) on the current checkout; cannot judge anything "
+                "(check --test-cmd)"
             )
         _git(workdir, ["worktree", "add", "--detach", "--quiet", str(wt), merge_base])
         # The base's OWN tests identify which head tests are new.
@@ -293,10 +326,14 @@ def check(
         if not all_tests and tid in base_own:
             unreplayed.append(tid)
             continue
-        head_kind = classify_outcome(htag, htyp, hmsg, extra_assertion_types)
+        head_kind = classify_outcome(
+            htag, htyp, hmsg, extra_assertion_types, assertion_patterns
+        )
         if tid in base_run:
             btag, btyp, bmsg = base_run[tid]
-            base_kind = classify_outcome(btag, btyp, bmsg, extra_assertion_types)
+            base_kind = classify_outcome(
+                btag, btyp, bmsg, extra_assertion_types, assertion_patterns
+            )
         else:
             base_kind, bmsg = (
                 "exception",
@@ -306,20 +343,7 @@ def check(
                     else "not run on base"
                 ),
             )
-        if head_kind == "skipped":
-            verdict = "SKIPPED"
-        elif head_kind != "pass":
-            verdict = "NOT_GREEN"
-        elif base_kind == "pass":
-            verdict = "NOT_RED"
-        elif base_kind == "assertion":
-            verdict = "OK"
-        elif base_kind == "skipped":
-            verdict = "SKIPPED"
-        elif is_missing_symbol(bmsg):
-            verdict = "NEW_SYMBOL"
-        else:
-            verdict = "WRONG_REASON"
+        verdict = verdict_for(head_kind, base_kind, bmsg)
         results.append(
             {
                 "test": tid,
@@ -335,7 +359,7 @@ def check(
     return results, sorted(unreplayed)
 
 
-BAD = {"WRONG_REASON", "NOT_RED", "NOT_GREEN"}
+BAD = {"WRONG_REASON", "NOT_RED", "NOT_GREEN", "SKIPPED", "UNCLEAR"}
 STRICT_BAD = BAD | {"NEW_SYMBOL"}
 
 
@@ -363,6 +387,13 @@ def main(argv: Optional[List[str]] = None) -> int:
         action="append",
         default=[],
         help="extra exception class name that counts as an assertion failure",
+    )
+    ap.add_argument(
+        "--assertion-pattern",
+        action="append",
+        default=[],
+        help="regex on the failure message that counts as an assertion failure "
+        "(for runners whose JUnit output names no assertion type)",
     )
     ap.add_argument(
         "--all-tests",
@@ -394,6 +425,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             tuple(a.test_glob or DEFAULT_TEST_GLOBS),
             tuple(a.assertion_type),
             a.all_tests,
+            tuple(a.assertion_pattern),
         )
     except (RedCheckError, OSError) as exc:
         print(f"red-check BLOCK: {exc}", file=sys.stderr)

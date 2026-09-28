@@ -8,7 +8,7 @@ the lines your branch changed in high-stakes files, runs the tests against each,
 and reports every mutant the tests fail to notice (a SURVIVOR).
 
   - Scope: only files matching your high-stakes path list, and only the lines the
-    branch changed (Google's changed-lines approach: a handful of mutants per PR,
+    branch changed (for a pure deletion, the lines on either side of the gap) (Google's changed-lines approach: a handful of mutants per PR,
     not thousands).
   - Safety: mutants are applied in throwaway copies of the checkout (file modes
     kept; PYTHONPATH entries that point into the checkout are redirected to the
@@ -168,7 +168,12 @@ def changed_lines(diff: str) -> Dict[str, Set[int]]:
         if m and current is not None:
             start = int(m.group(1))
             count = int(m.group(2)) if m.group(2) is not None else 1
-            out[current].update(range(start, start + count))
+            if count == 0:
+                # Pure deletion after new-side line `start`: measure the lines on
+                # either side of the gap, so a removed guard is not invisible.
+                out[current].update(n for n in (start, start + 1) if n > 0)
+            else:
+                out[current].update(range(start, start + count))
     return out
 
 
@@ -377,16 +382,19 @@ def _copy_tree(workdir: Path, dest: Path) -> None:
 
 
 # Exit codes that mean "the runner could not run the tests", not "a test failed":
-# pytest usage error (4) and no tests collected (5), shell permission denied (126)
-# and command not found (127). Counting these as kills would report a perfect
+# pytest internal error (3), usage error (4) and no tests collected (5), shell
+# permission denied (126) and command not found (127). pytest's 2 (interrupted)
+# stays a kill by default: it is how a mutant that breaks import at collection
+# shows up, and `make` reports ordinary failures as 2. Override with
+# --error-exit-codes. Counting these as kills would report a perfect
 # score for mutants no test ever looked at.
-RUNNER_ERROR_CODES = {4, 5, 126, 127}
+RUNNER_ERROR_CODES = frozenset({3, 4, 5, 126, 127})
 
 
-def status_for_returncode(rc: int) -> str:
+def status_for_returncode(rc: int, error_codes=RUNNER_ERROR_CODES) -> str:
     if rc == 0:
         return "survived"
-    return "error" if rc in RUNNER_ERROR_CODES else "killed"
+    return "error" if rc in error_codes else "killed"
 
 
 def remap_pythonpath(value: str, workdir: Path, sandbox: Path) -> str:
@@ -401,7 +409,13 @@ def remap_pythonpath(value: str, workdir: Path, sandbox: Path) -> str:
     return os.pathsep.join(out)
 
 
-def run_tests(cwd: Path, cmd: str, timeout: int, workdir: Optional[Path] = None) -> str:
+def run_tests(
+    cwd: Path,
+    cmd: str,
+    timeout: int,
+    workdir: Optional[Path] = None,
+    error_codes=RUNNER_ERROR_CODES,
+) -> str:
     env = dict(os.environ)
     env["PYTHONDONTWRITEBYTECODE"] = "1"  # never trust a stale .pyc of a mutant
     env["GIT_CEILING_DIRECTORIES"] = str(cwd.parent)
@@ -419,7 +433,7 @@ def run_tests(cwd: Path, cmd: str, timeout: int, workdir: Optional[Path] = None)
         )
     except subprocess.TimeoutExpired:
         return "timeout"
-    return status_for_returncode(p.returncode)
+    return status_for_returncode(p.returncode, error_codes)
 
 
 def check(a: argparse.Namespace, workdir: Path) -> dict:
@@ -476,6 +490,7 @@ def check(a: argparse.Namespace, workdir: Path) -> dict:
         return summary
 
     cmd = a.test_cmd.replace("{tests}", " ".join(shlex.quote(t) for t in a.tests))
+    error_codes = frozenset(int(c) for c in a.error_exit_codes.split(",") if c.strip())
     tmp = Path(tempfile.mkdtemp(prefix="mutation-check-"))
     try:
         workers = []
@@ -510,7 +525,7 @@ def check(a: argparse.Namespace, workdir: Path) -> dict:
                 target.write_text(m.source)
                 os.chmod(target, mode)
                 t1 = time.time()
-                rec["status"] = run_tests(w, cmd, per_mutant, workdir)
+                rec["status"] = run_tests(w, cmd, per_mutant, workdir, error_codes)
                 rec["secs"] = round(time.time() - t1, 1)
             finally:
                 if target.exists():
@@ -571,6 +586,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--baseline-timeout", type=int, default=900)
     ap.add_argument(
         "--budget", type=int, default=900, help="total seconds for all mutants"
+    )
+    ap.add_argument(
+        "--error-exit-codes",
+        default=",".join(str(c) for c in sorted(RUNNER_ERROR_CODES)),
+        help="test-command exit codes meaning 'could not run' (not a kill)",
     )
     ap.add_argument("--json", action="store_true")
     a = ap.parse_args(argv)

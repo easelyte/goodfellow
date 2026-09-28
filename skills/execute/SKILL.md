@@ -164,7 +164,7 @@ If verification fails: fix the issue before proceeding. Do not silently continue
 
 ```bash
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/red_check.py" --base <base-branch>
-# 0 = every new test OK; 1 = a WRONG_REASON / NOT_RED / NOT_GREEN verdict: fix the test;
+# 0 = no bad verdict; 1 = WRONG_REASON / NOT_RED / NOT_GREEN / SKIPPED / UNCLEAR: fix the test;
 # 2 = the check itself failed (unknown base, runner wrote no report): not a pass.
 ```
 

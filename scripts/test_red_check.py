@@ -286,6 +286,8 @@ def test_classify_failure_messages():
     assert c("failure", None, "assert 1 == 2") == "assertion"
     assert c("failure", None, "expect(received).toBe(expected)") == "assertion"
     assert c("failure", "ValueError", "") == "exception"
+    assert c("failure", None, "Cannot read properties of undefined") == "unknown"
+    assert c("failure", None, "Error: boom") == "unknown"
     assert c("failure", None, "AssertionError: nope") == "assertion"
     assert (
         c("failure", None, "Failed: DID NOT RAISE <class 'ValueError'>") == "assertion"
@@ -297,6 +299,14 @@ def test_classify_failure_messages():
     assert c("error", None, "collection failure") == "exception"
     assert c("pass", None, "") == "pass"
     assert c("skipped", None, "") == "skipped"
+
+
+def test_extra_assertion_pattern_is_honoured():
+    c = red_check.classify_outcome
+    assert (
+        c("failure", None, "Mismatch: wanted 2", patterns=(r"^Mismatch:",))
+        == "assertion"
+    )
 
 
 def test_extra_assertion_type_is_honoured():
@@ -353,3 +363,50 @@ def test_existing_tests_in_changed_files_are_listed_as_not_replayed(tmp_path):
     assert "--all-tests" in proc.stderr
     proc = _run(repo, "--base", base, "--all-tests")
     assert _verdicts(proc)["test_calc::test_positive"] == "NOT_RED"
+
+
+def test_skipped_new_test_is_not_a_pass(tmp_path):
+    repo, base = _repo(tmp_path)
+    _commit(
+        repo,
+        {
+            "calc.py": FIXED_CALC,
+            "test_calc.py": BASE_TESTS
+            + "\n\nimport pytest\n\n\n@pytest.mark.skip\ndef test_later():\n"
+            "    assert clamp(-1) == 0\n",
+        },
+        "skipped test",
+    )
+    proc = _run(repo, "--base", base)
+    assert _verdicts(proc) == {"test_calc::test_later": "SKIPPED"}, proc.stdout
+    assert proc.returncode == 1
+
+
+def test_unrecognised_base_failure_is_unclear_and_fails(tmp_path):
+    repo, base = _repo(tmp_path)
+    _commit(
+        repo,
+        {
+            "calc.py": FIXED_CALC,
+            "test_calc.py": BASE_TESTS + "\n\nimport pytest\n\n\ndef test_odd():\n"
+            "    if clamp(-1) != 0:\n        raise RuntimeError('odd')\n",
+        },
+        "odd failure",
+    )
+    # RuntimeError is named, so it is an exception; a bare message is unknown.
+    proc = _run(repo, "--base", base)
+    assert _verdicts(proc) == {"test_calc::test_odd": "WRONG_REASON"}, proc.stdout
+    assert red_check.verdict_for("pass", "unknown", "") == "UNCLEAR"
+    assert "UNCLEAR" in red_check.BAD
+
+
+def test_report_with_no_testcases_fails_closed(tmp_path):
+    repo, base = _repo(tmp_path)
+    _commit(
+        repo,
+        {"test_calc.py": BASE_TESTS + "\n\ndef test_x():\n    assert clamp(-1) == 0\n"},
+        "t",
+    )
+    cmd = "printf '<testsuites/>' > {junit} # {tests}"
+    proc = _run(repo, "--base", base, "--test-cmd", cmd)
+    assert proc.returncode == 2, proc.stdout + proc.stderr

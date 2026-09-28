@@ -34,8 +34,8 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/red_check.py" --base "$BASE"
 ```
 
 - Exit 0: record the verdicts for the PR's Test evidence section. An `OK` proves the base failure was an assertion, not that it was the intended one: compare each printed base message with the expected red the plan named. If the branch changed an existing test's expectation (listed as not replayed), rerun with `--all-tests` and state in the PR why the old expectation was wrong. `NEW_SYMBOL` means the test calls code the base does not have, so a replay cannot show its red; cite the stub-first assertion red from execute instead.
-- Exit 1: each `WRONG_REASON` / `NOT_RED` / `NOT_GREEN` verdict is a review finding: major, or blocker on a high-stakes path. Fix the test (stub a wrong answer first, or make it assert the changed behaviour).
-- Exit 2: the check did not run. Report it as not run, never as passed. For runners other than pytest, pass `--test-cmd` with `{tests}` and `{junit}` placeholders.
+- Exit 1: each `WRONG_REASON` / `NOT_RED` / `NOT_GREEN` / `SKIPPED` / `UNCLEAR` verdict is a review finding: major, or blocker on a high-stakes path. Fix the test (stub a wrong answer first, or make it assert the changed behaviour).
+- Exit 2: the check did not run. Report it as not run, never as passed. For runners other than pytest, pass `--test-cmd` with `{tests}` and `{junit}` placeholders; if their JUnit failures name no assertion type (`UNCLEAR`), add `--assertion-type` or `--assertion-pattern`.
 
 **Mutation check on high-stakes paths (P-095, optional).** Runs only when you keep a high-stakes path list (`.goodfellow/high_stakes_paths.txt`, one glob per line; see `configs/high_stakes_paths.example.txt`). It mutates only the Python lines this branch changed in those files, in throwaway copies, and reports every mutant the tests miss:
 
