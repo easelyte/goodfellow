@@ -303,3 +303,53 @@ def test_extra_assertion_type_is_honoured():
     c = red_check.classify_outcome
     assert c("failure", None, "ContractError: x") == "exception"
     assert c("failure", None, "ContractError: x", ("ContractError",)) == "assertion"
+
+
+def test_tests_that_write_files_do_not_touch_the_checkout(tmp_path):
+    repo, base = _repo(tmp_path)
+    _commit(
+        repo,
+        {
+            "calc.py": FIXED_CALC,
+            "test_calc.py": BASE_TESTS + "\n\ndef test_writes():\n"
+            "    open('touched.txt', 'w').write('x')\n"
+            "    assert clamp(-1) == 0\n",
+        },
+        "writer",
+    )
+    proc = _run(repo, "--base", base)
+    assert _verdicts(proc) == {"test_calc::test_writes": "OK"}, proc.stdout
+    assert not (repo / "touched.txt").exists()
+
+
+def test_duplicate_junit_ids_fail_closed(tmp_path):
+    xml = tmp_path / "r.xml"
+    xml.write_text(
+        '<testsuites><testsuite name="a"><testcase classname="c" name="t"/>'
+        '</testsuite><testsuite name="b"><testcase classname="c" name="t">'
+        '<failure message="assert 0"/></testcase></testsuite></testsuites>'
+    )
+    try:
+        red_check.parse_junit(xml)
+    except red_check.RedCheckError as exc:
+        assert "duplicate" in str(exc)
+    else:
+        raise AssertionError("duplicate test ids were silently merged")
+
+
+def test_existing_tests_in_changed_files_are_listed_as_not_replayed(tmp_path):
+    repo, base = _repo(tmp_path)
+    _commit(
+        repo,
+        {
+            "calc.py": FIXED_CALC,
+            "test_calc.py": BASE_TESTS.replace("clamp(3) == 3", "clamp(4) == 4")
+            + "\n\ndef test_n():\n    assert clamp(-1) == 0\n",
+        },
+        "edit existing expectation",
+    )
+    proc = _run(repo, "--base", base)
+    assert json.loads(proc.stdout)["not_replayed"] == ["test_calc::test_positive"]
+    assert "--all-tests" in proc.stderr
+    proc = _run(repo, "--base", base, "--all-tests")
+    assert _verdicts(proc)["test_calc::test_positive"] == "NOT_RED"

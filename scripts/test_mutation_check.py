@@ -321,3 +321,43 @@ def test_operators_cover_boundary_and_fail_open_shapes():
     for m in mc.enumerate_mutants(src, None):
         assert m.source != src
         compile(m.source, "g.py", "exec")
+
+
+def test_executable_target_keeps_its_mode_in_the_sandbox(tmp_path):
+    # The test command runs the target directly. Every mutant here is
+    # behaviour-neutral, so all must SURVIVE; a mutant that lost its executable
+    # bit would fail with "permission denied" and be miscounted as killed.
+    repo, base = _repo(tmp_path, WEAK_TESTS)
+    script = repo / "tool.py"
+    script.write_text("#!/usr/bin/env python3\nflag = 5 >= 3\nprint('ok')\n")
+    script.chmod(0o755)
+    _git(repo, "add", "tool.py")
+    _git(repo, "commit", "-q", "-m", "tool")
+    _write(repo, {"high_stakes_paths.txt": "tool.py\n"})
+    proc = _run(repo, "--base", base, "--test-cmd", "./tool.py")
+    data = json.loads(proc.stdout)
+    assert data["mutants"] > 0
+    assert len(data["survivors"]) == data["mutants"], proc.stdout
+    assert proc.returncode == 1
+
+
+def test_mutants_keep_the_shebang_line():
+    src = "#!/usr/bin/env python3\n# -*- coding: utf-8 -*-\nflag = 5 >= 3\n"
+    for m in mc.enumerate_mutants(src, None):
+        assert m.source.startswith("#!/usr/bin/env python3\n# -*- coding: utf-8 -*-\n")
+
+
+def test_runner_errors_are_not_kills():
+    assert mc.status_for_returncode(0) == "survived"
+    assert mc.status_for_returncode(1) == "killed"
+    for rc in (4, 5, 126, 127):
+        assert mc.status_for_returncode(rc) == "error"
+
+
+def test_pythonpath_into_the_checkout_is_remapped_to_the_sandbox(tmp_path):
+    repo, sandbox = tmp_path / "repo", tmp_path / "sb"
+    value = os.pathsep.join([str(repo / "src"), "/elsewhere", "rel"])
+    assert mc.remap_pythonpath(value, repo, sandbox) == os.pathsep.join(
+        [str(sandbox / "src"), "/elsewhere", "rel"]
+    )
+    assert mc.remap_pythonpath(str(repo), repo, sandbox) == str(sandbox)

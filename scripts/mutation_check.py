@@ -10,8 +10,9 @@ and reports every mutant the tests fail to notice (a SURVIVOR).
   - Scope: only files matching your high-stakes path list, and only the lines the
     branch changed (Google's changed-lines approach: a handful of mutants per PR,
     not thousands).
-  - Safety: mutants are applied in throwaway copies of the checkout. Your working
-    tree is never written.
+  - Safety: mutants are applied in throwaway copies of the checkout (file modes
+    kept; PYTHONPATH entries that point into the checkout are redirected to the
+    copy). Your working tree is never written.
   - Operators: comparison swap and boundary (`>=` to `>`), and/or swap, dropped
     `not`, negated `if`, flipped bool, int +1, arithmetic swap, `return X` to
     `return None`, `raise` to `pass` (fail-open), dropped call statement,
@@ -36,7 +37,8 @@ other than Python are not generated; such files are listed as `unsupported`.
 Exit codes: 0 every mutant killed (or nothing in scope, or no path list and not
 --require-paths); 1 at least one survivor; 2 fail-closed (unknown base, red
 baseline, no path list with --require-paths); 3 incomplete (time budget ran out
-before every mutant ran; reaching a limit is not a pass).
+before every mutant ran, or a mutant run ended in a runner error such as
+"command not found" rather than a test result; neither is a pass).
 """
 
 from __future__ import annotations
@@ -260,6 +262,13 @@ def enumerate_mutants(src: str, lines: Optional[Set[int]]) -> Iterator[Mutant]:
     """Yield one Mutant per applicable operator on the given lines (None = all)."""
     tree = ast.parse(src)
     orig = ast.unparse(tree)
+    # ast.unparse drops comments; keep the leading shebang / encoding lines so an
+    # executable target still runs.
+    header = ""
+    for text in src.splitlines(keepends=True):
+        if not text.startswith("#"):
+            break
+        header += text
     src_lines = src.splitlines()
     pragma_lines = {i + 1 for i, text in enumerate(src_lines) if PRAGMA in text}
     nodes = list(ast.walk(tree))
@@ -348,7 +357,7 @@ def enumerate_mutants(src: str, lines: Optional[Set[int]]) -> Iterator[Mutant]:
         except Exception:  # an operator produced an unprintable tree: skip it
             continue
         if new != orig:
-            yield Mutant(kind, nodes[i].lineno, new)
+            yield Mutant(kind, nodes[i].lineno, header + new)
 
 
 # --- sandbox runs -------------------------------------------------------------
@@ -367,10 +376,37 @@ def _copy_tree(workdir: Path, dest: Path) -> None:
         shutil.copy2(src, dst, follow_symlinks=False)
 
 
-def run_tests(cwd: Path, cmd: str, timeout: int) -> str:
+# Exit codes that mean "the runner could not run the tests", not "a test failed":
+# pytest usage error (4) and no tests collected (5), shell permission denied (126)
+# and command not found (127). Counting these as kills would report a perfect
+# score for mutants no test ever looked at.
+RUNNER_ERROR_CODES = {4, 5, 126, 127}
+
+
+def status_for_returncode(rc: int) -> str:
+    if rc == 0:
+        return "survived"
+    return "error" if rc in RUNNER_ERROR_CODES else "killed"
+
+
+def remap_pythonpath(value: str, workdir: Path, sandbox: Path) -> str:
+    """Point PYTHONPATH entries inside the real checkout at the sandbox copy, so
+    the tests import the mutant and not the original."""
+    out = []
+    root = str(workdir)
+    for entry in value.split(os.pathsep):
+        if entry == root or entry.startswith(root + os.sep):
+            entry = str(sandbox) + entry[len(root) :]
+        out.append(entry)
+    return os.pathsep.join(out)
+
+
+def run_tests(cwd: Path, cmd: str, timeout: int, workdir: Optional[Path] = None) -> str:
     env = dict(os.environ)
     env["PYTHONDONTWRITEBYTECODE"] = "1"  # never trust a stale .pyc of a mutant
     env["GIT_CEILING_DIRECTORIES"] = str(cwd.parent)
+    if workdir is not None and env.get("PYTHONPATH"):
+        env["PYTHONPATH"] = remap_pythonpath(env["PYTHONPATH"], workdir, cwd)
     try:
         p = subprocess.run(
             cmd,
@@ -383,7 +419,7 @@ def run_tests(cwd: Path, cmd: str, timeout: int) -> str:
         )
     except subprocess.TimeoutExpired:
         return "timeout"
-    return "survived" if p.returncode == 0 else "killed"
+    return status_for_returncode(p.returncode)
 
 
 def check(a: argparse.Namespace, workdir: Path) -> dict:
@@ -397,6 +433,7 @@ def check(a: argparse.Namespace, workdir: Path) -> dict:
         "ran": 0,
         "killed": 0,
         "skipped_budget": 0,
+        "runner_errors": 0,
         "score": None,
         "survivors": [],
         "results": [],
@@ -447,7 +484,7 @@ def check(a: argparse.Namespace, workdir: Path) -> dict:
             _copy_tree(workdir, w)
             workers.append(w)
         t0 = time.time()
-        if run_tests(workers[0], cmd, a.baseline_timeout) != "survived":
+        if run_tests(workers[0], cmd, a.baseline_timeout, workdir) != "survived":
             raise CheckError(
                 "baseline is not green in the sandbox copy; fix the suite (or "
                 "--test-cmd) before measuring mutants"
@@ -467,16 +504,19 @@ def check(a: argparse.Namespace, workdir: Path) -> dict:
             with lock:
                 w = free.pop()
             target = w / path
+            mode = target.stat().st_mode
             try:
                 target.unlink()
                 target.write_text(m.source)
+                os.chmod(target, mode)
                 t1 = time.time()
-                rec["status"] = run_tests(w, cmd, per_mutant)
+                rec["status"] = run_tests(w, cmd, per_mutant, workdir)
                 rec["secs"] = round(time.time() - t1, 1)
             finally:
                 if target.exists():
                     target.unlink()
                 target.write_text(sources[path])
+                os.chmod(target, mode)
                 with lock:
                     free.append(w)
             return rec
@@ -486,13 +526,14 @@ def check(a: argparse.Namespace, workdir: Path) -> dict:
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
-    ran = [r for r in results if r["status"] != "skipped_budget"]
+    ran = [r for r in results if r["status"] not in ("skipped_budget", "error")]
     killed = [r for r in ran if r["status"] in ("killed", "timeout")]
     summary.update(
         {
             "ran": len(ran),
             "killed": len(killed),
-            "skipped_budget": len(results) - len(ran),
+            "skipped_budget": sum(r["status"] == "skipped_budget" for r in results),
+            "runner_errors": sum(r["status"] == "error" for r in results),
             "score": round(len(killed) / len(ran), 3) if ran else None,
             "survivors": [r for r in ran if r["status"] == "survived"],
             "results": results,
@@ -565,6 +606,13 @@ def main(argv: Optional[List[str]] = None) -> int:
             file=sys.stderr,
         )
         return 1
+    if s["runner_errors"]:
+        print(
+            f"mutation-check INCOMPLETE: {s['runner_errors']} mutant run(s) ended in a "
+            "runner error (exit 4, 5, 126 or 127), so no test judged them.",
+            file=sys.stderr,
+        )
+        return 3
     if s["skipped_budget"]:
         print(
             "mutation-check INCOMPLETE: the time budget ran out before every mutant "

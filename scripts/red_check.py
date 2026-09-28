@@ -23,10 +23,14 @@ Verdicts per new test:
   NOT_GREEN     fails on head
   SKIPPED
 
-How it works (never touches your checkout): a temporary `git worktree` of the
-base is created, the branch's changed test files (plus any --support files) are
-copied over it, the test command runs there and in the current checkout, and
-both JUnit XML reports are compared. The worktree is removed afterwards.
+How it works (never touches your checkout): the test command runs in a
+throwaway copy of your working tree, and in a temporary `git worktree` of the
+base with the branch's changed test files (plus any --support files) copied
+over it; the two JUnit XML reports are compared. Both are removed afterwards.
+
+OK means the base failure came from an assertion. It does not prove it was the
+assertion you meant: the base message is printed next to each verdict, so
+compare it with the expected red the plan named.
 
 Runner-agnostic via JUnit XML. The default command is pytest; for other runners
 pass --test-cmd with `{tests}` and `{junit}` placeholders, e.g.
@@ -153,6 +157,20 @@ def changed_test_files(
     return seen
 
 
+def _copy_worktree(workdir: Path, dest: Path) -> None:
+    """Copy tracked and untracked-but-not-ignored files (the working-tree state)."""
+    listed = _git(
+        workdir, ["ls-files", "-z", "--cached", "--others", "--exclude-standard"]
+    )
+    for rel in filter(None, listed.split("\0")):
+        src = workdir / rel
+        if not src.is_file() and not src.is_symlink():
+            continue  # deleted in the working tree
+        dst = dest / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dst, follow_symlinks=False)
+
+
 def parse_junit(path: Path) -> Dict[str, Tuple[str, Optional[str], str]]:
     """{test_id: (tag, type, message)} from a JUnit XML report."""
     results: Dict[str, Tuple[str, Optional[str], str]] = {}
@@ -172,6 +190,11 @@ def parse_junit(path: Path) -> Dict[str, Tuple[str, Optional[str], str]]:
                 elif detail and tag == "error":
                     msg = f"{msg}: {detail}"
                 break
+        if tid in results:
+            raise RedCheckError(
+                f"duplicate test id {tid!r} in {path.name}; cannot tell the "
+                "cases apart (give them distinct names or classnames)"
+            )
         results[tid] = (tag, typ, msg)
     return results
 
@@ -226,24 +249,27 @@ def check(
     globs: Sequence[str],
     extra_assertion_types: Sequence[str],
     all_tests: bool,
-) -> List[dict]:
+) -> Tuple[List[dict], List[str]]:
     _git(workdir, ["rev-parse", "--verify", "--quiet", f"{base}^{{commit}}"])
     merge_base = _git(workdir, ["merge-base", base, "HEAD"]).strip()
     files = tests if tests else changed_test_files(workdir, merge_base, globs)
     if not files:
-        return []
-
-    head = run_tests(workdir, files, cmd_template, timeout)
-    if head is None:
-        raise RedCheckError(
-            "the test command produced no JUnit report on the current checkout; "
-            "cannot judge anything (check --test-cmd)"
-        )
+        return [], []
 
     tmp = Path(tempfile.mkdtemp(prefix="red-check-wt-"))
     wt = tmp / "base"
-    _git(workdir, ["worktree", "add", "--detach", "--quiet", str(wt), merge_base])
     try:
+        # Head side: a throwaway copy of the working tree (committed or not),
+        # so tests that write files never touch the real checkout.
+        head_copy = tmp / "head"
+        _copy_worktree(workdir, head_copy)
+        head = run_tests(head_copy, files, cmd_template, timeout)
+        if head is None:
+            raise RedCheckError(
+                "the test command produced no JUnit report on the current "
+                "checkout; cannot judge anything (check --test-cmd)"
+            )
+        _git(workdir, ["worktree", "add", "--detach", "--quiet", str(wt), merge_base])
         # The base's OWN tests identify which head tests are new.
         own = [f for f in files if (wt / f).is_file()]
         base_own = run_tests(wt, own, cmd_template, timeout) if own else {}
@@ -261,9 +287,11 @@ def check(
         _git(workdir, ["worktree", "prune"], check=False)
 
     collection_note = _collection_errors(base_run)
-    results = []
+    results: List[dict] = []
+    unreplayed: List[str] = []
     for tid, (htag, htyp, hmsg) in head.items():
         if not all_tests and tid in base_own:
+            unreplayed.append(tid)
             continue
         head_kind = classify_outcome(htag, htyp, hmsg, extra_assertion_types)
         if tid in base_run:
@@ -304,7 +332,7 @@ def check(
             }
         )
     results.sort(key=lambda r: r["test"])
-    return results
+    return results, sorted(unreplayed)
 
 
 BAD = {"WRONG_REASON", "NOT_RED", "NOT_GREEN"}
@@ -356,7 +384,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     workdir = Path(a.workdir).resolve()
     try:
-        results = check(
+        results, unreplayed = check(
             workdir,
             a.base,
             a.tests,
@@ -373,7 +401,12 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     bad = [r for r in results if r["verdict"] in (STRICT_BAD if a.strict else BAD)]
     if a.json:
-        print(json.dumps({"base": a.base, "results": results}, indent=1))
+        print(
+            json.dumps(
+                {"base": a.base, "results": results, "not_replayed": unreplayed},
+                indent=1,
+            )
+        )
     else:
         if not results:
             print("red-check: no new tests found")
@@ -385,6 +418,13 @@ def main(argv: Optional[List[str]] = None) -> int:
             ):
                 line += f"  (base: {r['base_message']})"
             print(line)
+    if unreplayed:
+        print(
+            f"red-check: {len(unreplayed)} existing test(s) in the changed files were "
+            "not replayed. If the branch changed an existing test's expectation, "
+            "rerun with --all-tests and state why the old expectation was wrong.",
+            file=sys.stderr,
+        )
     new_symbol = [r for r in results if r["verdict"] == "NEW_SYMBOL"]
     if new_symbol and not a.strict:
         print(
