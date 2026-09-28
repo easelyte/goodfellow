@@ -1,0 +1,70 @@
+name: Release
+
+# Publishes a GitHub Release when a vX.Y.Z tag is pushed. The release notes are the
+# matching "## [X.Y.Z] - date" section of CHANGELOG.md, so the changelog stays the single
+# source of truth. See RELEASING.md for the full procedure.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to (re)publish, e.g. v0.3.0. Updates the notes if the release exists."
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Tag must point at a commit on main
+        run: |
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "refs/tags/$TAG" origin/main; then
+            echo "::error::$TAG is not on main. Tag a commit that has been merged to main."
+            exit 1
+          fi
+
+      - name: Check versions and extract notes
+        id: notes
+        run: python scripts/release_notes.py notes --tag "$TAG" --out "$RUNNER_TEMP/notes.md" >> "$GITHUB_OUTPUT"
+
+      - name: Run tests
+        run: |
+          pip install pytest
+          cd scripts && python -m pytest -q
+
+      - name: Publish release
+        env:
+          VERSION: ${{ steps.notes.outputs.version }}
+          PRERELEASE: ${{ steps.notes.outputs.prerelease }}
+        run: |
+          flags=()
+          if [ "$PRERELEASE" = "true" ]; then flags+=(--prerelease); else flags+=(--latest); fi
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --title "Goodfellow $VERSION" --notes-file "$RUNNER_TEMP/notes.md" "${flags[@]}"
+          else
+            gh release create "$TAG" --verify-tag --title "Goodfellow $VERSION" \
+              --notes-file "$RUNNER_TEMP/notes.md" "${flags[@]}"
+          fi

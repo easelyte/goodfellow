@@ -1,6 +1,6 @@
 {
   "name": "goodfellow",
-  "description": "Named after the inventor of adversarial networks. Your good fellow for shipping code — adversarial review, knowledge compounding, follow-up tracking.",
+  "description": "Takes a change from idea to pull request with adversarial review at every step, tests that must be able to fail, and knowledge that compounds across runs.",
   "version": "0.2.0",
   "author": {
     "name": "easelyte",

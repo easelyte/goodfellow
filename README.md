@@ -1,396 +1,274 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/goodfellow-hero-dark.svg">
-    <img src="docs/assets/goodfellow-hero-light.svg" alt="Goodfellow — your good fellow for shipping code" width="880">
+    <img src="docs/assets/goodfellow-hero-light.svg" alt="Goodfellow: your good fellow for shipping code" width="880">
   </picture>
 </p>
 
 <p align="center">
-  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-475569?style=flat-square"></a>
   <a href="https://github.com/easelyte/goodfellow/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/easelyte/goodfellow/ci.yml?branch=main&style=flat-square&label=CI"></a>
+  <a href="https://github.com/easelyte/goodfellow/releases"><img alt="Latest release" src="https://img.shields.io/github/v/release/easelyte/goodfellow?include_prereleases&sort=semver&style=flat-square&color=7c3aed"></a>
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/github/license/easelyte/goodfellow?style=flat-square&color=475569"></a>
   <img alt="Python 3.10+" src="https://img.shields.io/badge/python-3.10%2B-475569?style=flat-square&logo=python&logoColor=white">
   <img alt="Claude Code plugin" src="https://img.shields.io/badge/Claude_Code-plugin-7c3aed?style=flat-square">
-  <img alt="Version 0.2.0" src="https://img.shields.io/badge/version-0.2.0-7c3aed?style=flat-square">
 </p>
 
-An opinionated development lifecycle for Claude Code.
-Your system gets smarter every time you ship.
+<p align="center"><b>A Claude Code plugin that takes a change from idea to pull request with adversarial review at every step, and remembers what it learned for next time.</b></p>
 
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/goodfellow-pipeline-dark.svg">
-    <img src="docs/assets/goodfellow-pipeline-light.svg" alt="Goodfellow lifecycle: Brainstorm to Spec (spec-review + research) to Plan (plan-review + research) to Execute (verify) to Ship (review · PR + merge), with a feedback loop where Ship writes to a knowledge store and Brainstorm reads from it — your system gets smarter every cycle" width="960">
-  </picture>
-</p>
+Goodfellow gives Claude Code a development lifecycle: brainstorm, spec, plan, execute, ship. Each
+stage is reviewed by a second model before the next one starts, review findings that are not fixed
+become tracked follow-ups instead of disappearing, and every run adds to a knowledge file the next
+run reads. It is for developers who already let Claude Code write real code and want the review,
+testing and follow-through a careful team would apply, without doing all of it by hand.
 
-Adversarial review at every stage. Knowledge that compounds. Nothing that slips.
+It is a set of skills, hooks and small standard-library Python scripts. There is no server, no
+account and no telemetry.
 
-## Why Goodfellow?
+[Features](#features) ·
+[Quickstart](#quickstart) ·
+[How it works](#how-it-works) ·
+[Skills](#skills) ·
+[Configuration](#configuration) ·
+[Principles](#principles) ·
+[FAQ and limits](#faq-and-limits) ·
+[Changelog](CHANGELOG.md)
 
-Every chain run extracts what you learned and feeds it into the next one.
-Safety-critical and major deferred findings become tracked loops — triaged, not forgotten.
-Polish-tier (minor) findings go to your knowledge file as gotchas.
-Your 50th feature ships with the wisdom of the first 49.
+## Features
 
-**What's different:**
-- **Multi-model adversarial review** — Claude + Codex/GPT reviewers catch what single-model review misses
-- **Research injection** — factual claims in review findings are verified via web search before acting on them
-- **Verifier pass** — before fixing a round 2+ finding, checks if it's still real. Prevents infinite fix-find-fix loops
-- **Knowledge compounding** — `.goodfellow/knowledge.md` accumulates principles, patterns, and gotchas across chain runs
-- **Seeded principles out of the box** — ships with curated, battle-tested universal design principles so a fresh install starts smart, not empty (see Memory backends below)
-- **Pluggable memory** — keep the zero-config flat knowledge file, or opt into a rich per-fact backend with a regenerated index and crash-safe migration
-- **Tests that can fail**: new tests must go red on an assertion before they go green (`red_check.py` replays them against the base), high-stakes tasks name a deliberate break the tests must catch, and an optional diff-scoped mutation check (`mutation_check.py`) reports every mutant your tests miss on the paths you mark high-stakes. See [Test quality](#test-quality)
-- **Follow-up tracking** — safety-critical and major deferred findings become loops in `.goodfellow/loops.json`, triaged with a two-reviewer system; polish-tier (minor) goes to knowledge gotchas
+- **Adversarial review at every stage.** Specs, plans and diffs are reviewed by Claude and, when the
+  Codex CLI is installed, by a GPT model as well. Different model families miss different defects.
+- **Review that stops for the right reason.** Rounds end when findings drop to polish, not at a fixed
+  count. A verifier re-checks old findings before anyone fixes them, and a judge drops findings that
+  do not hold up against the code.
+- **Tests that can fail.** New tests must fail on the base branch on an assertion before they pass.
+  `red_check.py` checks this automatically, and an optional mutation check shows which changed lines
+  on high-stakes paths no test would catch.
+- **Nothing slips.** Blockers stop the pull request. Major findings you defer are filed as loops in
+  `.goodfellow/loops.json` and triaged later by two independent reviewers. Minor ones become
+  knowledge gotchas.
+- **Knowledge that compounds.** Each run appends what it learned to `.goodfellow/knowledge.md`, and
+  the next brainstorm, review and plan read it. About 80 seeded design principles ship with the
+  plugin, so a fresh install does not start empty.
+- **Guards at the tool layer.** A `PreToolUse` hook blocks `git add -A`, force-pushes to `main` and
+  `--dangerously-skip-permissions`, plus any rules your project declares. Unlike an instruction in a
+  prompt, it still applies after context compaction.
+- **Autopilot with an audit trail.** Run the chain hands-off, or in dry-run mode to see what it would
+  do. Every decision is logged to `.goodfellow/runs/`.
 
-## Install
+## Quickstart
 
-Goodfellow ships its own single-repo marketplace manifest (`.claude-plugin/marketplace.json`) at the repo root, so it installs **directly from this public GitHub repo**. This works today and does not depend on the Anthropic plugin directory — no directory listing is required for any of the commands below.
+**You need** Claude Code, git, and Python 3.10 or newer. The [Codex CLI](https://github.com/openai/codex)
+is optional but recommended; without it, reviews use a single Claude reviewer.
 
-**Inside Claude Code (recommended):**
+**1. Install** (inside Claude Code):
+
 ```text
 /plugin marketplace add easelyte/goodfellow
 /plugin install goodfellow@goodfellow
 /reload-plugins
 ```
-`/plugin install goodfellow@goodfellow` reads `plugin@marketplace` — both are named `goodfellow` here (the plugin lives at the marketplace repo root, `source: "./"`).
 
-**One command** (Claude Code v2.1.275+):
+**2. Check it loaded:** type `/goodfellow:` and the skills are listed.
+
+**3. Run the chain** on something small in a git repository:
+
 ```text
-/plugin install goodfellow --marketplace easelyte/goodfellow
+/goodfellow:brainstorm "Add a --json flag to the export command"
 ```
 
-**From your shell** (non-interactive / scripting):
+Goodfellow asks up to three questions (each with a recommended answer), writes a spec, and hands off
+to `spec-review`, `plan`, `plan-review`, `execute` and `ship` in turn. You confirm at the points that
+need a decision. At the end you have a pull request, and `.goodfellow/` holds what was learned and
+anything deferred.
+
+```text
+/goodfellow:close        # end the session: persist learnings, check open loops
+```
+
+<details>
+<summary>Other ways to install</summary>
+
+From your shell, for scripting:
+
 ```bash
 claude plugin marketplace add easelyte/goodfellow
 claude plugin install goodfellow@goodfellow
 ```
 
-**Session-only** (for testing, no persistent install):
+In one command (Claude Code v2.1.275 or newer):
+
+```text
+/plugin install goodfellow --marketplace easelyte/goodfellow
+```
+
+For one session only, from a local checkout (nothing is registered):
+
 ```bash
 claude --plugin-dir /path/to/goodfellow
 ```
-This loads the plugin for the current session only from a local checkout — nothing is registered or persisted.
 
-> **The Anthropic directory is optional — for discovery, not for installing.** `/plugin marketplace add easelyte/goodfellow` clones this repo and reads the manifest straight from GitHub; it never touches Anthropic's plugin directory. Being listed in [`claude-plugins-community`](https://github.com/anthropics/claude-plugins-community) only adds discoverability (browsing `/plugin` → **Discover**). Once that listing lands you can also `/plugin install goodfellow@claude-community`, but the direct-from-repo commands above always work and track `main` on every marketplace refresh — no commit-pin, no nightly-sync lag.
+`goodfellow@goodfellow` is `plugin@marketplace`: this repository is its own single-plugin marketplace
+(`.claude-plugin/marketplace.json`), so installing does not depend on any plugin directory listing.
+The marketplace tracks `main`; `/plugin marketplace update goodfellow` pulls the latest.
 
-## Quick Start
+</details>
 
-```bash
-# 1. Start a design
-/goodfellow:brainstorm "Add user authentication with OAuth"
+## How it works
 
-# 2. Each skill auto-dispatches the next:
-#    brainstorm -> spec-review -> plan -> plan-review -> execute -> ship
-#    Rounds 1-3 are gateless; round 4+ asks once. Knowledge compounds across runs.
-
-# 3. Check what accumulated
-cat .goodfellow/knowledge.md
-
-# 4. Close the session cleanly
-/goodfellow:close
+```mermaid
+flowchart LR
+    B["brainstorm<br/>or grill"] --> SR{{"spec-review"}}
+    SR --> P["plan"] --> PR{{"plan-review"}}
+    PR --> E["execute<br/>test-first, per task"] --> S{{"ship<br/>review, red check, PR"}}
+    S -- "blocker" --> E
+    S -- "major, deferred" --> L[("loops.json")]
+    S -- "learnings, minor" --> K[("knowledge.md")]
+    K -. "read every run" .-> B
+    K -. "read every run" .-> SR
+    K -. "read every run" .-> PR
+    K -. "read every run" .-> E
+    L -- "triage" --> B
 ```
 
-## The Knowledge Loop
+Hexagons are review gates. Each gate runs rounds of two reviewers (a Claude subagent and the Codex
+bridge, or Claude alone) until findings drop to polish:
 
-Every skill in the chain participates in a read-extract-persist cycle:
+1. **Research.** Factual claims the document depends on (library versions, API behaviour) are checked
+   with a web search before review starts, so reviewers argue from facts.
+2. **Review.** The two reviewers take different lenses: one checks testability and completeness, the
+   other correctness, security and edge cases. On the Codex path a judge grounds or drops each
+   finding against the code.
+3. **Verify.** From round two, a verifier checks whether each finding is still real before it is
+   fixed, which stops fix-find-fix loops.
+4. **Route.** Blockers are fixed. Majors that are not fixed become loops. Minors become gotchas.
 
-| Skill | Reads | Writes |
+The design, review, plan and execute skills read the seeded principles and your knowledge file
+before they work, and `ship`, `snap-compact` and `close` write back to it. Your fiftieth feature ships with what the first
+forty-nine taught.
+
+### Tests that can fail
+
+A green suite of AI-written tests often proves little: tests that pass on their first run, go red
+only because a function does not exist yet, grep the source instead of running it, or have their
+expected value edited until they pass. Goodfellow asks for evidence that each new test can fail.
+
+<p align="center">
+  <img src="docs/assets/red-check-demo.svg" alt="red_check.py output: one new test OK because it failed on the base with an assertion, one WRONG_REASON because it failed on the base with a TypeError, one NOT_RED because it already passed on the base; exit code 1" width="900">
+</p>
+
+- **In the prompts.** `plan` names each task's expected red (the assertion the new test fails with
+  before the change). `execute` works test-first and never edits an expected value to match output.
+  The reviewers look for source-grep tests, bent expectations and unpinned fail-open branches.
+- **`red_check.py` (runs in `ship`).** Replays the branch's new tests against the base in a temporary
+  worktree. Each must fail there on an assertion and pass on the branch. It reads JUnit XML, so any
+  runner works; pytest is the default, others use `--test-cmd`.
+- **`mutation_check.py` (opt-in).** List high-stakes paths in `.goodfellow/high_stakes_paths.txt`
+  (see [the example](configs/high_stakes_paths.example.txt)) and `ship` mutates only the Python lines
+  the branch changed there, in throwaway copies and under a time budget, and reports every mutant the
+  tests miss. Running out of budget is reported as incomplete, never as a pass. Code that sends
+  signals, spawns processes, or deletes or writes files is only mutated inside a private PID
+  namespace (`--isolated`) or with fakes (`--fakes`), so a mutant cannot aim those calls at real
+  resources.
+
+## Skills
+
+Invoke any skill as `/goodfellow:<name>`. The chain skills hand off to the next one automatically.
+
+| Skill | What it does | Uses Codex |
 |---|---|---|
-| brainstorm | All sections (Principles, Patterns, Gotchas) + seeded principles | — |
-| spec-review / plan-review | Principles + Gotchas + seeded principles (flags violations by `P-NNN`) | — |
-| plan | Principles + seeded principles (per-task principles pass) | — |
-| execute | Gotchas + seeded principles (catches footguns at code-writing stage) | — |
-| ship | — | New entries with `[pending]` tag |
-| snap-compact | — | Extracts learnings before context loss |
-| close | — | Promotes `[pending]` to confirmed |
+| **brainstorm** `[--from-loop N]` | Explores the design with at most three questions, writes a spec. | No |
+| **grill** `"<topic>"` | Opt-in, one-question-at-a-time interview for fuzzy or high-stakes intent. Ends when no decision is open. | No |
+| **spec-review** `<path>` | Research, then multi-round adversarial review of a spec. | Optional |
+| **plan** `<spec>` | Task-by-task plan with dependencies, acceptance criteria and each test's expected red. | No |
+| **plan-review** `<path>` | Research, then multi-round adversarial review of a plan. | Optional |
+| **execute** `<plan>` | Implements the plan test-first, verifying after each task. Can run independent tasks in parallel worktrees. | Optional |
+| **ship** `[--quick]` | Verification, red check, adversarial diff review, PR, then learnings and follow-up loops. | Optional |
+| **codex-review** | Direct review of the current diff, a file or a commit. | Optional |
+| **triage** | Two independent reviewers per open loop, reconciled, confirmed by you in one batch. | Optional |
+| **public-pr** | Pre-open gate for PRs to public or upstream repositories: internal-reference scrub, contributor checklist, cross-fork `gh pr create`. | No |
+| **snap-compact** | Saves learnings and re-checks the guard set before context compaction. | No |
+| **close** | Ends a session: commit check, promote learnings, stale-loop check, branch cleanup. | No |
+| **branch** `<topic>` | Creates an isolated git worktree for feature work. | No |
+| **prune-stale** | Removes merged branches, orphan worktrees and old logs. | No |
 
-**Seeded universal principles.** Goodfellow ships with a curated set of battle-tested, stack-agnostic design principles (`knowledge/principles.md`) so a fresh install starts with accumulated wisdom rather than an empty knowledge file. These are plugin-owned and read-only (updated via plugin update, never clobbering your `.goodfellow/knowledge.md`). A web supplement (`knowledge/principles-web.md`, JS/React/Next.js/Postgres/RLS rules) is read only when web context is opted in — see `GOODFELLOW_PRINCIPLES_WEB` below, or auto-detected by a `package.json` at the project root.
+`brainstorm` is the default front end. Use `grill` when you are not sure what you want yet; it is
+never picked automatically.
 
-The chain skills load the principles by **progressive disclosure**, the same way Agent Skills load: every run injects only the lightweight *index* (each principle's `P-NNN` id, title, and one-line rule), and the model pulls a principle's full body on demand once it decides the principle is relevant. This keeps the always-loaded footprint small (~2.8k tokens for the whole core set, vs ~17k for the full bodies) so a growing corpus never crowds out the task — see [`docs/instruction-density-budget.md`](docs/instruction-density-budget.md) for the measured budget and the "growth is displacement, not accumulation" rule enforced in CI. Violations are still cited by stable `P-NNN` id.
-
-The knowledge file (`.goodfellow/knowledge.md`) is append-only by default, human-curated, and intentionally unbounded. Entries follow a lightweight convention:
-
-```markdown
-## Principles
-- 2026-06-02: Always validate at the boundary, never trust upstream sanitization
-
-## Patterns
-- 2026-06-02: Convergence-based review termination — stop when severity drops, not when count hits zero
-
-## Gotchas
-- [pending] 2026-06-02: The Codex CLI has no --file flag — use codex exec review with --commit/--base/--uncommitted
-```
-
-## Memory Backends
-
-Goodfellow's accumulated knowledge has two backends, selected by `GOODFELLOW_MEMORY` (the seeded principles above are read in both):
-
-- **`flat` (default, zero-config).** The single append-only `.goodfellow/knowledge.md` shown above. Human-curated, unbounded, dead simple. Nothing to set up.
-- **`rich` (opt-in: `GOODFELLOW_MEMORY=rich`).** One file per fact under `.goodfellow/memory/*.md` (typed frontmatter), a regenerated index `.goodfellow/MEMORY.md`, and per-domain registries. Built for scale: writes are atomic + file-locked + transactional, the first rich write **auto-migrates** an existing `knowledge.md` (crash-resumable, non-destructive), and chain skills read the index with an ordered fallback so recall never silently degrades.
-
-Switching is safe and reversible — `flat` is never modified, and the rich path is entirely additive. Most users never need `rich`; reach for it when your knowledge file grows large enough that a single flat file becomes unwieldy. Tuning: `GOODFELLOW_MEMORY_WARN_KB` (advisory index-size warning). All three memory env vars fail loud on invalid values.
-
-## Follow-Up Tracking
-
-At ship time, deferred review findings are routed by their severity tier
-(`blocker` > `major` > `minor`):
-- **Safety-critical / blocker (security/data-loss/correctness):** blocks PR creation. Must be fixed or explicitly waived by the operator — filing as a loop is not sufficient, so a blocker is resolved at ship time rather than deferred.
-- **Major:** does **not** block the PR, but is filed as a loop in `.goodfellow/loops.json` for follow-up. Substantive work, never dropped and never downgraded to a gotcha.
-- **Polish-tier / minor:** added to the knowledge file as gotchas (not filed as loops).
-
-Spec-review and plan-review don't file loops — their unresolved findings carry forward to the next chain stage.
-
-```bash
-# File a follow-up manually
-/goodfellow:ship  # (blocks on safety-critical, files non-blocking as loops)
-
-# List open loops (inside Claude Code — CLAUDE_PLUGIN_ROOT is set automatically)
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/loop_store.py" list
-
-# Seed a brainstorm from a loop
-/goodfellow:brainstorm --from-loop 3
-
-# Triage accumulated loops
-/goodfellow:triage
-```
-
-**Priority scale:** p1 = critical, p2 = high, p3 = medium (default), p4 = low (round 4+ findings).
-
-**Anti-whack-a-mole design:**
-- Blocker (safety-critical) and major findings become loops; polish-tier (minor) goes to knowledge gotchas
-- Round 4+ findings file at lowest priority (except safety-critical)
-- Soft cap warning at 15 active loops
-- Triage has a 3-cycle hard cap on "still unclear" — forces a decision
-
-## Autopilot Mode
-
-```bash
-# Full auto — chain runs hands-off with strategic halts
-GOODFELLOW_AUTOPILOT=1
-
-# Dry run first — logs decisions without mutating project code
-# (the decision log itself IS written to .goodfellow/runs/ — that's the audit trail)
-GOODFELLOW_AUTOPILOT=dry-run
-```
-
-**Strategic halts** — the chain stops itself rather than guessing:
-- Parent self-review (spec-review/plan-review step 0.5) hits a finding that needs an operator decision
-
-**Planned** (not yet wired into the chain):
-- `confidence: low` in spec frontmatter (architecture-changing unknowns)
-- Verifier flags >50% of findings as stale/noise in a round
-- Unresolved questions that would change the architecture
-
-Decision log written to `.goodfellow/runs/<timestamp>-<pid>.jsonl` for auditability.
-
-## Triage
-
-When loops accumulate, `/goodfellow:triage` helps separate real defects from noise:
-
-1. Two independent reviewers assess each loop (Claude + Codex when available, single Claude otherwise)
-2. Reconciliation: both agree (high confidence), one opinion + one unclear (medium), disagree (low)
-3. Operator confirms/overrides in a batch table
-4. Decisions logged to `.goodfellow/triage-log.jsonl` for calibration
-
-## Skills Reference
-
-### The Chain (7 skills)
-
-| Skill | Invocation | Codex? | Autopilot? |
-|---|---|---|---|
-| brainstorm | `/goodfellow:brainstorm [--from-loop N]` | No | Picks own approach |
-| grill | `/goodfellow:grill "<topic>"` | No | Write-from-context (`=1`) |
-| spec-review | `/goodfellow:spec-review <path>` | Optional | Full loop |
-| plan | `/goodfellow:plan <spec-path>` | No | Auto-dispatches |
-| plan-review | `/goodfellow:plan-review <path>` | Optional | Full loop |
-| execute | `/goodfellow:execute <plan-path>` | Optional | All tasks |
-| ship | `/goodfellow:ship [--quick]` | Optional | Full auto |
-
-`brainstorm` and `grill` are sibling design front-ends that produce the same spec artifact and both
-auto-dispatch spec-review. Routing is by intent: **clear intent → `brainstorm`** (default, ≤3
-questions); **fuzzy or high-stakes intent → `grill`** (explicit invocation only — `/goodfellow:grill`
-or "grill me on X" / "interview me about X"; a relentless one-question-at-a-time interview that
-self-terminates when its decision ledger is empty). `grill` never auto-selects over `brainstorm`.
-
-`execute` runs a plan's tasks **serially by default**. When a phase has enough genuinely independent
-work (roughly ≥3 tasks with no dependency edge between them), it can fan out **worktree-isolated
-parallel implementers** — one agent per task, each running in its own runtime-isolated git worktree
-branched off a checkpoint commit, with results reconciled by merge. Because no two children ever
-write the same working tree, concurrent implementers can't clobber or strand each other's commits;
-the isolation is enforced at the runtime layer (not by prose), and file overlap becomes a
-merge-cleanliness hint rather than a corruption hazard. Fan-out is the justified exception, not a
-default mode — below the floor, or without runtime-enforced isolation, `execute` stays serial.
-
-### Review and Triage (2 skills)
-
-| Skill | Invocation | Codex? |
-|---|---|---|
-| codex-review | `/goodfellow:codex-review` | Optional (single-Claude fallback) |
-| triage | `/goodfellow:triage` | Optional |
-
-### Session Lifecycle (4 skills)
-
-| Skill | Invocation |
-|---|---|
-| snap-compact | `/goodfellow:snap-compact` |
-| close | `/goodfellow:close` |
-| branch | `/goodfellow:branch <topic>` |
-| prune-stale | `/goodfellow:prune-stale` |
-
-## Codex Integration (Optional)
-
-The [Codex CLI](https://github.com/openai/codex) is where the real adversarial value lives. When present, review skills run cross-model review (Claude + Codex/GPT) — two different model families catching different defect classes. Without Codex, reviews fall back to a single Claude reviewer. It still works, but you lose the cross-model diversity that makes adversarial review genuinely adversarial.
-
-**Recommended setup:** Opus as your main session, Codex + Sonnet as the reviewers. Three perspectives: Opus reconciles, Sonnet reviews, Codex catches what Claude misses. For the full benefit, [install the free Codex CLI](https://github.com/openai/codex).
-
-These are practical recommendations from daily use, not formal benchmarks.
-
-### Why Codex specifically: cost
-
-A second, *independent* model reviewing the change beats one model reviewing its
-own work — it catches the failures the author's model rationalized away. The
-reason to make that second model Codex is **cost**:
-
-- **Near-zero marginal cost.** Run direct via the Codex API, per-token pricing is
-  low; run it through a Codex CLI subscription, the included limits are generous
-  enough that an adversarial pass on every change is effectively free at the
-  margin. You are not paying premium-model rates to review every diff.
-- **A different model family** from the one writing the code, so its blind spots
-  differ — the whole point of an adversarial second opinion.
-- **The result:** adversarial review you can afford to run on *every* change, plus
-  a second grounding pass (below) that drops the reviewer's own weak findings, at
-  the same near-zero marginal cost.
-
-### Two-stage generator + judge
-
-On the Codex path, `codex-review` (and the review step of `execute`/`ship`) runs
-two passes: a **generator** emits structured per-finding blocks, then a **judge**
-grounds-or-drops each one (evidence + confidence threshold + diff-boundary scope).
-A real blocker is never silently dropped — any judge/validation problem fails OPEN
-to the unjudged findings plus a degradation banner. The final review carries a
-`## Judge audit` table. The single-Claude fallback path is UNJUDGED and says so.
-
-### Optional static-analysis pre-pass (D1)
-
-For `--commit` and `--base` code reviews the bridge can prepend a deterministic
-static-analysis digest (as corroborating signal, not the finding list). Every
-analyzer is **optional and auto-detected** — if the binary is not installed the
-pre-pass skips it with a note and the review proceeds. Install whichever you want:
-
-| Tool | Detects | Runs by default |
-|---|---|---|
-| [`ruff`](https://github.com/astral-sh/ruff) | Python lint (`--isolated`, no repo config) | Yes, if installed |
-| [`shellcheck`](https://www.shellcheck.net/) | Shell lint (`--norc`, no repo config) | Yes, if installed |
-| [`gitleaks`](https://github.com/gitleaks/gitleaks) | Secrets in the reviewed history | Yes, if installed (uses the vendored `configs/gitleaks.toml`) |
-| [`semgrep`](https://github.com/semgrep/semgrep) | Generic footguns (vendored local ruleset, never `--config auto`) | Yes, if installed |
-| `eslint` / `tsc` / `mypy` | JS/TS/Python (executing analyzers) | Only with `GOODFELLOW_TRUST_ANALYZERS=1` |
-
-Executing analyzers (`eslint`/`tsc`/`mypy`) stay OFF by default — they load
-project config and execute in the repo; opt in with `GOODFELLOW_TRUST_ANALYZERS=1`
-only for repos you trust.
-
-```bash
-# Force-disable Codex even when installed
-GOODFELLOW_CODEX=0
-
-# Set the Claude reviewer model
-GOODFELLOW_REVIEW_MODEL=opus    # Strongest — no-Codex fallback default
-GOODFELLOW_REVIEW_MODEL=sonnet  # Cheaper; the spec/plan-review parallel-reviewer default
-GOODFELLOW_REVIEW_MODEL=haiku   # Quick passes on small diffs
-```
-
-`GOODFELLOW_REVIEW_MODEL` names the Claude reviewer model. It is honored in two
-places: the bridge's single-Claude reviewer when Codex is absent (a script env
-read), and the parallel Claude reviewer that `spec-review` / `plan-review`
-dispatch alongside Codex (a prose-directed model choice in those skills). It never
-reaches the Codex/GPT path (that path takes `GOODFELLOW_CODEX_MODEL`).
-
-Two defaults apply when the variable is UNSET, by design:
-- **No-Codex bridge fallback → `opus`.** With no Codex there is no cross-family
-  reviewer, so verifier strength is the only lever; under-tiering the sole
-  reviewer below the code's generator gives false confidence. This is the only
-  default this change flips.
-- **`spec-review`/`plan-review` parallel Claude reviewer → `sonnet`** (the value
-  written in those skills). Codex/GPT already supplies the cross-family
-  verification, so the parallel Claude reviewer stays cheap without weakening the
-  gate.
-
-The table below describes the **bridge reviewer** the review skills call. In
-addition, `spec-review` and `plan-review` always dispatch their own parallel
-Claude Reviewer-1 (default `sonnet`) — so those two skills run two reviewers even
-when Codex is absent (parallel Sonnet + the bridge's Claude fallback).
-
-**How the bridge reviewer composes:**
-
-| Codex | GOODFELLOW_REVIEW_MODEL | Bridge reviewer | Notes |
-|---|---|---|---|
-| Present | (any) | Codex/GPT (judged) | Cross-family reviewer; this variable does not reach the Codex path |
-| Absent | opus (default) | Single Opus reviewer | Strongest verifier when there is no cross-family reviewer |
-| Absent | sonnet | Single Sonnet reviewer | Correct when your generator is Sonnet; cheaper |
-| Absent | haiku | Single Haiku reviewer | Quick passes on small diffs |
-
-## Philosophy
-
-- **Cross-model review catches what single-model misses** — different training lineages find different defect classes; same-model duplication adds little
-- **Research injection grounds findings in verified facts** — factual claims are web-searched, not assumed
-- **Convergence-based, not round-count-based** — stop when severity drops, not at an arbitrary round number
-- **Verifier-before-fix prevents infinite loops** — don't burn fix cycles on stale findings
-- **Knowledge should compound** — every chain run makes the next one better
-- **Follow-ups need tracking, not just noting** — deferred findings become loops, triaged, not forgotten
-- **Sessions deserve closing rituals** — persist learnings, check loops, clean up
+`execute` runs tasks one at a time by default. When a phase has about three or more tasks with no
+dependency between them, it can fan them out to parallel implementers, each in its own git worktree,
+and merge the results. Without runtime-enforced worktree isolation it stays serial.
 
 ## Configuration
 
+Everything works without configuration. These environment variables change the defaults; invalid
+values fail loudly rather than falling back.
+
 | Variable | Default | Purpose |
 |---|---|---|
-| `GOODFELLOW_AUTOPILOT` | unset | `1` for full auto, `dry-run` for observe mode |
-| `GOODFELLOW_CODEX` | `1` | `0` to force-disable Codex |
-| `GOODFELLOW_CODEX_MODEL` | unset | GPT model id for the Codex path only (unset → codex default). Never receives a Claude model name. |
-| `GOODFELLOW_REVIEW_MODEL` | `opus` fallback / `sonnet` parallel | Claude reviewer model (`opus`/`sonnet`/`haiku`). When set, drives BOTH the no-Codex fallback reviewer and the spec/plan-review parallel Claude reviewer. Unset defaults differ: `opus` for the fallback, `sonnet` for the parallel reviewer. Never reaches the Codex/GPT path. |
-| `GOODFELLOW_TRUST_ANALYZERS` | unset | `1` enables the executing D1 analyzers (`eslint`/`tsc`/`mypy`) — only for trusted repos |
-| `GOODFELLOW_CODEX_STAGE_TIMEOUT` | `300` | Per-stage Codex timeout (seconds). The pipeline runs Codex twice (generator + judge), so total wall-clock is up to 2×. |
-| `GOODFELLOW_TAVILY_KEY` | unset | Tavily API key for batch research verification (optional — falls back to WebSearch) |
-| `GOODFELLOW_TRIAGE_RETENTION_DAYS` | `90` | Days to keep closed-loop triage entries |
-| `GOODFELLOW_RUNS_RETENTION_DAYS` | `90` | Days to keep autopilot run logs |
-| `GOODFELLOW_PRINCIPLES_WEB` | unset | `1` forces reading the web supplement (`knowledge/principles-web.md`) alongside core (and hard-errors if that file is missing — packaging drift). Unset or empty → auto-detected by a `package.json` at the project root (best-effort: core-only if the supplement isn't present). Any other non-empty value hard-errors. |
-| `GOODFELLOW_MEMORY` | `flat` | Memory backend. `flat` (default): append-only `.goodfellow/knowledge.md` with `[pending]→confirmed` promotion — zero-config, unchanged. `rich`: per-fact files (`.goodfellow/memory/*.md`) + regenerated index (`.goodfellow/MEMORY.md`) + domain registries + hybrid recall; first rich write auto-migrates an existing `knowledge.md`. Any other value hard-errors (no silent fall-back). The gate is enforced at the **chain-skill dispatch** level — skills resolve the mode (via `memory_config.py`) before choosing the flat or rich path. `scripts/memory_index.py` is the rich backend implementation invoked once rich is selected; it is not itself mode-gated, so don't invoke it directly while in `flat` mode. |
-| `GOODFELLOW_MEMORY_WARN_KB` | `16` | Rich-mode advisory size threshold (KB). When `MEMORY.md` exceeds it, regenerate prints a stderr warning suggesting `/goodfellow:triage`. Must be a positive integer; any other value hard-errors. Warning only — regeneration always completes. |
-| `GOODFELLOW_HIGH_STAKES_PATHS` | unset | Path to a high-stakes glob list for `mutation_check.py`. Unset → `.goodfellow/high_stakes_paths.txt` if present; with neither, the mutation check is skipped (and says so). A set path that does not exist is an error, not a skip. |
-| `GOODFELLOW_GUARDS` | `1` | Tool-layer PreToolUse guards (see below). `0` disables the built-in universal guards; user BLOCK rules in `.goodfellow/guards.json` still run. `CLAUDE_HOOK_BYPASS=1` disables everything for one command. |
+| `GOODFELLOW_AUTOPILOT` | unset | `1` runs the chain hands-off; `dry-run` logs decisions without changing project files. |
+| `GOODFELLOW_CODEX` | `1` | `0` disables Codex even when it is installed. |
+| `GOODFELLOW_CODEX_MODEL` | Codex default | GPT model for the Codex reviewer. |
+| `GOODFELLOW_REVIEW_MODEL` | see below | Claude reviewer model: `opus`, `sonnet` or `haiku`. |
+| `GOODFELLOW_CODEX_STAGE_TIMEOUT` | `300` | Seconds per Codex stage. Generator and judge are two stages. |
+| `GOODFELLOW_TRUST_ANALYZERS` | unset | `1` also runs `eslint`, `tsc` and `mypy` in the review pre-pass. These execute project config, so only for repositories you trust. |
+| `GOODFELLOW_TAVILY_KEY` | unset | Tavily API key for batch research. Without it, research uses Claude's web search. |
+| `GOODFELLOW_MEMORY` | `flat` | Knowledge backend: `flat` or `rich` (see below). |
+| `GOODFELLOW_MEMORY_WARN_KB` | `16` | Rich mode: warn when the index exceeds this size. |
+| `GOODFELLOW_PRINCIPLES_WEB` | auto | `1` loads the web principles (JS, React, Next.js, Postgres). Auto-enabled when a `package.json` is present. |
+| `GOODFELLOW_HIGH_STAKES_PATHS` | `.goodfellow/high_stakes_paths.txt` | Glob list that enables the mutation check. |
+| `GOODFELLOW_GUARDS` | `1` | `0` turns off the built-in guards. Project rules still apply. |
+| `GOODFELLOW_TRIAGE_RETENTION_DAYS` | `90` | Days to keep closed triage entries. |
+| `GOODFELLOW_RUNS_RETENTION_DAYS` | `90` | Days to keep autopilot run logs. |
 
-### Test quality
+<details>
+<summary><b>Reviewers and models</b></summary>
 
-AI-written tests fail in a recognisable way: they pass on their first run, go red only because a symbol does not exist yet, grep the source instead of running it, or get their expected value edited until the suite is green. A green suite of such tests proves little. Goodfellow asks for evidence that each test can fail, in three layers:
+With the Codex CLI installed, the bridge reviewer is Codex (generator plus judge), and
+`spec-review` and `plan-review` add a parallel Claude reviewer (default `sonnet`). Without Codex, the
+bridge falls back to a single Claude reviewer (default `opus`, so the only reviewer is not weaker than
+the model that wrote the code). Setting `GOODFELLOW_REVIEW_MODEL` overrides both Claude reviewers; it
+never reaches the Codex path.
 
-1. **Prompts (always on).** `plan` asks every behaviour task for its expected red (the assertion message the new test fails with before the change) and, on high-stakes paths, the fail-closed branches and boundaries to pin plus one deliberate break per rule. `execute` works test-first: the red must be an assertion, a missing symbol gets a wrong-answer stub first, expected values are never edited to match output, and high-stakes tasks break the code on purpose (on a saved copy) to confirm a test notices. The Codex reviewer checks the diff's tests for source-grep tests, negatives denied for an unrelated reason, unpinned fail-open branches and boundaries, and bent expectations. Principles P-094 to P-096.
-2. **`scripts/red_check.py` (ship, runs by default).** Replays the branch's new tests against the base in a temporary worktree and requires each to fail there on an assertion, then pass on the branch. Verdicts: `OK`, `WRONG_REASON` (red from a crash such as a TypeError, not an assertion), `NOT_RED` (already passes on the base), `NOT_GREEN`, `SKIPPED`, `UNCLEAR` (a failure it cannot classify; teach it with `--assertion-type` or `--assertion-pattern`), and `NEW_SYMBOL` (the code under test does not exist on the base, so only the stub-first red from development can show the test works; reported, and a failure under `--strict`). It reads JUnit XML, so it works with any runner: pytest is the default, others use `--test-cmd "... {tests} ... {junit}"`.
-3. **`scripts/mutation_check.py` (ship, opt-in).** Create `.goodfellow/high_stakes_paths.txt` (globs; see [`configs/high_stakes_paths.example.txt`](configs/high_stakes_paths.example.txt)) and ship mutates only the Python lines the branch changed in those files: comparison and boundary flips, `raise` to `pass`, `return X` to `return None`, negated conditions and the like. Every mutant the tests miss is reported with its file and line. Mutants run in throwaway copies of the checkout, never in your working tree, under a time budget; running out of budget is reported as incomplete, not as a pass. Each test run gets its own process group with a per-mutant timeout, and the whole group is killed on timeout, on exit and on SIGTERM/SIGINT, so a mutant that loops forever cannot leave a runner behind. It runs at `nice` 10 with at most `min(4, CPUs/2)` workers by default (`--workers`, `--nice`). It refuses to mutate code that sends signals, spawns processes, deletes or writes files, because a mutant can aim those calls at real resources: a flipped ownership check in cleanup code kills every process it can see. The rule is to never mutation-test such code outside a fake or an isolated namespace. `--isolated` re-runs the whole check inside a private PID namespace (`unshare --pid --fork --mount-proc`, failing closed if none can be made), which covers signal and spawn calls; `--fakes` confirms the tests replace delete, write, signal or spawn calls with fakes or temp directories, and is required for delete/write code and for calls the scan cannot see through (`getattr` on a risky module, dynamic imports, `ctypes`), because a PID namespace does not protect the filesystem. The cleanup code itself (`scripts/proc_group.py`) is guarded independently of its own containment check: it only sweeps processes inside the sandbox root (two independently written containment checks) and below the temp directory, never signals pid 1, itself, its ancestors or other users' processes, sends SIGTERM before SIGKILL, and signals nothing if more than 20 processes qualify.
+A practical setup is Opus for your main session with Codex and Sonnet reviewing. Codex is worth
+having mainly for cost: an adversarial pass from a different model family on every change, at little
+marginal cost on a Codex subscription.
 
-### Tool-layer guards
+For `--commit` and `--base` reviews the bridge can prepend a static-analysis digest from `ruff`,
+`shellcheck`, `gitleaks` (with the vendored [`configs/gitleaks.toml`](configs/gitleaks.toml)) and
+`semgrep` (vendored local rules, never `--config auto`). Each is used if installed and skipped with
+a note if not.
 
-A constraint whose violation is expensive to reverse does not belong in prose. Compaction is optimized for task accuracy, so nothing measures whether a "never do X" instruction survives the rewrite — and once it is gone, the session that inherits the summary was never told the rule. The fix that works is enforcement at the tool layer: a `PreToolUse` hook (`hooks/hooks.json` → `scripts/guard_engine.py`) that fires deterministically on every tool call regardless of what the context still holds.
+</details>
 
-**Built-in universal guards** (on by default, no project knowledge required):
+<details>
+<summary><b>Tool-layer guards</b></summary>
 
-- `git add -A` / `git add .` / `git add --all` — stage specific files; a blanket add is how secrets and stray artifacts leak into a commit.
-- `--dangerously-skip-permissions` — this flag disables the permission prompt for every tool call.
-- Force-push to a protected branch (`main`/`master` by default) — rewriting shared history can destroy other people's commits. Force-pushing a *feature* branch is not blocked.
+A rule whose violation is expensive to undo should not live only in a prompt: compaction can drop it,
+and the session that inherits the summary was never told. Goodfellow's `PreToolUse` hook
+(`scripts/guard_engine.py`) checks every tool call instead.
 
-Matching is shlex-token based, not substring, and the built-ins inspect only the `Bash` tool's command — so writing or documenting a blocked flag in a file, or mentioning it inside a quoted commit message, never trips a guard.
+Built in, on by default:
 
-**Declarative project rules.** Drop a `.goodfellow/guards.json` to enforce your own expensive-to-reverse rules at the tool layer instead of hoping a prose instruction survives. See `configs/guards.example.json`. Shape:
+- `git add -A`, `git add .`, `git add --all`: stage specific files instead.
+- `--dangerously-skip-permissions`.
+- Force-push to a protected branch (`main` and `master` by default). Feature branches are not affected.
+
+Matching is by shell token, and the built-ins only inspect `Bash` commands, so documenting a flag in a
+file or a commit message does not trip a guard.
+
+Add project rules in `.goodfellow/guards.json` (see
+[`configs/guards.example.json`](configs/guards.example.json)):
 
 ```json
 {
   "protected_branches": ["main", "master"],
-  "disable_builtins": [],
   "block": [
     {
       "id": "no-prod-db-writes",
       "match": "regex",
       "pattern": "psql.*(prod|production)",
       "flags": "i",
-      "reason": "Prod DB writes need an operator greenlight.",
+      "reason": "Prod DB writes need a human.",
       "tools": ["Bash"],
       "bypass_env": "PROD_DB_OK"
     }
@@ -398,29 +276,141 @@ Matching is shlex-token based, not substring, and the built-ins inspect only the
 }
 ```
 
-Each rule needs `id`, `pattern`, and `reason`. `match` is `substring` (default) or `regex`; `tools` defaults to `["Bash"]` and may include `Write`/`Edit`; an optional `bypass_env` names an env var that, set to `1`, waives that one rule. Validate a config with `python3 scripts/guard_engine.py --validate` and inspect the enforced set with `--selfcheck`.
+`python3 scripts/guard_engine.py --validate` checks a config (non-zero on error, for CI) and
+`--selfcheck` prints what is enforced. A malformed config at runtime skips the project rules with a
+warning but keeps the built-ins, so a typo cannot lock you out of fixing it. `CLAUDE_HOOK_BYPASS=1`
+disables all guards for one command.
 
-**Failure posture.** The live hook fails *safe-open* on a malformed `guards.json`: it skips the user rules (built-ins still enforce), warns on stderr, and never deadlocks the session into a state where you cannot even edit the file to fix it. `--validate` fails *loud* (non-zero) for CI and pre-compaction checks. The `snap-compact` skill snapshots the active guard set with `--selfcheck` and re-asserts it after the compaction boundary, so governance that lives on disk is verified to have survived rather than assumed.
+</details>
 
+<details>
+<summary><b>Knowledge and memory backends</b></summary>
 
-### Rich-mode recall hook (best-effort)
+**`flat` (default).** One append-only file, `.goodfellow/knowledge.md`, with three sections:
 
-In rich mode, a plugin `SessionStart` hook (`hooks/hooks.json` → `scripts/recall_pointer.py`) injects a one-line pointer (`Goodfellow memory: N entries — read .goodfellow/MEMORY.md before design/review.`) when `.goodfellow/MEMORY.md` exists. This is **best-effort**: SessionStart hooks do not fire for local file-based / git-clone-installed plugins ([#11509](https://github.com/anthropics/claude-code/issues/11509), closed "not planned"), which is goodfellow's primary install method. The load-bearing recall path is the in-chain index read the chain skills perform every run — the design does not depend on the hook firing. Verify hook firing empirically on a marketplace install if you rely on it; flat-mode sessions get nothing injected.
+```markdown
+## Principles
+- 2026-06-02: Validate at the boundary, never trust upstream sanitization
 
-## Platform Support
+## Patterns
+- 2026-06-02: Stop reviewing when severity drops, not when the finding count hits zero
 
-**Best on macOS and Linux.** On Unix, the loop store uses `fcntl` file locking for concurrent session safety. Windows works for single-session use, but file locking is skipped — avoid running multiple Goodfellow sessions on the same project simultaneously (duplicate loop IDs possible).
+## Gotchas
+- [pending] 2026-06-02: The Codex CLI has no --file flag; use --commit/--base/--uncommitted
+```
 
-**Worktree-first execution recommended** — `/goodfellow:execute` nudges you to use `/goodfellow:branch <topic>` before execution. This isolates feature work from your main workspace, keeps your root clean, and avoids the Windows-specific issue where Codex temp folders require admin rights to delete after a session ends. The nudge is advisory, not mandatory.
+`ship` and `snap-compact` add entries tagged `[pending]`; `close` confirms them.
+
+**`rich` (`GOODFELLOW_MEMORY=rich`).** One file per fact under `.goodfellow/memory/`, a regenerated
+index at `.goodfellow/MEMORY.md`, and per-domain registries. Writes are atomic, locked and journaled
+(a two-phase write-ahead log with rollback), and the first rich write migrates an existing
+`knowledge.md` without modifying it. Worth it when the flat file becomes unwieldy; most projects never
+need it. Switching back to `flat` is safe.
+
+</details>
+
+<details>
+<summary><b>Follow-up loops and triage</b></summary>
+
+At ship time, deferred review findings are routed by severity:
+
+- **Blocker** (security, data loss, correctness): stops the pull request until fixed or explicitly
+  waived.
+- **Major:** filed as a loop in `.goodfellow/loops.json` (priority `p1` to `p4`).
+- **Minor:** added to the knowledge file as a gotcha.
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/loop_store.py" list   # open loops
+/goodfellow:brainstorm --from-loop 3                          # design a fix for loop 3
+/goodfellow:triage                                            # sort real defects from noise
+```
+
+`triage` has two reviewers assess each loop independently, reconciles their verdicts, and asks you
+to confirm in one table. Decisions go to `.goodfellow/triage-log.jsonl`. A loop can stay "unclear"
+for at most three cycles. Findings from review round four onwards are filed at the lowest priority,
+and a warning appears at 15 open loops.
+
+</details>
+
+<details>
+<summary><b>Autopilot</b></summary>
+
+`GOODFELLOW_AUTOPILOT=1` runs the chain without pausing; `dry-run` shows what it would do and writes
+only the decision log (`.goodfellow/runs/<timestamp>-<pid>.jsonl`). Autopilot halts rather than
+guesses when a self-review finding needs a human decision, and a spec can end the chain after review
+with `next_action: halt-after-spec-review` in its frontmatter.
+
+</details>
+
+## Principles
+
+Goodfellow is built on a few convictions:
+
+- **A second model family finds what the first rationalised away.** Same-model review mostly repeats
+  the author's blind spots.
+- **Ground findings in facts.** Claims are researched before review, and findings are checked
+  against the code before anyone fixes them.
+- **Stop on severity, not on a round count.** And reaching a limit is not success: a cap, budget or
+  timeout is reported as a halt, never as done.
+- **A test is evidence only if it could have failed.** Red before green, for the right reason
+  (P-094). Break the code on purpose to prove a test notices (P-095). Test behaviour through the real
+  entry point, not the source text (P-096).
+- **Constraints that matter belong in the tool layer**, not only in a prompt that compaction can
+  drop.
+- **Follow-ups need an owner.** A deferred finding is tracked and triaged, not noted and forgotten.
+- **Knowledge should compound.** Every run leaves the next one better informed.
+
+These convictions, and many more specific ones, ship as about 80 seeded principles in
+[`knowledge/principles.md`](knowledge/principles.md) (stack-agnostic) and
+[`knowledge/principles-web.md`](knowledge/principles-web.md) (JS, React, Next.js, Postgres). Each has a
+stable `P-NNN` id that reviewers cite. They load in tiers: every run gets a short index of the
+vital few plus a category table (about 720 tokens), and a skill pulls a category or a full principle
+only when it is relevant. A CI ratchet keeps that index small; see
+[`docs/instruction-density-budget.md`](docs/instruction-density-budget.md).
+
+## FAQ and limits
+
+**Do I need Codex?** No. Without it, reviews use one Claude reviewer (two in `spec-review` and
+`plan-review`), and say so. You lose the cross-family diversity that makes review most useful.
+
+**What does it cost?** Goodfellow itself is free. Each review round is extra model calls on your
+Claude Code plan and, if installed, your Codex plan. `ship --quick` runs a single round for small
+diffs.
+
+**Does it change my code without asking?** Only inside the chain you started. `ship` opens a pull
+request and asks once before merging it; only full autopilot merges on its own. Dry-run autopilot
+writes nothing to your project but its decision log.
+
+**Which languages?** The skills are language-agnostic. `red_check.py` works with any test runner that
+writes JUnit XML. `mutation_check.py` mutates Python only.
+
+**Where is its state?** In `.goodfellow/` at your project root: knowledge, loops, run logs, guard
+rules. Commit what you want to share with your team.
+
+**Known limits:**
+
+- Best on macOS and Linux. On Windows `loops.json` is written without file locking, so do not run
+  two sessions on one project at once.
+- The rich-memory `SessionStart` hook does not fire for plugins installed from a git marketplace
+  ([anthropics/claude-code#11509](https://github.com/anthropics/claude-code/issues/11509)). Recall
+  does not depend on it: the chain skills read the index themselves.
+- Some autopilot halts are planned but not yet wired: `confidence: low` in a spec, a verifier marking
+  most findings stale, and open architectural questions.
+- Pre-1.0: skill behaviour and file formats may still change between minor versions. The
+  [CHANGELOG](CHANGELOG.md) lists every change.
 
 ## Contributing
 
-Contributions welcome. Please run the test suite before submitting:
+Issues and pull requests are welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md); in short:
 
 ```bash
-cd scripts && python -m pytest -v
+git clone https://github.com/easelyte/goodfellow.git
+cd goodfellow/scripts && python -m pytest -q
 ```
+
+Report security problems privately, as described in [SECURITY.md](SECURITY.md). Releases follow
+[RELEASING.md](RELEASING.md).
 
 ## License
 
-MIT
+[MIT](LICENSE) © 2026 easelyte.ai

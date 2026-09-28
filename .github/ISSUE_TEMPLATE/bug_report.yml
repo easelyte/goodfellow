@@ -1,0 +1,92 @@
+name: Bug report
+description: Something in Goodfellow does not work as documented.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this. For a security problem, please use private reporting instead (see SECURITY.md).
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you ran, and what Goodfellow did.
+      placeholder: "/goodfellow:ship stopped with ..."
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: The shortest sequence that shows the problem. A small public repo helps a lot.
+    validations:
+      required: false
+  - type: dropdown
+    id: skill
+    attributes:
+      label: Area
+      options:
+        - brainstorm / grill
+        - spec-review / plan-review
+        - plan
+        - execute
+        - ship
+        - codex-review
+        - triage
+        - snap-compact / close
+        - branch / prune-stale
+        - public-pr
+        - guards (PreToolUse hook)
+        - red_check / mutation_check
+        - memory backend / knowledge
+        - install / packaging
+        - other
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Goodfellow version or commit
+      description: Shown by `/plugin`, or `git rev-parse --short HEAD` in a checkout.
+    validations:
+      required: true
+  - type: input
+    id: claude-version
+    attributes:
+      label: Claude Code version
+      description: Output of `claude --version`.
+    validations:
+      required: true
+  - type: dropdown
+    id: codex
+    attributes:
+      label: Codex CLI installed?
+      options:
+        - "Yes"
+        - "No"
+        - "Yes, but disabled with GOODFELLOW_CODEX=0"
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: OS and Python version
+      placeholder: "macOS 15, Python 3.12"
+  - type: textarea
+    id: config
+    attributes:
+      label: GOODFELLOW_* settings
+      description: Any GOODFELLOW_* environment variables you set. Do not paste API keys.
+      render: shell
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or output
+      description: Relevant output, or lines from `.goodfellow/runs/*.jsonl`. Remove anything private.
+      render: text
