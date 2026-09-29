@@ -26,7 +26,10 @@ One phrase per line; `#` comments; blanks ignored. List your internal-only token
 
 ```bash
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/public_pr_scrub.py" --base "$BASE"
-# exit 0 = clean · exit 1 = hits (BLOCK) · exit 2 = --require-denylist with none set
+# exit 0 = clean · exit 1 = hits (BLOCK) · exit 2 = fail-closed: --require-denylist with
+# none set, or the diff could not be computed (bad base, no git, or no --base and no
+# upstream/*, origin/* or local main/master to default to; without --base it scans
+# against every one of those that exists)
 ```
 
 If it reports hits: remove **every** internal ref from the added lines, re-run

@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+- **Guard and scrub fail-open fixes.** Mutation testing of the two gates found breaks that every
+  test let through, and a few real bypasses:
+  - `guard_engine.py` now blocks `git add` with `-A` bundled into other short flags (`-fA`), the
+    whole-tree pathspecs `./`, `*`, `:/` and `:(top)`, pathspecs that are all exclusions
+    (`git add ':!secrets.env'` adds everything else), and git run through a relative path without a
+    leading `./` (`usr/bin/git`). Windows drive paths with forward slashes compare
+    case-insensitively.
+  - `public_pr_scrub.py` without `--base` now scans against every likely PR target that exists
+    (`upstream/HEAD`, `upstream/main`, `upstream/master`, `origin/HEAD`, `origin/main`,
+    `origin/master`, `main`, `master`), skipping any that already contain `HEAD`. It no longer uses
+    the branch's upstream: a pushed feature branch tracks itself, so that diff was empty and the
+    whole PR went unscanned. When no base is left it fails closed (exit 2) instead of diffing
+    against the tip's parent, which scanned only the last commit. A missing `git` while resolving
+    the default base is also exit 2 now, not a traceback, and so is a candidate whose merge-base
+    cannot be computed (a shallow clone). Pass `--base` to scan against the exact target.
+  - The scrub's added-line parser tracks diff hunks, so a content line starting `++` (shown as
+    `+++` in the diff) is scanned instead of being mistaken for a file header, and it reads a plain
+    diff (`--no-color --no-ext-diff`), so `color.diff=always` can no longer hide
+    every added line.
+  - New tests pin the full-path git forms, the `--assert-guard-set` error branches, config shapes that
+    iterate as valid, the regex flags, the default-base order, the git-missing path and the
+    added-lines filter.
+
 - **Tests that can fail.** Goodfellow now asks for evidence that a test could fail, not just that it
   passes. `plan` names each behaviour task's expected red (an assertion message, never "function not
   defined") and, on high-stakes paths, the fail-closed branches, boundaries and one deliberate break
