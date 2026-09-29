@@ -1,12 +1,12 @@
 {
   "name": "goodfellow",
   "owner": { "name": "easelyte", "email": "fantin@easelyte.ai" },
-  "description": "Goodfellow — adversarial review, knowledge compounding, follow-up tracking for Claude Code.",
+  "description": "Goodfellow: an adversarial-review development lifecycle for Claude Code.",
   "plugins": [
     {
       "name": "goodfellow",
       "source": "./",
-      "description": "Named after the inventor of adversarial networks. Your good fellow for shipping code."
+      "description": "Takes a change from idea to pull request with adversarial review at every step, tests that must be able to fail, and knowledge that compounds across runs."
     }
   ]
 }

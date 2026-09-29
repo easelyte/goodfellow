@@ -41,7 +41,7 @@ jobs:
           fi
       - name: Validate plugin structure
         run: |
-          for skill in brainstorm spec-review plan plan-review execute ship codex-review triage snap-compact close branch prune-stale; do
+          for skill in brainstorm grill spec-review plan plan-review execute ship codex-review triage snap-compact close branch prune-stale public-pr; do
             if [ ! -f "skills/$skill/SKILL.md" ]; then
               echo "ERROR: Missing skills/$skill/SKILL.md"
               exit 1
@@ -56,3 +56,5 @@ jobs:
           echo "Plugin structure valid"
       - name: Check version consistency
         run: python scripts/check_version_consistency.py
+      - name: Lint CHANGELOG (Keep a Changelog)
+        run: python scripts/release_notes.py lint

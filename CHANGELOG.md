@@ -1,144 +1,188 @@
 # Changelog
 
-## Unreleased
+All notable changes to Goodfellow are documented in this file.
 
-- **Guard and scrub fail-open fixes.** Mutation testing of the two gates found breaks that every
-  test let through, and a few real bypasses:
-  - `guard_engine.py` now blocks `git add` with `-A` bundled into other short flags (`-fA`), the
-    whole-tree pathspecs `./`, `*`, `:/` and `:(top)`, pathspecs that are all exclusions
-    (`git add ':!secrets.env'` adds everything else), and git run through a relative path without a
-    leading `./` (`usr/bin/git`). Windows drive paths with forward slashes compare
-    case-insensitively.
-  - `public_pr_scrub.py` without `--base` now scans against every likely PR target that exists
-    (`upstream/HEAD`, `upstream/main`, `upstream/master`, `origin/HEAD`, `origin/main`,
-    `origin/master`, `main`, `master`), skipping any that already contain `HEAD`. It no longer uses
-    the branch's upstream: a pushed feature branch tracks itself, so that diff was empty and the
-    whole PR went unscanned. When no base is left it fails closed (exit 2) instead of diffing
-    against the tip's parent, which scanned only the last commit. A missing `git` while resolving
-    the default base is also exit 2 now, not a traceback, and so is a candidate whose merge-base
-    cannot be computed (a shallow clone). Pass `--base` to scan against the exact target.
-  - The scrub's added-line parser tracks diff hunks, so a content line starting `++` (shown as
-    `+++` in the diff) is scanned instead of being mistaken for a file header, and it reads a plain
-    diff (`--no-color --no-ext-diff`), so `color.diff=always` can no longer hide
-    every added line.
-  - New tests pin the full-path git forms, the `--assert-guard-set` error branches, config shapes that
-    iterate as valid, the regex flags, the default-base order, the git-missing path and the
-    added-lines filter.
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
+adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). While the version is `0.x`,
+a minor bump may include breaking changes; they are always listed under **Changed** or **Removed**.
 
-- **Tests that can fail.** Goodfellow now asks for evidence that a test could fail, not just that it
-  passes. `plan` names each behaviour task's expected red (an assertion message, never "function not
-  defined") and, on high-stakes paths, the fail-closed branches, boundaries and one deliberate break
-  per rule. `execute` is test-first with a right-reason red, never edits an expected value to match
-  output, and breaks high-stakes code on purpose (on a saved copy) to confirm a test notices. The
-  Codex diff reviewer gained a `<test_quality>` block (source-grep tests, negatives denied for an
-  unrelated reason, unpinned fail-open branches and boundaries, bent expectations), and the plan
-  reviewer flags high-stakes tasks with no expected red. New principles P-094 to P-096.
+Versions `0.1.0` and `0.2.0` were declared in the plugin manifest but never tagged; the first tagged
+release will be the first version below `[Unreleased]`. See [RELEASING.md](RELEASING.md).
+
+## [Unreleased]
+
+### Added
+
+- **Tests that can fail.** `plan` names each behaviour task's expected red (an assertion message,
+  never "function not defined") and, on high-stakes paths, the fail-closed branches, boundaries and
+  one deliberate break per rule. `execute` is test-first with a right-reason red and never edits an
+  expected value to match output. The Codex diff reviewer gained a test-quality block, and the plan
+  reviewer flags high-stakes tasks with no expected red. New principles P-094 to P-096
+  ([#30](https://github.com/easelyte/goodfellow/pull/30)).
 - **`scripts/red_check.py`.** Replays a branch's new tests against the base in a temporary worktree
-  and requires an assertion failure there and a pass on the branch (`OK` / `WRONG_REASON` /
-  `NOT_RED` / `NOT_GREEN`, plus `NEW_SYMBOL` for tests of code the base lacks). Runner-agnostic via JUnit XML; pytest by default. Wired into `ship`.
-- **`scripts/mutation_check.py`.** Opt-in, diff-scoped mutation testing: mutates only the Python
-  lines a branch changed in files matching `.goodfellow/high_stakes_paths.txt`, in throwaway copies,
-  under a time budget, and reports every surviving mutant. Budget exhaustion is reported as
-  incomplete (exit 3), never as a pass. Wired into `ship` as an optional step. Every test run gets its
-  own process group that is killed on timeout, exit and termination signals (`scripts/proc_group.py`),
-  runs at `nice` 10, and uses at most `min(4, CPUs/2)` workers by default. Code that sends
-  signals, spawns processes, deletes or writes files is never mutated outside a fake or an isolated
-  namespace: signal/spawn targets need `--isolated` (the check re-runs inside its own PID namespace)
-  or `--fakes`; delete/write targets need `--fakes`. The sandbox sweep is guarded independently of its
-  containment check (temp-base only, never pid 1, self, ancestors or other users, TERM before KILL,
-  signals nothing above 20 matches), and its tests use a fake process table; live process tests run
-  only inside their own PID namespace.
+  and requires an assertion failure there and a pass on the branch (`OK`, `WRONG_REASON`, `NOT_RED`,
+  `NOT_GREEN`, `NEW_SYMBOL`). Runner-agnostic via JUnit XML; runs in `ship` by default
+  ([#30](https://github.com/easelyte/goodfellow/pull/30)).
+- **`scripts/mutation_check.py`.** Opt-in, diff-scoped mutation testing of the Python lines a branch
+  changed in files listed in `.goodfellow/high_stakes_paths.txt`, in throwaway copies and under a
+  time budget. Running out of budget is reported as incomplete, never as a pass. Code that sends
+  signals, spawns processes, or deletes or writes files is only mutated inside a PID namespace
+  (`--isolated`) or with fakes (`--fakes`). Every test run gets its own process group, killed on
+  timeout, exit and termination signals ([#30](https://github.com/easelyte/goodfellow/pull/30)).
+- **Tool-layer guards.** A `PreToolUse` hook (`scripts/guard_engine.py`) blocks `git add -A`/`.`/
+  `--all`, `--dangerously-skip-permissions`, and force-pushes to `main`/`master` by default, plus
+  any BLOCK rules a project declares in `.goodfellow/guards.json`. `--validate` for CI and
+  `--selfcheck` to print the enforced set; `snap-compact` re-asserts the set after compaction
+  ([#26](https://github.com/easelyte/goodfellow/pull/26)).
+- **Tiered principle index.** The always-loaded index carries the vital-few principles plus a
+  category routing table; `--category NAME` and `--show P-NNN` load more on demand. The core index
+  dropped from about 2,800 to about 720 tokens. 14 new seed principles, P-080 to P-093
+  ([#28](https://github.com/easelyte/goodfellow/pull/28)).
+- **Progressive disclosure for seeded principles** and a CI density ratchet
+  (`measure_principle_density.py`, `docs/instruction-density-budget.md`) that caps what is injected
+  on every run ([#24](https://github.com/easelyte/goodfellow/pull/24)).
+- **Parallel implementers in `execute`.** A phase's independent tasks can fan out to parallel
+  implementer agents, each in its own runtime-isolated git worktree, reconciled by merge. Serial
+  remains the default ([#13](https://github.com/easelyte/goodfellow/pull/13),
+  [#23](https://github.com/easelyte/goodfellow/pull/23)).
+- **Two-stage generator and judge review.** On the Codex path a generator emits structured findings
+  and a judge grounds or drops each one; judge failures fail open to the unjudged findings with a
+  banner. Optional static-analysis pre-pass (`ruff`, `shellcheck`, `gitleaks`, `semgrep`,
+  auto-detected) ([#16](https://github.com/easelyte/goodfellow/pull/16)).
+- **Judge lens tag.** Each judged finding can carry a reviewer lens, threaded through `loops.json`
+  (`--lens`) and lens-tuning attribution ([#25](https://github.com/easelyte/goodfellow/pull/25)).
+- **`public-pr` skill** and `scripts/public_pr_scrub.py`: a pre-open gate for PRs to public or
+  upstream repositories, with a configurable internal-reference scrub and correct cross-fork
+  `gh pr create` flags ([#16](https://github.com/easelyte/goodfellow/pull/16)).
+- **`grill` skill.** An opt-in, one-question-at-a-time interview for fuzzy or high-stakes design
+  intent that stops when its open-decision ledger is empty
+  ([#9](https://github.com/easelyte/goodfellow/pull/9),
+  [#10](https://github.com/easelyte/goodfellow/pull/10)).
+- **Reviewer lenses.** `spec-review` and `plan-review` give their two reviewers different lenses,
+  batch the verifier pass, and run research in an isolated subagent
+  ([#14](https://github.com/easelyte/goodfellow/pull/14)).
+- **Lens-tuning report** (`scripts/lens_tuning.py`): a read-only pointer to reviewer sources whose
+  findings mostly triage as not-a-defect ([#18](https://github.com/easelyte/goodfellow/pull/18)).
+- **Rollback journal and evidence provenance** for the rich memory backend, completed as a
+  two-phase (intent, commit) write-ahead log with byte-bound crash recovery
+  ([#19](https://github.com/easelyte/goodfellow/pull/19),
+  [#22](https://github.com/easelyte/goodfellow/pull/22)).
+- **Durable per-loop `uuid`** so loop references do not alias after `loops.json` is reset
+  ([#21](https://github.com/easelyte/goodfellow/pull/21)).
+- **P-079, "Reaching a limit is not success".** A cap, budget or timeout halt is reported as a halt
+  in prose and in control flow across the chain ([#17](https://github.com/easelyte/goodfellow/pull/17)).
+- **Recommended defaults** for each `brainstorm` clarifying question
+  ([#11](https://github.com/easelyte/goodfellow/pull/11)).
+- **Parallel triage reviewers**, dispatched in one batch per backlog
+  ([#12](https://github.com/easelyte/goodfellow/pull/12)).
+- **Marketplace manifest** (`.claude-plugin/marketplace.json`), so the plugin installs directly with
+  `/plugin marketplace add easelyte/goodfellow`, and a CI version-consistency check
+  ([#6](https://github.com/easelyte/goodfellow/pull/6)).
+- **Seed principles** P-059, P-061, P-063 to P-070 and sub-entries P-017a/P-017b.
+- **Brand assets:** README hero banner, pipeline diagram and a square plugin icon
+  ([#8](https://github.com/easelyte/goodfellow/pull/8),
+  [#29](https://github.com/easelyte/goodfellow/pull/29)).
+- **Release process:** Keep a Changelog format, a tag-triggered release workflow that publishes the
+  matching CHANGELOG section as the GitHub Release notes, `RELEASING.md`, `CONTRIBUTING.md`,
+  `SECURITY.md`, and issue and pull request templates.
 
-- **Plugin icon.** Added a square brand icon (`docs/assets/goodfellow-icon.svg`) and an `icon` field
-  in `plugin.json`, clearing the directory-policy "add an icon" warning. The mark squares the hero's
-  adversarial lattice — a generator network reflected across a dashed seam into a dimmed
-  discriminator — and reads on light, dark, and down to 48px.
+### Changed
 
-- **Tiered principle index — the corpus grows without inflating what loads every run.** The
-  always-injected `--index` no longer emits every principle's one-liner (which capped the corpus at
-  ~80 entries before displacement). It now emits the vital-few one-liners **plus a category routing
-  table** — one row per category (`security`, `data-integrity`, `correctness`, `testing`,
-  `review-process`, `reliability`, `integration`, `agent-runtime`, `ui`) listing member `P-NNN` ids
-  only. New tier-2 command `--category NAME` expands a category's one-liners on demand; `--show P-NNN`
-  (tier 3) still pulls full bodies. Category membership is set per principle by an inline
-  `<!-- cat: NAME -->` marker (untagged → `general`). The density ratchet now caps **tier-1 rows**
-  (vital-few + categories), not the total corpus, so a new principle costs ~2 index tokens instead of
-  a ~45-token one-liner. Core tier-1 index dropped from ~2,800 tok to ~720. Same shape as a
-  routing-table-plus-on-demand-registry memory system. Chain skills updated to the tiered flow;
-  `docs/instruction-density-budget.md` rewritten for the three tiers.
-- **14 seed principles added (P-080–P-093).** Now that the index is tiered, the seed corpus carries
-  the full backlog: test-fixture producer shape, derive-facts-from-ground-truth, sanitize third-party
-  responses, mechanism-at-the-choke-point, run-it gates, decoupled integration seams, instructions
-  don't bind already-running sessions, environment-matched baselines, reusable-id join-key safety
-  (web), gate-verification on both verdicts, functional protection assertion, fail-closed guard
-  inversion, read-the-code before blaming a tool, and stating a guard from the defect's failure mode.
-- **Worktree-isolated parallel implementers.** `execute` can fan out a phase's independent tasks
-  across parallel implementer agents, each in its own runtime-isolated git worktree branched off a
-  checkpoint commit, with results reconciled by merge. Because no two children write the same working
-  tree, concurrent implementers can't clobber or strand each other's commits — isolation is enforced
-  at the runtime layer, not by a prose instruction to the child, and file overlap becomes a
-  merge-cleanliness hint rather than a corruption hazard. Serial stays the default; fan-out is the
-  justified exception (floor ~3 genuinely independent tasks, sized against the runtime concurrency
-  cap), and `execute` falls back to serial when runtime-enforced isolation isn't available.
-- **Progressive disclosure for seeded principles.** Chain runs now inject only the principle INDEX
-  (each `P-NNN` id + title + one-line rule) and pull full bodies on demand via `--show P-NNN`,
-  mirroring the Agent Skills loading model. Cuts the always-loaded principle footprint from ~17k to
-  ~2.8k tokens (core corpus). A CI density ratchet (`measure_principle_density.py`) keeps the
-  always-injected index under a research-derived cap, so principle growth displaces rather than
-  accumulates. Budget, growth rule, and placement documented in `docs/instruction-density-budget.md`.
-- **Judge lens tag + stronger no-Codex reviewer default.** The judge decision object gains an
-  optional, fail-open `lens` field threaded through the validator, `review_judge`, loop store
-  (`--lens`), and per-lens tuning attribution — turning reviewer-lens tuning from prose-only into
-  measurable, with an explicit `other` (measured) distinguished from missing/malformed lens
-  (`unattributed`, no-data) so absent provenance can't emit a false tuning signal. Separately, the
-  no-Codex fallback reviewer now defaults to the stronger model, so the fallback path (which has no
-  cross-family reviewer) is no longer a strength inversion; the Codex-present path is unchanged.
-- **Tool-layer enforcement guards (PreToolUse).** A new `PreToolUse` hook (`hooks/hooks.json` →
-  `scripts/guard_engine.py`) enforces expensive-to-reverse constraints at the tool layer instead of
-  in prose a compaction can silently drop. Ships three built-in universal guards on by default (no
-  project knowledge required): `git add -A`/`.`/`--all`, the `--dangerously-skip-permissions` CLI
-  flag, and force-push to a protected branch (`main`/`master`; feature branches unaffected). Matching
-  is shlex-token based and built-ins inspect only the `Bash` command, so writing or documenting a
-  blocked flag in a file — or mentioning it inside a quoted commit message — never trips a guard.
-  Projects add their own BLOCK rules in `.goodfellow/guards.json` (`substring`/`regex` match,
-  per-tool scoping, per-rule `bypass_env`; see `configs/guards.example.json`). Denies via the
-  documented `permissionDecision` JSON contract (asserted by JSON, not exit code). Fails *safe-open*
-  on a malformed config (built-ins still enforce, no deadlock); `guard_engine.py --validate` fails
-  *loud* for CI, and `--selfcheck` prints the enforced set. The `snap-compact` skill now snapshots
-  that set and re-asserts it after the compaction boundary. Toggles: `GOODFELLOW_GUARDS=0`
-  (built-ins off), `CLAUDE_HOOK_BYPASS=1` (all off, one command).
-- **New `grill` skill — opt-in relentless-interview design front-end.** A sibling to `brainstorm`
-  for fuzzy or high-stakes intent: a bounded fact-scout (≤8 tool-calls, foreground), then a
-  one-question-at-a-time interview (each question ships a recommended default + a prominent "enough /
-  write it" escape hatch, tracked against an understanding ledger) that self-terminates when the
-  open-decision ledger is empty — no hard question cap. Writes the spec via an atomic no-clobber
-  publish (collision → disambiguated `-2`/`-3` path, never an overwrite), persists durable
-  pending-review recovery frontmatter (`review_status`/`failed_reviewers`/`resume`) up front, and
-  auto-dispatches spec-review by file content. Explicit-invocation only (`/goodfellow:grill`, "grill
-  me on X", "interview me about X") — never auto-selected over `brainstorm`. Three-state autopilot:
-  `=1` writes-from-context with `confidence: low` + `next_action: halt-after-spec-review`; `dry-run`
-  writes no spec and dispatches no review, but does append `would_act` events to the run log
-  (`.goodfellow/runs/`). Carries a `CONTRACT-SYNC` marker for future cross-repo
-  contract-parity checking. Interview philosophy adapted from Matt Pocock's `grilling` skill.
-- **Expanded seed principles.** Core `knowledge/principles.md` grows to 56 principles + 5 sub-entries (added P-059, P-061, P-063–P-069, and sub-entries P-017a/P-017b); web `knowledge/principles-web.md` grows to 10 (added P-062, P-070). Ported from easelyte's cross-repo design knowledge and grounded against current industry practice (OWASP, capability-based security / dual-LLM prompt-injection defense, ReDoS / algorithmic-complexity attacks, design-token semantics, git squash-merge semantics, optimistic-UI last-write-wins). P-060 intentionally skipped (worktree/canonical-store infra, out of scope for a general code-shipping tool — consistent with the existing 039/041/043 gaps). IDs stay aligned with the upstream `P-NNN` numbering; all KB contract tests pass.
+- With no Codex CLI, the fallback reviewer now defaults to `opus` instead of `sonnet`, so the only
+  reviewer is not weaker than the model that wrote the code. `GOODFELLOW_REVIEW_MODEL` still
+  overrides it ([#25](https://github.com/easelyte/goodfellow/pull/25)).
+- `ship` routes review findings by three tiers: blockers stop the PR, majors are filed as loops,
+  minors become knowledge gotchas ([#20](https://github.com/easelyte/goodfellow/pull/20)).
+- `pyproject.toml` version aligned with `plugin.json` at `0.2.0`
+  ([#6](https://github.com/easelyte/goodfellow/pull/6)).
 
-## 0.2.0 (2026-06-11)
+### Fixed
 
-Seeded knowledge + opt-in rich memory backend.
+- **Guard engine fail-open gaps.** Mutation testing found `git add` forms the guard let through; it
+  now also blocks `-A` bundled into other short flags (`-fA`), the whole-tree pathspecs `./`, `*`,
+  `:/` and `:(top)`, pathspecs that are all exclusions (`git add ':!secrets.env'` adds everything
+  else) and `--pathspec-from-file`. Git run through a relative path without a leading `./`
+  (`usr/bin/git`) is recognised, and Windows drive paths with forward slashes compare
+  case-insensitively ([#32](https://github.com/easelyte/goodfellow/pull/32)).
+- **`public_pr_scrub.py` could scan an empty diff.** Without `--base` it used the branch's upstream,
+  which for a pushed feature branch is itself, so the whole PR went unscanned. It now scans against
+  every likely PR target that exists (`upstream/HEAD`, `upstream/main`, `upstream/master`,
+  `origin/HEAD`, `origin/main`, `origin/master`, `main`, `master`), skipping any that already contain
+  `HEAD`. With no base left it fails closed (exit 2) instead of diffing against the tip's parent;
+  a missing `git` or an uncomputable merge-base (a shallow clone) is also exit 2. Pass `--base` to
+  scan against the exact target ([#32](https://github.com/easelyte/goodfellow/pull/32)).
+- The scrub's added-line parser tracks diff hunks, so a content line starting `++` is scanned instead
+  of being mistaken for a file header, and it reads a plain diff (`--no-color --no-ext-diff`), so
+  `color.diff=always` can no longer hide every added line
+  ([#32](https://github.com/easelyte/goodfellow/pull/32)).
+- Major review findings were silently dropped at ship time; they now reach `loops.json`
+  ([#20](https://github.com/easelyte/goodfellow/pull/20)).
+- The review bridge exits with a `REVIEW_FAILED` sentinel on any nonzero exit, so a review that dies
+  mid-run can no longer read as a clean pass ([#15](https://github.com/easelyte/goodfellow/pull/15)).
+- Codex was invoked with a Claude model name; the Codex path now takes its model only from
+  `GOODFELLOW_CODEX_MODEL` ([#7](https://github.com/easelyte/goodfellow/pull/7)).
+- Spec and plan review saw an empty context for a freshly written, untracked file; the bridge now
+  embeds the file body ([#7](https://github.com/easelyte/goodfellow/pull/7)).
+- `spec-review` ignored `next_action: halt-after-spec-review` in the spec frontmatter
+  ([#7](https://github.com/easelyte/goodfellow/pull/7)).
+- `grill` validated its topic slug before using it in a path, closing a path traversal
+  ([#10](https://github.com/easelyte/goodfellow/pull/10)).
 
-- **Seeded universal design principles.** Ships `knowledge/principles.md` (47 stack-agnostic principles) + `knowledge/principles-web.md` (8 JS/React/Next.js/Postgres/RLS rules, opt-in). Plugin-owned and read-only; the chain skills read them every run and cite violations by stable `P-NNN` ids, so a fresh install starts with accumulated wisdom instead of an empty knowledge file. Web supplement enabled via `GOODFELLOW_PRINCIPLES_WEB=1` or an auto-detected `package.json`. Public-egress-guarded in CI.
-- **Opt-in rich memory backend (`GOODFELLOW_MEMORY=rich`).** Per-fact files (`.goodfellow/memory/*.md`) + a regenerated index (`.goodfellow/MEMORY.md`) + domain registries, with atomic/locked/transactional writes, crash-resumable flat→rich migration, and hybrid recall. `flat` (append-only `.goodfellow/knowledge.md`) remains the zero-config default and is unchanged.
-- **New config:** `GOODFELLOW_PRINCIPLES_WEB`, `GOODFELLOW_MEMORY`, `GOODFELLOW_MEMORY_WARN_KB` — all fail-loud on invalid values.
+## [0.2.0] - 2026-06-11
 
-## 0.1.0 (2026-06-02)
+Seeded knowledge and an opt-in rich memory backend.
+
+### Added
+
+- **Seeded universal design principles.** `knowledge/principles.md` (47 stack-agnostic principles)
+  and `knowledge/principles-web.md` (8 JS/React/Next.js/Postgres/RLS rules, opt-in). Plugin-owned
+  and read-only; chain skills cite violations by stable `P-NNN` id. The web supplement is enabled by
+  `GOODFELLOW_PRINCIPLES_WEB=1` or an auto-detected `package.json`
+  ([#4](https://github.com/easelyte/goodfellow/pull/4)).
+- **Opt-in rich memory backend (`GOODFELLOW_MEMORY=rich`).** Per-fact files, a regenerated index and
+  domain registries, with atomic, locked, transactional writes and a crash-resumable migration from
+  the flat file. `flat` remains the zero-config default
+  ([#5](https://github.com/easelyte/goodfellow/pull/5)).
+- New configuration: `GOODFELLOW_PRINCIPLES_WEB`, `GOODFELLOW_MEMORY`, `GOODFELLOW_MEMORY_WARN_KB`,
+  all failing loud on invalid values.
+- CI lints shell scripts with `bash -n` and `shellcheck`
+  ([#2](https://github.com/easelyte/goodfellow/pull/2)).
+- `scripts/run_log.sh` gives autopilot decision logs a concrete path under `.goodfellow/runs/`
+  ([#3](https://github.com/easelyte/goodfellow/pull/3)).
+
+### Changed
+
+- The self-review step of `spec-review` and `plan-review` applies only small, unambiguous fixes
+  before reviewers see the document, so a rewrite cannot slip past them
+  ([#1](https://github.com/easelyte/goodfellow/pull/1)).
+
+### Fixed
+
+- `loop_store.py` rejects priorities outside `p1` to `p4`
+  ([#2](https://github.com/easelyte/goodfellow/pull/2)).
+- Dry-run autopilot no longer edits the spec or plan file (the research appendix and self-review
+  fixes are logged instead), and a research match is labelled "relevant source found" rather than
+  "verified" ([#1](https://github.com/easelyte/goodfellow/pull/1),
+  [#3](https://github.com/easelyte/goodfellow/pull/3)).
+- The README no longer claims autopilot halts that are not wired into the chain
+  ([#2](https://github.com/easelyte/goodfellow/pull/2)).
+
+## [0.1.0] - 2026-06-02
 
 Initial release.
 
-- 12 skills: brainstorm, spec-review, plan, plan-review, execute, ship, codex-review, triage, snap-compact, close, branch, prune-stale
-- Knowledge compounding loop (.goodfellow/knowledge.md)
-- Follow-up loop tracking (.goodfellow/loops.json)
-- Multi-model adversarial review (Claude + Codex/GPT)
-- Research injection (web search verification of load-bearing claims)
-- Verifier pass for round 2+ findings
-- Autopilot mode with dry-run
-- Triage system with two-reviewer reconciliation
+### Added
+
+- 12 skills: `brainstorm`, `spec-review`, `plan`, `plan-review`, `execute`, `ship`,
+  `codex-review`, `triage`, `snap-compact`, `close`, `branch`, `prune-stale`.
+- Knowledge compounding loop (`.goodfellow/knowledge.md`).
+- Follow-up loop tracking (`.goodfellow/loops.json`).
+- Multi-model adversarial review (Claude plus Codex), with a single-Claude fallback.
+- Research injection: web-search verification of load-bearing claims.
+- Verifier pass for round 2 and later findings.
+- Autopilot mode with dry-run.
+- Triage with two-reviewer reconciliation.
+
+[Unreleased]: https://github.com/easelyte/goodfellow/commits/main
+[0.2.0]: https://github.com/easelyte/goodfellow/commits/136f429
+[0.1.0]: https://github.com/easelyte/goodfellow/commits/48af7a9
