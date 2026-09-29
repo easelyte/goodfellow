@@ -1,9 +1,6 @@
 {
   "name": "goodfellow",
-  "owner": {
-    "name": "easelyte",
-    "email": "fantin@easelyte.ai"
-  },
+  "owner": { "name": "easelyte", "email": "fantin@easelyte.ai" },
   "description": "goodfellow: an autopilot development lifecycle for Claude Code, with depth that scales to risk.",
   "plugins": [
     {
