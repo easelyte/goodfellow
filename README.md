@@ -151,8 +151,8 @@ Everything works without configuration. Invalid values fail loudly rather than f
 | `GOODFELLOW_PRINCIPLES_WEB` | auto | `1` loads the JS, React, Next.js and Postgres principles; automatic with a `package.json`. |
 
 **Stop list and guards** live in `.goodfellow/guards.json` (see
-[the example](configs/guards.example.json)). `stop_list.owners` lists the GitHub owners you push to
-freely (default: the owner of `origin`); `stop_list.migration_commands` replaces the migration list;
+[the example](configs/guards.example.json)). `stop_list.owners` lists the owners you push to freely
+(`owner` for GitHub, or `host/owner`; default: the owner of `origin`); `stop_list.migration_commands` replaces the migration list;
 `disable_builtins` turns off a single stop such as `stop-migration`. Whether a repo is public is
 looked up with `gh` and cached for ten minutes; if the lookup fails, the push or PR is stopped.
 The same hook also blocks `git add -A`, force-pushes to `main` and

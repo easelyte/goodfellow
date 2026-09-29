@@ -9,14 +9,19 @@ What a command line reveals, and so what this module enforces:
 
   stop-foreign-remote  `git push` or `gh pr create` whose destination is a repository
                        outside your owner list (`stop_list.owners` in
-                       .goodfellow/guards.json; default: the owner of this project's
-                       `origin`). A destination that cannot be resolved from the
-                       command and local git config is stopped too (fail closed).
+                       .goodfellow/guards.json, entries `owner` for GitHub or
+                       `host/owner`; default: the host and owner of this project's
+                       `origin`). The same account name on another host is foreign.
+                       A destination that cannot be resolved from the command and
+                       local git config is stopped too (fail closed).
   stop-public-repo     On a repository you own that is PUBLIC: a push to its default
                        branch, a tag push, or `gh pr create`. Visibility is looked up
                        live with `gh repo view` and cached for 10 minutes; if the
-                       lookup fails, these actions are stopped (fail closed). Routine
-                       pushes to other branches never trigger a lookup.
+                       lookup fails, these actions are stopped (fail closed). The
+                       push target honours remote.<name>.push and push.default. A
+                       push to another branch triggers a lookup only when the default
+                       branch is not known locally (<remote>/HEAD), and a failed
+                       lookup never blocks it.
   stop-release         `gh release create|upload|edit|delete|delete-asset`, and
                        `gh api` writes to a releases endpoint.
   stop-publish         Package publishes (`npm publish`, `twine upload`,
@@ -206,14 +211,24 @@ def _current_branch(cwd: str) -> Optional[str]:
 def _default_owners(project_dir: str) -> Set[str]:
     url = _remote_url(project_dir, "origin")
     dest = parse_remote(url) if url else None
-    return {dest.owner} if dest and not dest.local else set()
+    return {f"{dest.host}/{dest.owner}"} if dest and not dest.local else set()
 
 
 def _owners(config: dict, project_dir: str) -> Set[str]:
+    """Owners as `host/owner` pairs: the same account name on another host is not
+    yours. A bare `owner` entry means `github.com/owner`."""
     configured = (config.get("stop_list") or {}).get("owners")
     if isinstance(configured, list):
-        return {str(o).lower() for o in configured}
+        out = set()
+        for entry in configured:
+            e = str(entry).strip().strip("/").lower()
+            out.add(e if "/" in e else f"github.com/{e}")
+        return out
     return _default_owners(project_dir)
+
+
+def _owned(dest: "Dest", owners: Set[str]) -> bool:
+    return f"{dest.host}/{dest.owner}" in owners
 
 
 # --------------------------------------------------------------------------- #
@@ -447,21 +462,44 @@ def check_push(
         return None
 
     owners = _owners(config, project_dir)
-    if dest.owner not in owners and "stop-foreign-remote" not in disabled:
+    if not _owned(dest, owners) and "stop-foreign-remote" not in disabled:
         listed = ", ".join(sorted(owners)) or "empty"
         return _stop(
             "stop-foreign-remote",
-            f"this pushes to {dest.name}, whose owner is not in your owner list "
+            f"this pushes to {dest.host}/{dest.name}, whose owner is not in your owner list "
             f"({listed}). Set stop_list.owners in .goodfellow/guards.json to add it.",
         )
     if "stop-public-repo" in disabled:
         return None
 
-    # Which branches (or tags) does it write?
+    # Which branches (or tags) does it write? With no refspec on the command line,
+    # git uses remote.<name>.push, else push.default decides.
     current = _current_branch(wd)
     targets: Set[str] = set()
     tags = p.tags
-    for ref in p.refspecs or ([] if (p.all_branches or p.tags) else ["HEAD"]):
+    all_branches = p.all_branches
+    refspecs = list(p.refspecs)
+    if not refspecs and not (p.all_branches or p.tags):
+        configured = (
+            _git_out(wd, "config", "--get-all", f"remote.{remote_name}.push")
+            if remote_name
+            else None
+        )
+        if configured:
+            refspecs = configured.split()
+        else:
+            mode = _git_out(wd, "config", "--get", "push.default") or "simple"
+            if mode == "matching":
+                all_branches = True
+            elif mode in ("upstream", "tracking") and current:
+                merge = _git_out(wd, "config", "--get", f"branch.{current}.merge")
+                refspecs = [f"HEAD:{merge}" if merge else "HEAD"]
+            elif mode != "nothing":
+                refspecs = ["HEAD"]
+    for ref in refspecs:
+        if "*" in ref:
+            all_branches = True  # a wildcard refspec can write any branch
+            continue
         src_dst = ref.lstrip("+")
         dst = src_dst.split(":")[-1] if ":" in src_dst else src_dst
         if dst in ("HEAD", "@") or dst == "":
@@ -480,13 +518,28 @@ def check_push(
         targets.add(_normalize_ref(dst))
 
     candidates = set(protected)
+    known_default: Optional[str] = None
     if remote_name:
         head = _git_out(
             wd, "symbolic-ref", "--quiet", "--short", f"refs/remotes/{remote_name}/HEAD"
         )
         if head and "/" in head:
-            candidates.add(head.split("/", 1)[1])
-    if not (tags or p.all_branches or targets & candidates):
+            known_default = head.split("/", 1)[1]
+            candidates.add(known_default)
+    if not (tags or all_branches or targets & candidates):
+        if known_default is not None or not targets:
+            return None  # the default branch is known locally and is not a target
+        # The default branch is not known locally (an explicit URL, or no
+        # <remote>/HEAD): ask. A failed lookup never blocks this push, because its
+        # targets are not main, master or any configured protected branch.
+        info = lookup(dest, project_dir)
+        if info is not None and info[0] == "public" and info[1] in targets:
+            return _stop(
+                "stop-public-repo",
+                f"this pushes to the default branch ({info[1]}) of the public "
+                f"repository {dest.name}. Open a pull request from a feature branch "
+                "instead.",
+            )
         return None
 
     info = lookup(dest, project_dir)
@@ -505,7 +558,7 @@ def check_push(
             f"this pushes a tag to the public repository {dest.name}; a tag push "
             "often publishes a release.",
         )
-    if p.all_branches or (default and default in targets):
+    if all_branches or (default and default in targets):
         return _stop(
             "stop-public-repo",
             f"this pushes to the default branch ({default}) of the public repository "
@@ -580,13 +633,13 @@ def check_pr_create(
     if dest.local:
         return None
     owners = _owners(config, project_dir)
-    if dest.owner not in owners:
+    if not _owned(dest, owners):
         if "stop-foreign-remote" in disabled:
             return None
         listed = ", ".join(sorted(owners)) or "empty"
         return _stop(
             "stop-foreign-remote",
-            f"this opens a pull request on {dest.name}, whose owner is not in your "
+            f"this opens a pull request on {dest.host}/{dest.name}, whose owner is not in your "
             f"owner list ({listed}).",
         )
     if "stop-public-repo" in disabled:
@@ -605,6 +658,72 @@ def check_pr_create(
             "which the world can see.",
         )
     return None
+
+
+_GH_API_VALUE_OPTS = {
+    "-X": "method",
+    "--method": "method",
+    "-f": "field",
+    "--raw-field": "field",
+    "-F": "field",
+    "--field": "field",
+    "--input": "field",
+    "-H": "other",
+    "--header": "other",
+    "-q": "other",
+    "--jq": "other",
+    "-t": "other",
+    "--template": "other",
+    "--hostname": "other",
+    "-p": "other",
+    "--preview": "other",
+    "--cache": "other",
+}
+
+
+def _parse_gh_api(args: Sequence[str]) -> Tuple[str, bool, str, str]:
+    """(method, has_body_fields, endpoint, all_field_text) for `gh api` arguments.
+    Option values are consumed with their option, so a header like
+    `Accept: application/vnd.github+json` is never mistaken for the endpoint."""
+    method = ""
+    writes = False
+    positionals: List[str] = []
+    raw: List[str] = []
+    skip_kind: Optional[str] = None
+    for a in args:
+        if skip_kind is not None:
+            if skip_kind == "method":
+                method = a.upper()
+            elif skip_kind == "field":
+                raw.append(a)
+            skip_kind = None
+            continue
+        if a in _GH_API_VALUE_OPTS:
+            kind = _GH_API_VALUE_OPTS[a]
+            writes = writes or kind == "field"
+            skip_kind = kind
+            continue
+        if a.startswith("--") and "=" in a:
+            name, value = a.split("=", 1)
+            kind = _GH_API_VALUE_OPTS.get(name)
+            if kind == "method":
+                method = value.upper()
+            elif kind == "field":
+                writes = True
+                raw.append(value)
+            continue
+        if len(a) > 2 and a[:2] in _GH_API_VALUE_OPTS and not a.startswith("--"):
+            kind = _GH_API_VALUE_OPTS[a[:2]]
+            if kind == "method":
+                method = a[2:].upper()
+            elif kind == "field":
+                writes = True
+                raw.append(a[2:])
+            continue
+        if a.startswith("-"):
+            continue  # a boolean flag (--paginate, -i, --silent, ...)
+        positionals.append(a)
+    return method, writes, (positionals[0] if positionals else ""), " ".join(raw)
 
 
 def check_gh(
@@ -628,15 +747,9 @@ def check_gh(
         return None
 
     if group == "api":
-        method = (_opt_value(args, "-X", "--method") or "").upper()
-        writes = any(
-            a in ("-f", "-F", "--field", "--raw-field", "--input")
-            or a.startswith(("--field=", "--raw-field=", "--input="))
-            for a in args
-        )
+        method, writes, endpoint, raw = _parse_gh_api(args[1:])
         if not method:
             method = "POST" if writes else "GET"
-        endpoint = next((a for a in args[1:] if not a.startswith("-") and "/" in a), "")
         if method != "GET" and re.search(r"(^|/)releases(/|$)", endpoint):
             if "stop-release" not in disabled:
                 return _stop("stop-release", "this writes to a releases API endpoint.")
@@ -650,6 +763,9 @@ def check_gh(
                 f"{m.group(1)}/{m.group(2)}".lower(),
             )
             return check_pr_create(dest, config, project_dir, disabled)
+        if endpoint.strip("/") == "graphql" and "createpullrequest" in raw.lower():
+            # The target repository is an opaque node id: stop rather than guess.
+            return check_pr_create(None, config, project_dir, disabled)
         return None
 
     if group == "pr" and sub in ("create", "new"):

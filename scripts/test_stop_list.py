@@ -125,14 +125,67 @@ def test_push_to_a_remote_outside_the_owner_list_is_stopped(env):
 
 
 def test_push_to_own_origin_feature_branch_is_allowed_without_a_network_call(env):
+    """With the remote's default branch known locally (origin/HEAD), a feature push
+    needs no lookup at all."""
+    git(
+        env.repo, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"
+    )
     assert env.decide("git push -u origin feature") is None
     assert env.calls() == []
+
+
+def test_unknown_default_branch_is_looked_up_not_assumed(env):
+    """No origin/HEAD locally and the real default is trunk: a push to trunk is a
+    default-branch push even though trunk is not main or master."""
+    env.set_repos({"acme/app": ["PUBLIC", "trunk"]})
+    denied(env.decide("git push origin feature:trunk"), "trunk", "public")
+
+
+def test_explicit_url_push_to_a_nonstandard_default_branch_is_stopped(env):
+    env.set_repos({"acme/app": ["PUBLIC", "trunk"]})
+    denied(
+        env.decide("git push https://github.com/acme/app.git feature:refs/heads/trunk"),
+        "trunk",
+    )
+
+
+def test_unknown_default_and_failed_lookup_still_allow_a_feature_push(env):
+    env.set_repos({"acme/app": "fail"})
+    assert env.decide("git push origin feature") is None
+
+
+def test_configured_push_refspec_is_the_real_target(env):
+    """`git push` with no refspec uses remote.<name>.push when it is set."""
+    git(env.repo, "config", "remote.origin.push", "refs/heads/feature:refs/heads/main")
+    denied(env.decide("git push origin"), "public")
+
+
+def test_push_default_upstream_targets_the_tracked_branch(env):
+    git(env.repo, "config", "push.default", "upstream")
+    git(env.repo, "config", "branch.feature.remote", "origin")
+    git(env.repo, "config", "branch.feature.merge", "refs/heads/main")
+    denied(env.decide("git push"), "public")
 
 
 def test_owner_list_from_config_replaces_the_origin_default(env):
     git(env.repo, "remote", "add", "upstream", "https://github.com/other/app.git")
     cfg = {"stop_list": {"owners": ["acme", "other"]}}
     assert env.decide("git push upstream feature", cfg) is None
+
+
+def test_same_owner_name_on_another_host_is_foreign(env):
+    denied(
+        env.decide("git push https://evil.example/acme/app.git feature"), "evil.example"
+    )
+
+
+def test_owner_list_entries_can_name_a_host(env):
+    cfg = {"stop_list": {"owners": ["acme", "gitlab.com/acme"]}}
+    assert env.decide("git push https://gitlab.com/acme/app.git feature", cfg) is None
+    denied(
+        env.decide("git push https://gitlab.com/other/app.git feature", cfg),
+        "gitlab.com/other",
+    )
 
 
 def test_owner_match_is_case_insensitive(env):
@@ -299,6 +352,27 @@ def test_releases_are_stopped(env, cmd):
     denied(env.decide(cmd), "release")
 
 
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        'gh api -X POST -H "Accept: application/vnd.github+json" repos/acme/app/releases -f tag_name=v1',
+        "gh api --method POST --header X-Custom:a/b repos/acme/app/releases -f tag_name=v1",
+        "gh api -H Accept:x/y -f tag_name=v1 repos/acme/app/releases",
+    ],
+)
+def test_option_values_are_not_mistaken_for_the_api_endpoint(env, cmd):
+    denied(env.decide(cmd), "release")
+
+
+def test_api_pr_create_behind_a_header_is_checked(env):
+    denied(
+        env.decide(
+            'gh api -X POST -H "Accept: application/vnd.github+json" repos/other/app/pulls -f title=x'
+        ),
+        "other/app",
+    )
+
+
 def test_reading_releases_is_allowed(env):
     assert env.decide("gh release list") is None
     assert env.decide("gh release view v1.0.0") is None
@@ -427,3 +501,17 @@ def test_command_lists_match_only_in_command_position(env):
     """`echo alembic upgrade head` mentions a migration; it does not run one."""
     assert env.decide("echo alembic upgrade head") is None
     assert env.decide("grep -rn npm publish docs") is None
+
+
+def test_graphql_create_pull_request_fails_closed(env):
+    """The target is an opaque repository id, so the stop cannot check ownership."""
+    denied(
+        env.decide(
+            "gh api graphql -f query='mutation { createPullRequest(input: {}) { clientMutationId } }'"
+        ),
+        "cannot tell which repository",
+    )
+
+
+def test_graphql_queries_are_allowed(env):
+    assert env.decide("gh api graphql -f query='{ viewer { login } }'") is None
