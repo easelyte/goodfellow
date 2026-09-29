@@ -113,6 +113,18 @@ _WRAPPERS = {
     "exec",
 }
 _SHELLS = {"sh", "bash", "zsh", "dash", "ash", "ksh"}
+# git's own options (before the subcommand) that take the NEXT token as their value.
+_GIT_VALUE_OPTS = {
+    "-C",
+    "-c",
+    "--git-dir",
+    "--work-tree",
+    "--namespace",
+    "--config-env",
+    "--super-prefix",
+    "--list-cmds",
+    "--attr-source",
+}
 _MAX_NEST_DEPTH = 4
 _REGEX_BUDGET_S = 2.0  # one hard wall-clock budget for ALL regex rules combined
 _ALLOWED_REGEX_FLAGS = set("ims")
@@ -254,13 +266,12 @@ def _git_arg_start(tokens: List[str]) -> Optional[int]:
     index = 1
     while index < len(stripped):
         token = stripped[index]
-        if token in {"-C", "--git-dir", "--work-tree"}:
-            index += 2
+        if token in _GIT_VALUE_OPTS:
+            index += 2  # the option and its value
             continue
-        if token.startswith("-C") and token != "-C":
-            index += 1
-            continue
-        if token.startswith("--git-dir=") or token.startswith("--work-tree="):
+        if token.startswith("-"):
+            # `-C<dir>`, `--git-dir=…`, `--config-env=…`, and boolean globals such
+            # as `--no-pager`, `-p` or `--bare`: none of them is the subcommand.
             index += 1
             continue
         break

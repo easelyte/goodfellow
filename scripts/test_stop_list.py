@@ -124,14 +124,17 @@ def test_push_to_a_remote_outside_the_owner_list_is_stopped(env):
     )
 
 
-def test_push_to_own_origin_feature_branch_is_allowed_without_a_network_call(env):
-    """With the remote's default branch known locally (origin/HEAD), a feature push
-    needs no lookup at all."""
+def test_push_to_own_origin_feature_branch_is_allowed(env):
     git(
         env.repo, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"
     )
     assert env.decide("git push -u origin feature") is None
-    assert env.calls() == []
+
+
+def test_feature_push_lookups_are_cached(env):
+    env.decide("git push origin feature")
+    env.decide("git push origin feature")
+    assert len(env.calls()) <= 1
 
 
 def test_unknown_default_branch_is_looked_up_not_assumed(env):
@@ -515,3 +518,72 @@ def test_graphql_create_pull_request_fails_closed(env):
 
 def test_graphql_queries_are_allowed(env):
     assert env.decide("gh api graphql -f query='{ viewer { login } }'") is None
+
+
+# --------------------------------------------------------------------------- #
+# Review round 2: git global options, API query strings, stale remote HEAD
+# --------------------------------------------------------------------------- #
+
+
+def test_git_config_option_before_push_is_seen(env):
+    denied(
+        env.decide(
+            "git -c push.default=current push https://github.com/other/app.git feature"
+        ),
+        "other/app",
+    )
+
+
+def test_git_boolean_global_option_before_push_is_seen(env):
+    git(env.repo, "remote", "add", "upstream", "https://github.com/other/app.git")
+    denied(env.decide("git --no-pager push upstream feature"), "other/app")
+
+
+def test_git_config_override_of_the_remote_url_is_honoured(env):
+    denied(
+        env.decide(
+            "git -c remote.origin.url=https://github.com/other/app.git push origin feature"
+        ),
+        "other/app",
+    )
+
+
+def test_git_config_env_option_fails_closed(env):
+    denied(
+        env.decide("git --config-env=remote.origin.url=URL push origin feature"),
+        "cannot tell",
+    )
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "gh api -X POST repos/acme/app/releases?draft=true -f tag_name=v1",
+        "gh api -X POST 'repos/acme/app/releases/?x=1' -f tag_name=v1",
+    ],
+)
+def test_api_query_string_does_not_hide_a_release_write(env, cmd):
+    denied(env.decide(cmd), "release")
+
+
+def test_api_query_string_does_not_hide_a_pull_request(env):
+    denied(
+        env.decide("gh api -X POST repos/other/app/pulls?draft=true -f title=x"),
+        "other/app",
+    )
+
+
+def test_api_owner_placeholders_resolve_to_this_repo(env):
+    denied(
+        env.decide("gh api -X POST 'repos/{owner}/{repo}/pulls' -f title=x"),
+        "acme/app",
+        "public",
+    )
+
+
+def test_stale_local_remote_head_does_not_hide_the_real_default(env):
+    git(
+        env.repo, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"
+    )
+    env.set_repos({"acme/app": ["PUBLIC", "trunk"]})
+    denied(env.decide("git push origin feature:trunk"), "trunk")

@@ -5,6 +5,10 @@ description: "Classify the risk tier, verify, prove new tests can fail, review t
 
 Ship the current work: classify → verify → red check → review → PR → merge → learnings → loops.
 
+**Dry-run (`GOODFELLOW_AUTOPILOT=dry-run`):** run the checks, but perform none of the writes below
+(knowledge entries, loops, the PR, the merge). Log each as a `would_act` event to the run log
+(`RUN_LOG=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/run_log.sh")`) instead.
+
 Arguments: `[--tier T0..T3 | --quick] [--previous Tn]`. `--quick` means `--tier T0`. `--previous` is
 the tier an earlier step of this run chose (brainstorm, or the `tier:` key of the plan or spec);
 it can raise the tier, never lower it.
@@ -91,13 +95,20 @@ Multi-round adversarial review on the diff. Same convergence algorithm as review
   healthy loop)
 
 ```bash
-OUT=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/codex-bridge.sh" --kind diff --uncommitted) || {
+# Review exactly what the PR will contain: commit the work first (stage files by name,
+# including new ones), then review the branch against BASE.
+[ -z "$(git status --porcelain)" ] || { echo "uncommitted changes: commit them before review" >&2; exit 1; }
+git diff --quiet "$BASE"...HEAD && { echo "nothing to ship against $BASE" >&2; exit 1; }
+OUT=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/codex-bridge.sh" --kind diff --base "$BASE") || {
   echo "review bridge failed: $OUT" >&2; exit 1; }
 case "$OUT" in REVIEW_FAILED\ *) echo "review bridge failed: $OUT" >&2; exit 1 ;; esac
 # On success $OUT is the review-artifact path; the Codex path is judged (see its
 # `## Judge audit` section). Reject the REVIEW_FAILED sentinel before reading —
 # never treat a failed review as an empty (zero-findings) pass.
 ```
+
+A review whose artifact shows an empty diff while the branch differs from `BASE` is a failed
+review, not a clean one.
 
 **Failed-review contract:** if the bridge exits nonzero it prints `REVIEW_FAILED <code> <class>` instead of an artifact path. Treat that as a FAILED review, never clean/LGTM — reject the `REVIEW_FAILED` prefix before any read, surface it, and stop (do NOT proceed to PR/merge). A failed review is not a passed one.
 

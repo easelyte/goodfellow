@@ -18,10 +18,11 @@ What a command line reveals, and so what this module enforces:
                        branch, a tag push, or `gh pr create`. Visibility is looked up
                        live with `gh repo view` and cached for 10 minutes; if the
                        lookup fails, these actions are stopped (fail closed). The
-                       push target honours remote.<name>.push and push.default. A
-                       push to another branch triggers a lookup only when the default
-                       branch is not known locally (<remote>/HEAD), and a failed
-                       lookup never blocks it.
+                       push target honours `git -c` overrides, remote.<name>.push,
+                       push.default and every URL of the remote. Pushes to other
+                       branches are checked against the live default branch too
+                       (the local <remote>/HEAD can be stale), but a failed lookup
+                       never blocks them.
   stop-release         `gh release create|upload|edit|delete|delete-asset`, and
                        `gh api` writes to a releases endpoint.
   stop-publish         Package publishes (`npm publish`, `twine upload`,
@@ -188,10 +189,16 @@ def parse_repo_spec(spec: str) -> Optional[Dest]:
     return None
 
 
-def _git_out(cwd: str, *args: str) -> Optional[str]:
+def _git_out(cwd: str, *args: str, cfg: Sequence[str] = ()) -> Optional[str]:
+    """Run a read-only git query in `cwd`. `cfg` carries the `-c name=value`
+    overrides of the command being judged, so git resolves remotes and push
+    settings exactly as that command would."""
+    pre: List[str] = []
+    for pair in cfg:
+        pre += ["-c", pair]
     try:
         proc = subprocess.run(
-            ["git", "-C", cwd, *args], capture_output=True, text=True, timeout=10
+            ["git", *pre, "-C", cwd, *args], capture_output=True, text=True, timeout=10
         )
     except (OSError, subprocess.TimeoutExpired):
         return None
@@ -200,12 +207,12 @@ def _git_out(cwd: str, *args: str) -> Optional[str]:
     return proc.stdout.strip()
 
 
-def _remote_url(cwd: str, remote: str) -> Optional[str]:
-    return _git_out(cwd, "remote", "get-url", "--push", remote)
+def _remote_url(cwd: str, remote: str, cfg: Sequence[str] = ()) -> Optional[str]:
+    return _git_out(cwd, "remote", "get-url", "--push", remote, cfg=cfg)
 
 
-def _current_branch(cwd: str) -> Optional[str]:
-    return _git_out(cwd, "symbolic-ref", "--quiet", "--short", "HEAD") or None
+def _current_branch(cwd: str, cfg: Sequence[str] = ()) -> Optional[str]:
+    return _git_out(cwd, "symbolic-ref", "--quiet", "--short", "HEAD", cfg=cfg) or None
 
 
 def _default_owners(project_dir: str) -> Set[str]:
@@ -308,20 +315,39 @@ def _stop(stop_id: str, what: str) -> str:
 # --------------------------------------------------------------------------- #
 
 
-def _git_workdir(tokens: List[str], start: int, cwd: str) -> str:
-    """Apply `git -C <dir>` options (cumulative, relative) found before the subcommand."""
-    wd = cwd
-    i = 1
+class GitGlobals(NamedTuple):
+    workdir: str
+    cfg: List[str]  # `-c name=value` pairs, in order
+    opaque: bool  # an option whose effect cannot be resolved here (--config-env)
+
+
+def _git_globals(tokens: List[str], start: int, cwd: str) -> GitGlobals:
+    """git's own options between `git` and the subcommand: `-C <dir>` (cumulative,
+    relative), `-c name=value`, and `--config-env` (its value lives in an
+    environment variable the hook cannot see)."""
+    from guard_engine import _strip_wrappers
+
+    i = len(tokens) - len(_strip_wrappers(tokens)) + 1  # first token after `git`
+    wd, cfg, opaque = cwd, [], False
     while i < start:
         t = tokens[i]
-        if t == "-C" and i + 1 < start:
-            wd = os.path.join(wd, os.path.expanduser(tokens[i + 1]))
+        nxt = tokens[i + 1] if i + 1 < start else ""
+        if t == "-C":
+            wd = os.path.join(wd, os.path.expanduser(nxt))
             i += 2
             continue
-        if t.startswith("-C") and len(t) > 2:
+        if t.startswith("-C"):
             wd = os.path.join(wd, os.path.expanduser(t[2:]))
+        elif t == "-c":
+            cfg.append(nxt)
+            i += 2
+            continue
+        elif t.startswith("-c") and not t.startswith("--"):
+            cfg.append(t[2:])
+        elif t == "--config-env" or t.startswith("--config-env="):
+            opaque = True
         i += 1
-    return wd
+    return GitGlobals(wd, cfg, opaque)
 
 
 class PushArgs(NamedTuple):
@@ -389,19 +415,19 @@ def parse_push(args: Sequence[str]) -> PushArgs:
     return PushArgs(repo, refspecs, force, lease, tags, all_branches, delete)
 
 
-def _push_remote(wd: str) -> str:
-    branch = _current_branch(wd)
+def _push_remote(wd: str, cfg: Sequence[str] = ()) -> str:
+    branch = _current_branch(wd, cfg=cfg)
     if branch:
         for key in (
             f"branch.{branch}.pushRemote",
             "remote.pushDefault",
             f"branch.{branch}.remote",
         ):
-            value = _git_out(wd, "config", "--get", key)
+            value = _git_out(wd, "config", "--get", key, cfg=cfg)
             if value:
                 return value
     else:
-        value = _git_out(wd, "config", "--get", "remote.pushDefault")
+        value = _git_out(wd, "config", "--get", "remote.pushDefault", cfg=cfg)
         if value:
             return value
     return "origin"
@@ -415,84 +441,39 @@ def _is_url_like(token: str) -> bool:
     )
 
 
-def check_push(
-    tokens: List[str],
-    start: int,
-    cwd: str,
-    config: dict,
-    project_dir: str,
-    protected: Sequence[str],
-    disabled: Sequence[str],
-) -> Optional[str]:
+def _push_urls(wd: str, remote: str, cfg: Sequence[str]) -> List[str]:
+    """Every URL a push to `remote` writes to (git pushes to all of them)."""
+    out = _git_out(wd, "remote", "get-url", "--push", "--all", remote, cfg=cfg)
+    return [u for u in (out or "").splitlines() if u.strip()]
+
+
+def _push_targets(
+    p: PushArgs, wd: str, remote_name: Optional[str], cfg: Sequence[str]
+) -> Tuple[Set[str], bool, bool]:
+    """(branches written, writes tags, may write any branch) for a push. With no
+    refspec on the command line git uses remote.<name>.push, else push.default."""
     from guard_engine import _normalize_ref
 
-    wd = _git_workdir(tokens, start, cwd)
-    p = parse_push(tokens[start + 1 :])
-
-    if p.force:
-        if "stop-force-push" not in disabled:
-            return _stop(
-                "stop-force-push",
-                "a force-push rewrites the remote branch and can destroy commits. "
-                "Use --force-with-lease on a feature branch if you must.",
-            )
-
-    # Where does it go?
-    remote_name: Optional[str] = None
-    if p.repo is None:
-        remote_name = _push_remote(wd)
-        url = _remote_url(wd, remote_name)
-    elif any(ch in p.repo for ch in "$`"):
-        url = None
-    elif _is_url_like(p.repo):
-        url = p.repo
-    else:
-        remote_name = p.repo
-        url = _remote_url(wd, remote_name)
-    dest = parse_remote(url) if url else None
-    if dest is None:
-        if "stop-foreign-remote" in disabled:
-            return None
-        return _stop(
-            "stop-foreign-remote",
-            f"cannot tell where this push goes ({p.repo or remote_name!r} does not "
-            "resolve to a repository URL), so it is stopped rather than guessed.",
-        )
-    if dest.local:
-        return None
-
-    owners = _owners(config, project_dir)
-    if not _owned(dest, owners) and "stop-foreign-remote" not in disabled:
-        listed = ", ".join(sorted(owners)) or "empty"
-        return _stop(
-            "stop-foreign-remote",
-            f"this pushes to {dest.host}/{dest.name}, whose owner is not in your owner list "
-            f"({listed}). Set stop_list.owners in .goodfellow/guards.json to add it.",
-        )
-    if "stop-public-repo" in disabled:
-        return None
-
-    # Which branches (or tags) does it write? With no refspec on the command line,
-    # git uses remote.<name>.push, else push.default decides.
-    current = _current_branch(wd)
+    current = _current_branch(wd, cfg=cfg)
     targets: Set[str] = set()
-    tags = p.tags
-    all_branches = p.all_branches
+    tags, all_branches = p.tags, p.all_branches
     refspecs = list(p.refspecs)
     if not refspecs and not (p.all_branches or p.tags):
         configured = (
-            _git_out(wd, "config", "--get-all", f"remote.{remote_name}.push")
+            _git_out(wd, "config", "--get-all", f"remote.{remote_name}.push", cfg=cfg)
             if remote_name
             else None
         )
         if configured:
             refspecs = configured.split()
         else:
-            mode = _git_out(wd, "config", "--get", "push.default") or "simple"
+            mode = _git_out(wd, "config", "--get", "push.default", cfg=cfg) or "simple"
             if mode == "matching":
                 all_branches = True
             elif mode in ("upstream", "tracking") and current:
-                merge = _git_out(wd, "config", "--get", f"branch.{current}.merge")
+                merge = _git_out(
+                    wd, "config", "--get", f"branch.{current}.merge", cfg=cfg
+                )
                 refspecs = [f"HEAD:{merge}" if merge else "HEAD"]
             elif mode != "nothing":
                 refspecs = ["HEAD"]
@@ -502,68 +483,141 @@ def check_push(
             continue
         src_dst = ref.lstrip("+")
         dst = src_dst.split(":")[-1] if ":" in src_dst else src_dst
-        if dst in ("HEAD", "@") or dst == "":
-            if ":" in src_dst and dst == "":
-                continue
+        if dst == "":
+            continue  # `src:` with an empty destination writes nothing named
+        if dst in ("HEAD", "@"):
             if current:
                 targets.add(current)
+            else:
+                all_branches = True  # detached HEAD: the target is unknowable here
             continue
         if dst.startswith("refs/tags/") or (
             not dst.startswith("refs/")
-            and _git_out(wd, "show-ref", "--verify", "--quiet", f"refs/tags/{dst}")
+            and _git_out(
+                wd, "show-ref", "--verify", "--quiet", f"refs/tags/{dst}", cfg=cfg
+            )
             is not None
         ):
             tags = True
             continue
         targets.add(_normalize_ref(dst))
+    return targets, tags, all_branches
 
+
+def check_push(
+    tokens: List[str],
+    start: int,
+    cwd: str,
+    config: dict,
+    project_dir: str,
+    protected: Sequence[str],
+    disabled: Sequence[str],
+) -> Optional[str]:
+    g = _git_globals(tokens, start, cwd)
+    wd, cfg = g.workdir, g.cfg
+    p = parse_push(tokens[start + 1 :])
+
+    if p.force and "stop-force-push" not in disabled:
+        return _stop(
+            "stop-force-push",
+            "a force-push rewrites the remote branch and can destroy commits. "
+            "Use --force-with-lease on a feature branch if you must.",
+        )
+
+    # Where does it go? Every URL counts: git pushes to all of a remote's URLs.
+    remote_name: Optional[str] = None
+    urls: List[str] = []
+    if g.opaque:
+        urls = []
+    elif p.repo is None:
+        remote_name = _push_remote(wd, cfg=cfg)
+        urls = _push_urls(wd, remote_name, cfg)
+    elif any(ch in p.repo for ch in "$`"):
+        urls = []
+    elif _is_url_like(p.repo):
+        urls = [p.repo]
+    else:
+        remote_name = p.repo
+        urls = _push_urls(wd, remote_name, cfg)
+    dests = [parse_remote(u) for u in urls]
+    if not dests or any(d is None for d in dests):
+        if "stop-foreign-remote" in disabled:
+            return None
+        why = (
+            "--config-env takes its value from an environment variable the hook "
+            "cannot read"
+            if g.opaque
+            else f"{p.repo or remote_name!r} does not resolve to a repository URL"
+        )
+        return _stop(
+            "stop-foreign-remote",
+            f"cannot tell where this push goes ({why}), so it is stopped rather "
+            "than guessed.",
+        )
+    hosted = [d for d in dests if d is not None and not d.local]
+    if not hosted:
+        return None
+
+    owners = _owners(config, project_dir)
+    if "stop-foreign-remote" not in disabled:
+        for dest in hosted:
+            if not _owned(dest, owners):
+                listed = ", ".join(sorted(owners)) or "empty"
+                return _stop(
+                    "stop-foreign-remote",
+                    f"this pushes to {dest.host}/{dest.name}, whose owner is not in "
+                    f"your owner list ({listed}). Set stop_list.owners in "
+                    ".goodfellow/guards.json to add it.",
+                )
+    if "stop-public-repo" in disabled:
+        return None
+
+    targets, tags, all_branches = _push_targets(p, wd, remote_name, cfg)
+    if not (targets or tags or all_branches):
+        return None
     candidates = set(protected)
-    known_default: Optional[str] = None
     if remote_name:
         head = _git_out(
-            wd, "symbolic-ref", "--quiet", "--short", f"refs/remotes/{remote_name}/HEAD"
+            wd,
+            "symbolic-ref",
+            "--quiet",
+            "--short",
+            f"refs/remotes/{remote_name}/HEAD",
+            cfg=cfg,
         )
         if head and "/" in head:
-            known_default = head.split("/", 1)[1]
-            candidates.add(known_default)
-    if not (tags or all_branches or targets & candidates):
-        if known_default is not None or not targets:
-            return None  # the default branch is known locally and is not a target
-        # The default branch is not known locally (an explicit URL, or no
-        # <remote>/HEAD): ask. A failed lookup never blocks this push, because its
-        # targets are not main, master or any configured protected branch.
+            candidates.add(head.split("/", 1)[1])
+    # A tag, a possibly-any-branch push, or a likely default branch must be checked
+    # and fails closed. Any other branch is checked too (the local idea of the
+    # default branch can be stale or missing), but a failed lookup never blocks it.
+    strict = tags or all_branches or bool(targets & candidates)
+    for dest in hosted:
         info = lookup(dest, project_dir)
-        if info is not None and info[0] == "public" and info[1] in targets:
+        if info is None:
+            if strict:
+                return _stop(
+                    "stop-public-repo",
+                    f"could not check whether {dest.name} is public (the `gh repo "
+                    "view` lookup failed), and this push writes a tag or a likely "
+                    "default branch.",
+                )
+            continue
+        visibility, default = info
+        if visibility != "public":
+            continue
+        if tags:
             return _stop(
                 "stop-public-repo",
-                f"this pushes to the default branch ({info[1]}) of the public "
-                f"repository {dest.name}. Open a pull request from a feature branch "
-                "instead.",
+                f"this pushes a tag to the public repository {dest.name}; a tag "
+                "push often publishes a release.",
             )
-        return None
-
-    info = lookup(dest, project_dir)
-    if info is None:
-        return _stop(
-            "stop-public-repo",
-            f"could not check whether {dest.name} is public (the `gh repo view` "
-            "lookup failed), and this push writes a tag or a likely default branch.",
-        )
-    visibility, default = info
-    if visibility != "public":
-        return None
-    if tags:
-        return _stop(
-            "stop-public-repo",
-            f"this pushes a tag to the public repository {dest.name}; a tag push "
-            "often publishes a release.",
-        )
-    if all_branches or (default and default in targets):
-        return _stop(
-            "stop-public-repo",
-            f"this pushes to the default branch ({default}) of the public repository "
-            f"{dest.name}. Open a pull request from a feature branch instead.",
-        )
+        if all_branches or (default and default in targets):
+            return _stop(
+                "stop-public-repo",
+                f"this pushes to the default branch ({default or 'unknown'}) of the "
+                f"public repository {dest.name}. Open a pull request from a feature "
+                "branch instead.",
+            )
     return None
 
 
@@ -748,6 +802,7 @@ def check_gh(
 
     if group == "api":
         method, writes, endpoint, raw = _parse_gh_api(args[1:])
+        endpoint = endpoint.split("?", 1)[0].split("#", 1)[0]
         if not method:
             method = "POST" if writes else "GET"
         if method != "GET" and re.search(r"(^|/)releases(/|$)", endpoint):
@@ -756,12 +811,17 @@ def check_gh(
             return None
         m = re.match(r"^/?repos/([^/]+)/([^/]+)/pulls/?$", endpoint)
         if method == "POST" and m:
-            dest = Dest(
-                False,
-                "github.com",
-                m.group(1).lower(),
-                f"{m.group(1)}/{m.group(2)}".lower(),
-            )
+            if "{" in m.group(1) or "{" in m.group(2):
+                # gh fills {owner}/{repo} from the current repository.
+                url = _gh_base_repo(cwd)
+                dest = (parse_remote(url) or parse_repo_spec(url)) if url else None
+            else:
+                dest = Dest(
+                    False,
+                    "github.com",
+                    m.group(1).lower(),
+                    f"{m.group(1)}/{m.group(2)}".lower(),
+                )
             return check_pr_create(dest, config, project_dir, disabled)
         if endpoint.strip("/") == "graphql" and "createpullrequest" in raw.lower():
             # The target repository is an opaque node id: stop rather than guess.

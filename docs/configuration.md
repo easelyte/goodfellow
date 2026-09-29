@@ -136,7 +136,7 @@ the stop list, which a `PreToolUse` hook enforces (`scripts/stop_list.py`):
 | Stop | What it catches |
 |---|---|
 | `stop-foreign-remote` | `git push` or `gh pr create` to a repository whose owner is not in `stop_list.owners` (entries `owner` for GitHub, or `host/owner`; default: the host and owner of `origin`), or whose destination cannot be resolved. The same account name on another host counts as foreign. |
-| `stop-public-repo` | On a public repository you own: a push to its default branch, a tag push, or `gh pr create`. Visibility is looked up with `gh repo view` and cached for ten minutes; a failed lookup stops the action. The push target honours `remote.<name>.push` and `push.default`. Pushes to other branches look up the default branch only when it is not known locally, and a failed lookup never blocks them. |
+| `stop-public-repo` | On a public repository you own: a push to its default branch, a tag push, or `gh pr create`. Visibility is looked up with `gh repo view` and cached for ten minutes; a failed lookup stops the action. The push target honours `git -c` overrides, `remote.<name>.push`, `push.default` and every URL of the remote. Pushes to other branches are checked against the live default branch too, but a failed lookup never blocks them. |
 | `stop-release` | `gh release create/upload/edit/delete` and `gh api` writes to a releases endpoint. |
 | `stop-publish` | `npm publish`, `twine upload`, `cargo publish`, `docker push` and similar. `--dry-run` is allowed. |
 | `stop-migration` | Deploy-style migrations: `prisma migrate deploy`, `alembic upgrade`, `manage.py migrate`, `rails db:migrate` and similar. Replace the list with `stop_list.migration_commands`. |

@@ -174,6 +174,11 @@ Note the task as done. Proceed to next task.
 **Autopilot (default):** proceed through all tasks without pausing and report progress at phase
 boundaries. With `GOODFELLOW_AUTOPILOT=0`, pause at each phase boundary for the operator's go.
 
+**`LIVE` tasks (T3) always stop.** Before a task headed `LIVE —`, whatever the autopilot setting:
+confirm the rehearsal task ran and its evidence is recorded, show that evidence and the exact live
+action, and wait for the operator's explicit go. No rehearsal evidence means no live step. Under
+dry-run, log `{"event": "would_run_live_task", "would_act": true, "task": "<id>"}` and stop.
+
 ## 3. Phase-boundary review (optional)
 
 At the end of each phase, optionally run a quick review:

@@ -155,8 +155,11 @@ to `$RUN_LOG`. For a plan: do NOT discard the findings and do NOT auto-dispatch 
 autopilot append `{"event": "plan_review_halt", "reason": "safety-critical findings remain at hard cap", "plan": "<path>"}`.
 Surface the findings and recommend a rewrite. A known-unsafe document must not advance.
 
-Otherwise (genuine convergence, or a cap-halt with only non-blocking findings), deferred
-non-blocking findings are discarded: the next stage addresses them.
+Otherwise (genuine convergence, or a cap-halt with only non-blocking findings), carry the residue
+forward so nothing silently disappears: file each remaining **major** as a loop
+(`python3 "${CLAUDE_PLUGIN_ROOT}/scripts/loop_store.py" --root . add "<title>" --priority p3 --source "review-doc-r<N>" --description "<finding>"`)
+and list it in the hand-off summary; remaining minors are dropped. (Dry-run: log each as a
+`would_file_loop` event instead.)
 On a safety-critical cap-halt, do NOT discard them; the gate above preserves and surfaces them.
 
 **Halt key.** If the frontmatter says `next_action: halt-after-spec-review`, stop after the spec
