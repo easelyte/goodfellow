@@ -1,6 +1,6 @@
 [project]
 name = "goodfellow"
-version = "0.2.0"
+version = "0.3.0"
 description = "Takes a change from idea to pull request with adversarial review at every step, tests that must be able to fail, and knowledge that compounds across runs."
 requires-python = ">=3.10"
 license = {text = "MIT"}
