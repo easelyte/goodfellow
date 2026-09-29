@@ -1,12 +1,15 @@
 {
   "name": "goodfellow",
-  "owner": { "name": "easelyte", "email": "fantin@easelyte.ai" },
-  "description": "Goodfellow: an adversarial-review development lifecycle for Claude Code.",
+  "owner": {
+    "name": "easelyte",
+    "email": "fantin@easelyte.ai"
+  },
+  "description": "goodfellow: an autopilot development lifecycle for Claude Code, with depth that scales to risk.",
   "plugins": [
     {
       "name": "goodfellow",
       "source": "./",
-      "description": "Takes a change from idea to pull request with adversarial review at every step, tests that must be able to fail, and knowledge that compounds across runs."
+      "description": "A Claude Code plugin that takes a change from idea to merged PR on autopilot, scaling the rigor to the risk."
     }
   ]
 }

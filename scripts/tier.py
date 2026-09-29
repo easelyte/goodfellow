@@ -240,7 +240,7 @@ def cmd_resolve(a: argparse.Namespace) -> int:
         "paths": paths,
     }
     floor_line = (
-        f"Floor {floor}: " + "; ".join(reasons)
+        f"Floor {floor}: " + "; ".join(reasons) + "."
         if reasons
         else f"Floor {floor}: nothing in the diff is on a high-stakes or live-state path."
     )

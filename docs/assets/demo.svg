@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Scripted illustration of /goodfellow:ship output (not a live recording). Pure SVG + CSS, no external resources. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 409" width="900" height="409" role="img" aria-label="Terminal: /goodfellow:ship classifies a fix as tier T0, proves the regression test fails on the base, passes review, and merges PR #42.">
+<style>
+text{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-size:15px}
+.t{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;font-size:13px;fill:#8b8f98}
+.fg{fill:#d4d4d8}.mu{fill:#8b8f98}.am{fill:#f5a524}.gr{fill:#4ade80}.wh{fill:#f2f2f4}.b{font-weight:700}
+@media (prefers-reduced-motion:reduce){*{animation:none!important}}
+@keyframes type{0%,3.57%{transform:translateX(0)}4.11%{transform:translateX(9.0px)}4.64%{transform:translateX(18.1px)}5.18%{transform:translateX(27.1px)}5.71%{transform:translateX(36.1px)}6.25%{transform:translateX(45.1px)}6.79%{transform:translateX(54.2px)}7.32%{transform:translateX(63.2px)}7.86%{transform:translateX(72.2px)}8.39%{transform:translateX(81.3px)}8.93%{transform:translateX(90.3px)}9.46%{transform:translateX(99.3px)}10%{transform:translateX(108.4px)}10.54%{transform:translateX(117.4px)}11.07%{transform:translateX(126.4px)}11.61%{transform:translateX(135.4px)}12.14%,100%{transform:translateX(158.5px)}}
+.ty{animation:type 14.0s steps(1,end) infinite;transform:translateX(158.5px)}
+@keyframes cur{0%,14.29%{opacity:1}14.64%,100%{opacity:0}}
+.cu{opacity:0;animation:cur 14.0s steps(1,end) infinite}
+@keyframes blink{0%,50%{opacity:1}50.01%,100%{opacity:0}}
+.bl{animation:blink .9s infinite}
+@keyframes scene{0%,95.36%{opacity:1}98.57%,100%{opacity:0}}
+.sc{animation:scene 14.0s infinite}
+@keyframes l1{0%,15.71%{opacity:0;transform:translateY(5px)}17.86%,100%{opacity:1;transform:translateY(0)}}
+.l1{animation:l1 14.0s ease-out infinite}
+@keyframes l2{0%,18.57%{opacity:0;transform:translateY(5px)}20.71%,100%{opacity:1;transform:translateY(0)}}
+.l2{animation:l2 14.0s ease-out infinite}
+@keyframes l3{0%,25.71%{opacity:0;transform:translateY(5px)}27.86%,100%{opacity:1;transform:translateY(0)}}
+.l3{animation:l3 14.0s ease-out infinite}
+@keyframes l4{0%,34.29%{opacity:0;transform:translateY(5px)}36.43%,100%{opacity:1;transform:translateY(0)}}
+.l4{animation:l4 14.0s ease-out infinite}
+@keyframes l5{0%,36.43%{opacity:0;transform:translateY(5px)}38.57%,100%{opacity:1;transform:translateY(0)}}
+.l5{animation:l5 14.0s ease-out infinite}
+@keyframes l6{0%,45%{opacity:0;transform:translateY(5px)}47.14%,100%{opacity:1;transform:translateY(0)}}
+.l6{animation:l6 14.0s ease-out infinite}
+@keyframes l7{0%,47.86%{opacity:0;transform:translateY(5px)}50%,100%{opacity:1;transform:translateY(0)}}
+.l7{animation:l7 14.0s ease-out infinite}
+@keyframes l8{0%,56.43%{opacity:0;transform:translateY(5px)}58.57%,100%{opacity:1;transform:translateY(0)}}
+.l8{animation:l8 14.0s ease-out infinite}
+@keyframes l9{0%,59.29%{opacity:0;transform:translateY(5px)}61.43%,100%{opacity:1;transform:translateY(0)}}
+.l9{animation:l9 14.0s ease-out infinite}
+@keyframes run{0%,25.71%{fill:#8b8f98}25.71%,28.57%,31.43%,33.93%{fill:#8b8f98;opacity:1}27.14%,30%{opacity:.25}34.29%,100%{fill:#4ade80;opacity:1}}
+.run{fill:#4ade80;animation:run 14.0s infinite}
+</style>
+<rect x="0.5" y="0.5" width="899" height="408" rx="11" fill="#0d0f14" stroke="#2b303a"/>
+<path d="M0.5 40V11.5A11 11 0 0 1 11.5 0.5H888.5A11 11 0 0 1 899.5 11.5V40Z" fill="#14171e"/>
+<path d="M1 40.5H899" stroke="#23272f"/>
+<circle cx="22" cy="20" r="6" fill="#ff5f57"/><circle cx="42" cy="20" r="6" fill="#febc2e"/><circle cx="62" cy="20" r="6" fill="#28c840"/>
+<text class="t" x="450" y="24.5" text-anchor="middle">claude — ~/acme-cli</text>
+<g class="sc">
+<text x="28" y="78.0" xml:space="preserve"><tspan class="am">&gt; </tspan><tspan class="wh">/goodfellow:ship</tspan></text>
+<g class="ty"><rect x="46.1" y="63.0" width="160.5" height="22" fill="#0d0f14"/><g class="cu"><rect class="bl" x="46.6" y="65.0" width="8.0" height="17" fill="#d4d4d8"/></g></g>
+<text class="l1" x="28" y="124.5" xml:space="preserve"><tspan class="wh">● </tspan><tspan class="am b">Tier T0 (fix):</tspan><tspan class="fg"> export --json writes invalid JSON when a name contains a quote.</tspan></text>
+<text class="l2" x="28" y="147.8" xml:space="preserve"><tspan class="fg">  </tspan><tspan class="mu">Floor T0:</tspan><tspan class="fg"> nothing in the diff is on a high-stakes or live-state path.</tspan></text>
+<text class="l3" x="28" y="194.2" xml:space="preserve"><tspan class="wh run">● </tspan><tspan class="wh b">Bash</tspan><tspan class="fg">(python3 scripts/red_check.py --base origin/main)</tspan></text>
+<text class="l4" x="28" y="217.5" xml:space="preserve"><tspan class="fg">  </tspan><tspan class="gr b">OK</tspan><tspan class="fg">           tests/test_export.py::test_quote_in_name_is_escaped</tspan></text>
+<text class="l5" x="28" y="240.8" xml:space="preserve"><tspan class="mu">               (base: assert '{"name": "a"b"}' == '{"name": "a\"b"}')</tspan></text>
+<text class="l6" x="28" y="287.2" xml:space="preserve"><tspan class="wh">● </tspan><tspan class="fg">Review round 1, Codex + judge: </tspan><tspan class="fg">0 blockers, 0 majors</tspan><tspan class="mu">, 1 minor (saved as a gotcha)</tspan></text>
+<text class="l7" x="28" y="310.5" xml:space="preserve"><tspan class="fg">  </tspan><tspan class="mu">Final HEAD </tspan><tspan class="fg">4f2c9e1</tspan><tspan class="mu"> reviewed.</tspan></text>
+<text class="l8" x="28" y="357.0" xml:space="preserve"><tspan class="gr">● </tspan><tspan class="wh b">PR #42</tspan><tspan class="fg">  Escape quotes in export --json</tspan></text>
+<text class="l9" x="28" y="380.2" xml:space="preserve"><tspan class="fg">  </tspan><tspan class="fg">CI passed. </tspan><tspan class="gr b">Merged into main.</tspan></text>
+</g>
+</svg>
