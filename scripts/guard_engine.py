@@ -10,7 +10,10 @@ deterministically on every tool call regardless of what the context still holds.
 This engine backs a single PreToolUse hook (see hooks/hooks.json) and evaluates:
 
   1. Built-in universal guards (no project knowledge required):
-       - `git add -A` / `git add .` / `git add --all`   (stage specific files)
+       - `git add -A` / `git add .` / `git add --all`   (stage specific files),
+         also bundled (`-fA`), whole-tree pathspecs (`./`, `*`, `:/`, `:(top)`)
+         exclusion-only pathspecs (`':!x'` adds everything else) and
+         `--pathspec-from-file` (its pathspecs cannot be inspected)
        - the `--dangerously-skip-permissions` CLI flag    (keep the permission flow)
        - force-push to a protected branch                 (main/master by default)
   2. Declarative user BLOCK rules from `.goodfellow/guards.json`, so a project's
@@ -85,7 +88,7 @@ import re
 import shlex
 import sys
 from pathlib import PurePosixPath, PureWindowsPath
-from typing import Iterable, List, Optional, Sequence
+from typing import Iterable, List, NamedTuple, Optional, Sequence
 
 DEFAULT_PROTECTED_BRANCHES = ("main", "master")
 BUILTIN_IDS = ("git-add-all", "dangerous-skip-permissions", "force-push-protected")
@@ -213,10 +216,14 @@ def _basename_is(token: str, names: set) -> bool:
     lowered = {n.lower() for n in names}
     if token in names:
         return True
-    if token.startswith("/") or token.startswith("./") or token.startswith("../"):
-        return PurePosixPath(token).name in names
+    # Windows first: a drive path (`C:/Git/bin/GIT.EXE`, `C:\\...`) or any
+    # backslash path compares case-insensitively, whichever slash it uses.
     if re.match(r"^[A-Za-z]:[\\/]", token) or "\\" in token:
         return PureWindowsPath(token).name.lower() in lowered
+    if "/" in token:
+        # Any path runs the binary it names: `/usr/bin/git`, `./git`, and a
+        # relative `usr/bin/git` alike.
+        return PurePosixPath(token).name in names
     return False
 
 
@@ -302,12 +309,87 @@ def expand_segments(command: str, _depth: int = 0) -> List[List[str]]:
 # --------------------------------------------------------------------------- #
 
 
+class _Pathspec(NamedTuple):
+    top: bool
+    exclude: bool
+    literal: bool
+    pattern: str
+
+
+def _parse_pathspec(arg: str) -> _Pathspec:
+    """Split git pathspec magic from the pattern.
+
+    Short form `:<magic chars>pattern` (`/` top, `!` or `^` exclude, an optional
+    `:` ending the magic) and long form `:(top,exclude,literal,...)pattern`."""
+    if not arg.startswith(":"):
+        return _Pathspec(False, False, False, arg)
+    if arg.startswith(":("):
+        close = arg.find(")")
+        if close < 0:
+            return _Pathspec(False, False, False, arg)
+        words = {w.strip().split(":", 1)[0] for w in arg[2:close].split(",")}
+        return _Pathspec(
+            "top" in words, "exclude" in words, "literal" in words, arg[close + 1 :]
+        )
+    i = 1
+    while i < len(arg) and arg[i] in "/!^":
+        i += 1
+    magic = arg[1:i]
+    if i < len(arg) and arg[i] == ":":
+        i += 1
+    return _Pathspec("/" in magic, "!" in magic or "^" in magic, False, arg[i:])
+
+
+def _names_whole_tree(spec: _Pathspec) -> bool:
+    """`.` and `./` from where git runs, `*` (a git glob matches every path)
+    unless `literal` magic turns wildcards off, and an empty pattern under `top`
+    magic (`:/`, `:(top)`)."""
+    pattern = spec.pattern
+    stripped = pattern.rstrip("/") or ("." if pattern else "")
+    if stripped == ".":
+        return True
+    if stripped == "*" and not spec.literal:
+        return True
+    return spec.top and pattern == ""
+
+
+def _is_blanket_add_arg(arg: str) -> bool:
+    """`-A`, `--all`, or `-A` bundled with other short flags (git accepts `-fA`
+    as `-f -A`)."""
+    if arg in {"-A", "--all"}:
+        return True
+    return arg.startswith("-") and not arg.startswith("--") and "A" in arg[1:]
+
+
+def _is_blanket_add(args: List[str]) -> bool:
+    """Does this `git add` argument list stage the whole tree?
+
+    A blanket flag, a whole-tree pathspec, pathspecs that are ALL exclusions
+    (git then adds everything except them: `git add ':!secrets.env'`), or
+    `--pathspec-from-file`, whose pathspecs this guard cannot see (fail closed)."""
+    pathspecs: List[str] = []
+    options_done = False
+    for arg in args:
+        if not options_done and arg == "--":
+            options_done = True
+            continue
+        if not options_done and arg.startswith("-"):
+            if _is_blanket_add_arg(arg) or arg.startswith("--pathspec-from-file"):
+                return True
+            continue
+        pathspecs.append(arg)
+    parsed = [_parse_pathspec(p) for p in pathspecs]
+    if any(not spec.exclude and _names_whole_tree(spec) for spec in parsed):
+        return True
+    return bool(parsed) and all(spec.exclude for spec in parsed)
+
+
 def check_git_add_all(segments: Sequence[List[str]]) -> Optional[str]:
     for tokens in segments:
         start = _git_arg_start(tokens)
         if start is None or start >= len(tokens) or tokens[start] != "add":
             continue
-        if any(arg in {"-A", "--all", "."} for arg in tokens[start + 1 :]):
+        if _is_blanket_add(tokens[start + 1 :]):
             return (
                 "Blocked `git add -A` / `git add .` / `git add --all`. Stage "
                 "specific files instead — a blanket add is how secrets and stray "

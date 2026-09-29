@@ -740,3 +740,238 @@ def test_validate_warns_on_redos_prone_pattern(tmp_path):
     assert proc.returncode == 0            # risk is a warning, not an error
     assert "danger" in proc.stderr
     assert "safe" not in proc.stderr
+
+
+# --------------------------------------------------------------------------- #
+# Fail-open gaps found by mutation testing (each test names the break it kills)
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "/usr/bin/git add -A",  # absolute path: the bypass `_basename_is` exists for
+        "./git add .",
+        "../bin/git add --all",
+        "usr/bin/git add -A",  # relative path without a leading ./
+        "'C:\\Program Files\\Git\\bin\\git.exe' add -A",  # Windows path
+        "'C:\\Git\\bin\\GIT.EXE' add -A",  # Windows is case-insensitive
+        "/bin/bash -c 'git add -A'",  # full-path shell around a nested program
+    ],
+)
+def test_git_add_all_denied_through_path_forms(cmd):
+    # Break killed: `_basename_is` path branches returning False (or `not in`).
+    assert check_git_add_all(expand_segments(cmd)) is not None
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "/usr/bin/legit add -A",  # a different binary whose name ends in "git"
+        "./git-helper add -A",
+        "'C:\\tools\\gitx.exe' add -A",
+    ],
+)
+def test_path_to_other_binary_not_mistaken_for_git(cmd):
+    # Break killed: `_basename_is` path branches returning True.
+    assert check_git_add_all(expand_segments(cmd)) is None
+
+
+@pytest.mark.parametrize(
+    "cmd", ["git add -fA", "git add -Av", "git add -nfA src/", "git add ./", "git add :/"]
+)
+def test_git_add_all_denied_through_bundled_flags_and_whole_tree_pathspecs(cmd):
+    # git bundles short flags (`-fA` is `-f -A`), and `./` and `:/` name the whole
+    # tree, so each is the same blanket add as `git add -A`.
+    assert check_git_add_all(expand_segments(cmd)) is not None
+
+
+def test_git_add_bundled_flags_without_A_allowed():
+    assert check_git_add_all(expand_segments("git add -fv src/a.py")) is None
+    assert check_git_add_all(expand_segments("git add -p")) is None
+
+
+def _assert_guard_set(tmp_path, baseline_path):
+    return subprocess.run(
+        [
+            sys.executable,
+            ENGINE,
+            "--project-dir",
+            str(tmp_path),
+            "--assert-guard-set",
+            str(baseline_path),
+        ],
+        capture_output=True,
+        text=True,
+    )
+
+
+@pytest.mark.parametrize("baseline_text", [None, "{ not json"])
+def test_assert_guard_set_unreadable_baseline_is_drift(tmp_path, baseline_text):
+    # Break killed: the "cannot read baseline" branch returning None (exit 0).
+    baseline = tmp_path / "baseline.json"
+    if baseline_text is not None:
+        baseline.write_text(baseline_text)
+    proc = _assert_guard_set(tmp_path, baseline)
+    assert proc.returncode == 1
+    assert "cannot read baseline" in proc.stderr
+
+
+def test_assert_guard_set_config_error_is_drift_even_when_baseline_matches(tmp_path):
+    # A baseline snapshotted from an already-broken config equals the current
+    # set, so only the config-error branch stands between a disarmed rule set and
+    # "OK". Break killed: that branch returning None (exit 0).
+    gf = tmp_path / ".goodfellow"
+    gf.mkdir()
+    (gf / "guards.json").write_text("{ broken ")
+    snap = subprocess.run(
+        [sys.executable, ENGINE, "--project-dir", str(tmp_path), "--selfcheck"],
+        capture_output=True,
+        text=True,
+    )
+    baseline = tmp_path / "baseline.json"
+    baseline.write_text(snap.stdout)
+    proc = _assert_guard_set(tmp_path, baseline)
+    assert proc.returncode == 1
+    assert "config error" in proc.stderr
+    assert "OK" not in proc.stdout
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"disable_builtins": {}},  # not a list, and iterates as empty
+        {"block": {}},  # not a list, and iterates as empty
+        {"block": ["no-prod"]},  # rule is not an object
+        {"block": [{"id": "x", "pattern": "y", "reason": "z", "tools": "Bash"}]},
+        {"block": [{"id": "x", "pattern": "y", "reason": "z", "tools": [""]}]},
+        {"block": [{"id": 5, "pattern": "y", "reason": "z"}]},  # truthy non-string
+    ],
+)
+def test_validate_config_rejects_shapes_that_iterate_as_valid(bad):
+    # Break killed: each `raise GuardConfigError` becoming `pass`. These shapes
+    # would otherwise load as "no rules" (or a substring tool match) silently.
+    with pytest.raises(GuardConfigError):
+        validate_config(bad)
+
+
+def test_load_config_rejects_non_object_json(tmp_path):
+    # Break killed: the "must be a JSON object" raise becoming `pass`.
+    write_guards(tmp_path, [{"id": "x", "pattern": "y", "reason": "z"}])
+    with pytest.raises(GuardConfigError):
+        load_config(str(tmp_path))
+
+
+def test_validate_cli_fails_loud_on_rules_that_are_not_a_list(tmp_path):
+    write_guards(tmp_path, {"block": {}})
+    proc = subprocess.run(
+        [sys.executable, ENGINE, "--project-dir", str(tmp_path), "--validate"],
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 1
+    assert "INVALID" in proc.stderr
+
+
+@pytest.mark.parametrize(
+    "flags,pattern,hit,miss",
+    [
+        ("i", r"drop\s+table", "psql -c 'DROP TABLE users'", "psql -c 'select 1'"),
+        ("m", r"^rm -rf", "echo ok\nrm -rf build", "echo rm -rf build"),
+        ("s", r"begin.*commit", "begin\nwork\ncommit", "begin work"),
+    ],
+)
+def test_regex_flags_are_honoured_and_only_when_set(tmp_path, flags, pattern, hit, miss):
+    # Break killed: `if "<flag>" in flags` negated or dropped in `_regex_flags`.
+    rule = {"id": "r", "match": "regex", "pattern": pattern, "reason": "x"}
+    write_guards(tmp_path, {"block": [dict(rule, flags=flags)]})
+    assert decision_for_input(bash(hit), str(tmp_path)) is not None
+    assert decision_for_input(bash(miss), str(tmp_path)) is None
+    # Without the flag the same text must not match: the flag is doing the work.
+    write_guards(tmp_path, {"block": [rule]})
+    assert decision_for_input(bash(hit), str(tmp_path)) is None
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "C:/Git/bin/GIT.EXE add -A",  # drive path with forward slashes, any case
+        "git add ':(top)'",  # long-form "top" magic: the repository root
+        "git add ':(top,icase).'",
+        "git add :/.",
+        "git add '*'",  # a git glob matches every path
+        "git add ':!secrets.env'",  # exclusions only: "everything except"
+        "git add -- ':(exclude)*.log' ':^tmp/'",
+        "git add ':.'",  # short magic ends at the first non-magic char: `.`
+        "git add ':/*'",  # top magic around a wildcard
+        "git add -v .",  # a non-blanket option before the pathspec
+        "'tools\\git.exe' add -A",  # relative Windows path, backslash only
+    ],
+)
+def test_git_add_all_denied_through_windows_slash_paths_and_pathspec_magic(
+    tmp_path, cmd
+):
+    # Through the real hook: the deny JSON is the contract.
+    rc, parsed = run_hook(bash(cmd), tmp_path)
+    assert rc == 0
+    assert_denied(parsed, contains="git add -A")
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "git add ':(top)src/a.py'",  # top magic with a real path is specific
+        "git add ':/docs/'",
+        "git add src/ ':!src/generated.py'",  # an exclusion next to a real path
+        "git add ':(icase)readme.md'",
+        "git add ':/a'",  # one-letter path under top magic
+        "git add ':/:a'",  # explicit `:` ending the short magic
+        "git add ':(top)a'",
+        "git add ':(top'",  # unclosed long magic: not magic at all
+        "git add -- -A",  # after `--`, `-A` is a file name
+    ],
+)
+def test_git_add_specific_pathspec_magic_allowed(tmp_path, cmd):
+    rc, parsed = run_hook(bash(cmd), tmp_path)
+    assert rc == 0
+    assert parsed is None
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "git add --pathspec-from-file=paths.txt",  # contents unknown: fail closed
+        "git add --pathspec-from-file paths.txt",
+        "git add --pathspec-from-file=- --pathspec-file-nul",  # stdin
+    ],
+)
+def test_git_add_pathspec_from_file_denied(tmp_path, cmd):
+    rc, parsed = run_hook(bash(cmd), tmp_path)
+    assert rc == 0
+    assert_denied(parsed, contains="git add -A")
+
+
+def test_git_add_literal_star_is_a_specific_file(tmp_path):
+    # `literal` magic turns off wildcards: this names a file called `*`.
+    rc, parsed = run_hook(bash("git add ':(literal)*'"), tmp_path)
+    assert rc == 0
+    assert parsed is None
+
+
+def test_user_rule_matches_edit_new_string(tmp_path):
+    # Break killed: `extract_text` returning None for Edit.
+    rule = {"id": "no-secret", "pattern": "SECRET_TOKEN", "reason": "x", "tools": ["Edit"]}
+    write_guards(tmp_path, {"block": [rule]})
+    edit = {"tool_name": "Edit", "tool_input": {"old_string": "a", "new_string": "SECRET_TOKEN=1"}}
+    assert_denied(run_hook(edit, tmp_path)[1], contains="no-secret")
+    clean = {"tool_name": "Edit", "tool_input": {"old_string": "SECRET_TOKEN", "new_string": "b"}}
+    assert run_hook(clean, tmp_path)[1] is None
+
+
+def test_selfcheck_reports_hook_bypass(tmp_path, monkeypatch):
+    # Break killed: `all_disabled` comparison swapped, which would snapshot every
+    # baseline as "all guards off".
+    monkeypatch.delenv("CLAUDE_HOOK_BYPASS", raising=False)
+    assert active_guard_set(str(tmp_path))["all_disabled"] is False
+    monkeypatch.setenv("CLAUDE_HOOK_BYPASS", "1")
+    assert active_guard_set(str(tmp_path))["all_disabled"] is True
