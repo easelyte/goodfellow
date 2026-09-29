@@ -6,10 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html). While the version is `0.x`,
 a minor bump may include breaking changes; they are always listed under **Changed** or **Removed**.
 
-Versions `0.1.0` and `0.2.0` were declared in the plugin manifest but never tagged; the first tagged
-release will be the first version below `[Unreleased]`. See [RELEASING.md](RELEASING.md).
+`0.3.0` is the first version published as a GitHub Release. `0.1.0` and `0.2.0` were tagged
+afterwards at the commits that declared them, without Releases. See [RELEASING.md](RELEASING.md).
 
 ## [Unreleased]
+
+## [0.3.0] - 2026-09-29
 
 ### Added
 
@@ -183,6 +185,7 @@ Initial release.
 - Autopilot mode with dry-run.
 - Triage with two-reviewer reconciliation.
 
-[Unreleased]: https://github.com/easelyte/goodfellow/commits/main
-[0.2.0]: https://github.com/easelyte/goodfellow/commits/136f429
-[0.1.0]: https://github.com/easelyte/goodfellow/commits/48af7a9
+[Unreleased]: https://github.com/easelyte/goodfellow/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/easelyte/goodfellow/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/easelyte/goodfellow/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/easelyte/goodfellow/tree/v0.1.0
