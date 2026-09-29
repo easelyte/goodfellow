@@ -1,6 +1,6 @@
 ---
 name: execute
-description: Per-task plan implementation with built-in verification (lint, format, tests) after each task, knowledge gotcha checking, and optional phase-boundary Codex review. Autopilot mode runs all tasks without pausing.
+description: Per-task plan implementation with built-in verification (lint, format, tests) after each task, knowledge gotcha checking, and optional phase-boundary Codex review. Runs all tasks without pausing unless autopilot is off (GOODFELLOW_AUTOPILOT=0).
 ---
 
 Implement the plan at: $ARGUMENTS
@@ -114,7 +114,7 @@ Each child runs the per-task loop below (2a-2e) inside its worktree and **commit
 
 **Step 5 — straggler / liveness handling (never force-remove a worktree whose child may be live).**
 
-goodfellow has no parent-side liveness watchdog and cannot portably hard-kill a hung subagent (see `skills/grill/SKILL.md`). Isolation removed the *corruption* risk — a slow or dead child can no longer damage the shared tree — but it did NOT make forced cleanup safe, because you cannot prove a hung child has stopped writing:
+goodfellow has no parent-side liveness watchdog and cannot portably hard-kill a hung subagent (see `skills/brainstorm/grill.md`). Isolation removed the *corruption* risk — a slow or dead child can no longer damage the shared tree — but it did NOT make forced cleanup safe, because you cannot prove a hung child has stopped writing:
 
 - Keep child tasks **well-scoped and bounded** so a straggler doesn't stall the phase. Because a dead child costs only its own task (not the phase), children **may** run concurrently rather than strictly foreground one-at-a-time.
 - If a child exceeds a reasonable bound: **do not `git worktree remove --force` a worktree whose child you cannot confirm has terminated** — that can delete uncommitted work and yank the directory out from under a still-running writer. Instead **quarantine** it (leave it in place, do not reuse it). Whether you may then *replay* the task depends on its effects: a **filesystem-only** task can be re-run serially in a fresh worktree (the quarantined child touches only its own tree). A task with **external, non-idempotent effects** (DB migration, API call, deploy, notification, package publish) must **NOT** be concurrently replayed — a worktree isolates files, not a shared database or remote, so replaying while the first execution is still live duplicates the mutation. For those, **halt to the operator** unless the task carries a stable idempotency key and you can check whether the effect already happened. The other children's committed branches are unaffected either way.
@@ -171,7 +171,8 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/red_check.py" --base <base-branch>
 ### 2e. Mark complete
 Note the task as done. Proceed to next task.
 
-**Autopilot:** proceed through all tasks without pausing. Report progress at phase boundaries.
+**Autopilot (default):** proceed through all tasks without pausing and report progress at phase
+boundaries. With `GOODFELLOW_AUTOPILOT=0`, pause at each phase boundary for the operator's go.
 
 ## 3. Phase-boundary review (optional)
 
@@ -189,7 +190,7 @@ case "$OUT" in REVIEW_FAILED\ *) echo "review bridge failed: $OUT" >&2; exit 1 ;
 
 Surface any findings. Fix blockers before proceeding to next phase.
 
-In interactive mode, pause briefly: "Phase N complete. M tasks done. Continuing to Phase N+1."
+Report: "Phase N complete. M tasks done. Continuing to Phase N+1." (With `GOODFELLOW_AUTOPILOT=0`, wait for a go.)
 
 ## 4. After all tasks
 

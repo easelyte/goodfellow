@@ -111,12 +111,8 @@ SOURCE_LENS_MAP: list[tuple[re.Pattern[str], str]] = [
         "skills/codex-review/SKILL.md + scripts/codex-bridge.sh per-KIND base stance",
     ),
     (
-        re.compile(r"^spec-review"),
-        "skills/spec-review/SKILL.md reviewer lens prompts (~L62-74)",
-    ),
-    (
-        re.compile(r"^plan-review"),
-        "skills/plan-review/SKILL.md reviewer lens prompts (~L93-103)",
+        re.compile(r"^(review-doc|spec-review|plan-review)"),
+        "skills/review-doc/SKILL.md reviewer lens prompts (section 3)",
     ),
 ]
 

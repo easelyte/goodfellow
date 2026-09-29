@@ -1,15 +1,47 @@
 ---
 name: ship
-description: "Verify, review, create PR, extract learnings to knowledge file, file follow-up loops. --quick: single-round review for small diffs. Safety-critical findings block PR creation."
+description: "Classify the risk tier, verify, prove new tests can fail, review the diff to convergence, open the PR, merge on autopilot, then extract learnings and file follow-up loops. --tier T0..T3 overrides the tier (never below its hard floor); --quick is an alias for --tier T0. Safety-critical findings block the PR."
 ---
 
-Ship the current work. Runs verify → review → PR → extract learnings → file loops.
+Ship the current work: classify → verify → red check → review → PR → merge → learnings → loops.
+
+Arguments: `[--tier T0..T3 | --quick] [--previous Tn]`. `--quick` means `--tier T0`. `--previous` is
+the tier an earlier step of this run chose (brainstorm, or the `tier:` key of the plan or spec);
+it can raise the tier, never lower it.
 
 ## 0. Ensure state directory
 
 ```bash
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/init_state.sh"
 ```
+
+## 0.5 Classify the tier
+
+Set `BASE` to the branch you will open the PR against (e.g. `origin/main`). Pick a tier from the
+rubric in the `brainstorm` skill (T0 fix, T1 feature, T2 design, T3 live state; when unsure, the
+higher one), then let the resolver apply the hard floors to the actual diff:
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/tier.py" resolve --base "$BASE" --proposed <T0..T3> \
+  [--tier <Tn> | --quick] [--previous <Tn>] [--live-state "<what live state it touches>"] \
+  --reason "<one line: the rubric row that decided it>"
+```
+
+- **Exit 0:** announce its two lines (`Tier T0 (fix): …` / `Floor T0: …`) and continue at that tier.
+- **Exit 3:** the requested `--tier`/`--quick` is below a hard floor (a high-stakes path forces
+  T1, a live-state path or trigger forces T3). Say so with the resolver's reason and continue at the
+  floor. Never honour it silently.
+- **Exit 2:** no decision (bad base, a configured path list is missing). Stop; never assume T0.
+
+**What the tier changes here:** the review's round cap (3 at T0 and T1, 6 at T2 and T3), the PR
+body (a **Plan** section at T1, a **Rehearsal** section at T3), and nothing else. The checks below
+run at every tier: verification, the red check, the mutation check when you keep a high-stakes
+list, a review looped until no blocker or major remains, and the final-HEAD check.
+
+**T3 gate.** At T3, before §2: the PR needs rehearsal evidence, meaning the real mutations were
+performed against a sandbox (a database copy, a temporary tree, a namespace) and the result is
+recorded. If there is none, HALT and say what rehearsal is missing. goodfellow does not provide the
+sandbox; it refuses to skip the rehearsal.
 
 ## 1. Full verification pass
 
@@ -25,7 +57,7 @@ If verification fails: surface errors, do not proceed to review.
 
 ### 1a. Tests that can fail
 
-Set `BASE` to the branch you will open the PR against (e.g. `origin/main`).
+`BASE` is the branch from §0.5.
 
 **Red evidence (P-094).** Every new test must fail on the base with an assertion, then pass:
 
@@ -49,13 +81,14 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/mutation_check.py" --base "$BASE"
 
 ## 2. Review
 
-### Standard mode (default)
-Multi-round adversarial review on the diff. Same convergence algorithm as spec-review/plan-review:
+### The review loop (every tier)
+Multi-round adversarial review on the diff. Same convergence algorithm as review-doc:
 - Two reviewers per round (Claude + Codex/single-Claude fallback via bridge)
 - Verifier pass at round 2+ (via `convergence_detector.py`)
 - Research injection between rounds 1 and 2 if factual claims in findings
 - Convergence when severity drops to polish-tier
-- Hard cap 6 rounds
+- Hard cap: 3 rounds at T0 and T1, 6 at T2 and T3 (a cost bound; convergence, not the cap, ends a
+  healthy loop)
 
 ```bash
 OUT=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/codex-bridge.sh" --kind diff --uncommitted) || {
@@ -68,8 +101,20 @@ case "$OUT" in REVIEW_FAILED\ *) echo "review bridge failed: $OUT" >&2; exit 1 ;
 
 **Failed-review contract:** if the bridge exits nonzero it prints `REVIEW_FAILED <code> <class>` instead of an artifact path. Treat that as a FAILED review, never clean/LGTM — reject the `REVIEW_FAILED` prefix before any read, surface it, and stop (do NOT proceed to PR/merge). A failed review is not a passed one.
 
-### Quick mode (`--quick`)
-Single-round review for diffs <50 net changed lines. Safety-critical findings in quick mode still block PR and get filed as loops.
+### Final-HEAD check
+
+The loop ends by *fixing* the last round's findings, so the last fix commit has been reviewed by
+nobody. Before the PR is opened or merged, if HEAD moved after the last reviewed state, run one
+narrow review of just the fix commits:
+
+```bash
+OUT=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/codex-bridge.sh" --kind diff --base <last-reviewed-sha>) || {
+  echo "review bridge failed: $OUT" >&2; exit 1; }
+case "$OUT" in REVIEW_FAILED\ *) echo "review bridge failed: $OUT" >&2; exit 1 ;; esac
+```
+
+It asks one question: did the fix introduce a defect? Only a blocker or major inside those commits
+halts; anything else is recorded, not fixed here. It is a gate, not a round, and runs at most twice.
 
 ## 3. Ship-blocking check
 
@@ -165,6 +210,14 @@ findings still deferred, write "Halted at hard cap (round N)", not "Converged at
 ## Summary
 <what changed>
 
+Tier: T1 (feature): <the resolver's reason>. Floor: <floor and why>.
+
+## Plan (T1 only)
+Goal / Approach / Tests, as written before building.
+
+## Rehearsal (T3 only)
+<the real mutations, the sandbox they ran against, and the result>
+
 ## Test evidence
 - Red: <each new test and the assertion it failed with on the base> (red_check: N OK)
 - Deliberate breaks: <break -> test that caught it>
@@ -178,7 +231,10 @@ findings still deferred, write "Halted at hard cap (round N)", not "Converged at
 - Loops: D follow-ups filed
 ```
 
-## 7. Optional merge
+## 7. Merge
 
-In interactive mode: ask once whether to merge.
-In autopilot mode: auto-merge (dry-run logs `would_act: merge` instead).
+**Autopilot (default):** merge when the review converged with no unresolved blocker, the final-HEAD
+check is clean and CI is green. The stop list still applies: opening a PR on a public repository,
+pushing to its default branch, a repository outside your owner list, releases and migrations stop
+for the operator, whatever the tier. **Dry-run:** log `would_act: merge` instead.
+**`GOODFELLOW_AUTOPILOT=0`:** ask once whether to merge.

@@ -32,8 +32,8 @@ body:
     attributes:
       label: Area
       options:
-        - brainstorm / grill
-        - spec-review / plan-review
+        - brainstorm (incl. --grill)
+        - review-doc (spec-review / plan-review)
         - plan
         - execute
         - ship

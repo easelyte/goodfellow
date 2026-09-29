@@ -298,3 +298,26 @@ def test_text_output_announces_tier_and_floor(repo):
     lines = proc.stdout.strip().splitlines()
     assert lines[0] == "Tier T1 (feature): token refresh fails after expiry"
     assert lines[1].startswith("Floor T1: src/auth/session.py")
+
+
+# --------------------------------------------------------------------------- #
+# Wiring: the entry skills call the resolver and honour its exit codes
+# --------------------------------------------------------------------------- #
+
+SKILLS = os.path.join(os.path.dirname(HERE), "skills")
+
+
+@pytest.mark.parametrize("skill", ["brainstorm", "ship"])
+def test_entry_skills_run_the_resolver_and_handle_refusal(skill):
+    with open(os.path.join(SKILLS, skill, "SKILL.md"), encoding="utf-8") as fh:
+        flat = " ".join(fh.read().split())
+    assert 'scripts/tier.py" resolve' in flat
+    assert "**Exit 3:**" in flat and "Never honour it silently" in flat
+    assert "**Exit 2:**" in flat and "T0" in flat
+
+
+def test_ship_quick_is_documented_as_the_t0_alias():
+    with open(os.path.join(SKILLS, "ship", "SKILL.md"), encoding="utf-8") as fh:
+        text = fh.read()
+    assert "`--quick` means `--tier T0`" in text
+    assert "Quick mode" not in text  # the old single-round mode is gone
