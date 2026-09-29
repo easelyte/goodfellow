@@ -587,3 +587,36 @@ def test_stale_local_remote_head_does_not_hide_the_real_default(env):
     )
     env.set_repos({"acme/app": ["PUBLIC", "trunk"]})
     denied(env.decide("git push origin feature:trunk"), "trunk")
+
+
+# --------------------------------------------------------------------------- #
+# Review round 3: gh global options, matching refspec, follow-tags
+# --------------------------------------------------------------------------- #
+
+
+def test_gh_repo_option_before_the_command_group_is_seen(env):
+    denied(env.decide("gh -R other/app pr create --fill"), "other/app")
+    denied(env.decide("gh --repo=other/app release create v1"), "release")
+
+
+def test_matching_refspec_can_write_the_default_branch(env):
+    denied(env.decide("git push origin :"), "public")
+
+
+def test_follow_tags_config_with_an_annotated_tag_is_a_tag_push(env):
+    git(env.repo, "tag", "-a", "v9.9.9", "-m", "release")
+    git(env.repo, "config", "push.followTags", "true")
+    denied(env.decide("git push origin feature"), "tag")
+
+
+def test_follow_tags_with_no_annotated_tag_is_a_routine_push(env):
+    """No tag can travel, so a failed lookup must not block the feature push."""
+    env.set_repos({"acme/app": "fail"})
+    assert env.decide("git push --follow-tags origin feature") is None
+
+
+def test_no_follow_tags_overrides_the_config(env):
+    git(env.repo, "tag", "-a", "v9.9.9", "-m", "release")
+    git(env.repo, "config", "push.followTags", "true")
+    env.set_repos({"acme/app": ["PRIVATE", "main"]})
+    assert env.decide("git push --no-follow-tags origin feature") is None

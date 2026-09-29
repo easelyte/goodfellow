@@ -45,7 +45,7 @@ list, a review looped until no blocker or major remains, and the final-HEAD chec
 **T3 gate.** At T3, before §2: the PR needs rehearsal evidence, meaning the real mutations were
 performed against a sandbox (a database copy, a temporary tree, a namespace) and the result is
 recorded. If there is none, HALT and say what rehearsal is missing. goodfellow does not provide the
-sandbox; it refuses to skip the rehearsal.
+sandbox; it refuses to skip the rehearsal. The live step itself comes last (§7a).
 
 ## 1. Full verification pass
 
@@ -249,3 +249,13 @@ check is clean and CI is green. The stop list still applies: opening a PR on a p
 pushing to its default branch, a repository outside your owner list, releases and migrations stop
 for the operator, whatever the tier. **Dry-run:** log `would_act: merge` instead.
 **`GOODFELLOW_AUTOPILOT=0`:** ask once whether to merge.
+
+## 7a. T3 live step
+
+Only after the review converged, the final-HEAD check is clean and CI is green: present the plan's
+`## Live step` (the exact commands, before or after the merge, verification, rollback) together
+with the rehearsal evidence, and hand it to the operator, whatever the autopilot setting. The
+operator runs it: the stop list deliberately denies migrations, deploys, publishes and releases from
+the session, and sends or spending are never automated. Then verify the result as the plan says,
+record it in the PR, and only then report the work done. **Dry-run:** log
+`{"event": "would_hand_off_live_step", "would_act": true}`.

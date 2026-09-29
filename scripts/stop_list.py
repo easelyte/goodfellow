@@ -358,6 +358,7 @@ class PushArgs(NamedTuple):
     tags: bool
     all_branches: bool
     delete: bool
+    follow_tags: Optional[bool] = None  # --follow-tags / --no-follow-tags / unset
 
 
 def parse_push(args: Sequence[str]) -> PushArgs:
@@ -366,6 +367,7 @@ def parse_push(args: Sequence[str]) -> PushArgs:
     repo: Optional[str] = None
     positionals: List[str] = []
     force = lease = tags = all_branches = delete = False
+    follow_tags: Optional[bool] = None
     skip = False
     for i, a in enumerate(args):
         if skip:
@@ -389,8 +391,14 @@ def parse_push(args: Sequence[str]) -> PushArgs:
         if a.startswith("--force-with-lease") or a.startswith("--force-if-includes"):
             lease = True
             continue
-        if a in ("--tags", "--follow-tags"):
+        if a == "--tags":
             tags = True
+            continue
+        if a == "--follow-tags":
+            follow_tags = True
+            continue
+        if a == "--no-follow-tags":
+            follow_tags = False
             continue
         if a in ("--all", "--mirror", "--branches"):
             all_branches = True
@@ -412,7 +420,9 @@ def parse_push(args: Sequence[str]) -> PushArgs:
     if repo is None and positionals:
         repo, refspecs = positionals[0], positionals[1:]
     force = force or any(r.startswith("+") for r in refspecs)
-    return PushArgs(repo, refspecs, force, lease, tags, all_branches, delete)
+    return PushArgs(
+        repo, refspecs, force, lease, tags, all_branches, delete, follow_tags
+    )
 
 
 def _push_remote(wd: str, cfg: Sequence[str] = ()) -> str:
@@ -457,6 +467,24 @@ def _push_targets(
     current = _current_branch(wd, cfg=cfg)
     targets: Set[str] = set()
     tags, all_branches = p.tags, p.all_branches
+    follow = p.follow_tags
+    if follow is None:
+        follow = (
+            _git_out(wd, "config", "--bool", "--get", "push.followTags", cfg=cfg)
+            == "true"
+        )
+    if follow and not tags:
+        # --follow-tags sends annotated tags reachable from what is pushed; only
+        # when such a tag exists can this push write a tag.
+        kinds = _git_out(
+            wd,
+            "for-each-ref",
+            "--merged=HEAD",
+            "--format=%(objecttype)",
+            "refs/tags",
+            cfg=cfg,
+        )
+        tags = "tag" in (kinds or "").split()
     refspecs = list(p.refspecs)
     if not refspecs and not (p.all_branches or p.tags):
         configured = (
@@ -482,6 +510,9 @@ def _push_targets(
             all_branches = True  # a wildcard refspec can write any branch
             continue
         src_dst = ref.lstrip("+")
+        if src_dst == ":":
+            all_branches = True  # the matching refspec updates every matching branch
+            continue
         dst = src_dst.split(":")[-1] if ":" in src_dst else src_dst
         if dst == "":
             continue  # `src:` with an empty destination writes nothing named
@@ -787,7 +818,23 @@ def check_gh(
 
     env = _leading_env(tokens)
     toks = _strip_wrappers(tokens)
-    args = toks[1:]
+    # Options may precede the command group (`gh -R other/app pr create`); take
+    # `-R/--repo` from there and skip the rest.
+    raw_args = toks[1:]
+    lead_repo: Optional[str] = None
+    k = 0
+    while k < len(raw_args) and raw_args[k].startswith("-"):
+        a = raw_args[k]
+        if a in ("-R", "--repo"):
+            lead_repo = raw_args[k + 1] if k + 1 < len(raw_args) else ""
+            k += 2
+            continue
+        if a.startswith("--repo="):
+            lead_repo = a.split("=", 1)[1]
+        elif a.startswith("-R") and len(a) > 2:
+            lead_repo = a[2:]
+        k += 1
+    args = raw_args[k:]
     if len(args) < 1:
         return None
     group = args[0]
@@ -831,6 +878,7 @@ def check_gh(
     if group == "pr" and sub in ("create", "new"):
         spec = (
             _opt_value(args, "-R", "--repo")
+            or lead_repo
             or env.get("GH_REPO")
             or os.environ.get("GH_REPO")
         )

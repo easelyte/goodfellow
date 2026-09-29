@@ -100,6 +100,10 @@ Use loop N's title and description as the seed. If it does not exist, say so and
   test-first, then run `/goodfellow:ship --previous T1`.
 - **T2 design and T3 live.** Continue with §5 to §7: questions, approaches, a spec, then review.
 
+**Dry-run (`GOODFELLOW_AUTOPILOT=dry-run`):** after the tier announcement, write nothing (no test,
+no code, no spec). Log `{"event": "would_route", "would_act": true, "tier": "<Tn>"}` to the run
+log and stop.
+
 ## 5a. Questions (default mode)
 
 Ask only what changes the design and cannot be read from the code: at most three, in one message,

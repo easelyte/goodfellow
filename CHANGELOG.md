@@ -42,7 +42,8 @@ you upgrade.
 - **Risk tiers.** `brainstorm` and `ship` classify each change as T0 fix, T1 feature, T2 design or
   T3 live state, announce it, and only ever raise it. A fix gets a failing test and the fix; a
   feature gets a short plan in the PR; a design gets a reviewed spec and plan; a live-state change
-  also needs a rehearsal against a sandbox you supply ([#34](https://github.com/easelyte/goodfellow/pull/34)).
+  also needs a rehearsal against a sandbox you supply, and its live step is handed to you only after
+  review and CI pass ([#34](https://github.com/easelyte/goodfellow/pull/34)).
 - **`--tier T0..T3`** on `brainstorm` and `ship`, with hard floors: a high-stakes path forces at
   least T1, and a live-state path (built-in: migrations, service and timer units, crontabs,
   Terraform; extend with `.goodfellow/live_state_paths.txt`) forces T3. A tier below the floor is

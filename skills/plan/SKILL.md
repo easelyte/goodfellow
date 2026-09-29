@@ -75,13 +75,13 @@ date: YYYY-MM-DD
 - for code that signals processes, deletes or writes real resources: the fake or isolated namespace (for example `unshare --pid`) its tests and breaks run in. Such code is never tested or mutated against the live machine;
 - the real entry point the tests drive. A source-text check may accompany a behaviour test, never replace one.
 
-**T3: rehearsal task, then a gated live step.** A T3 plan includes a task that performs the real
-mutations (the migration, the deploy step, the deletion, the send) against a sandbox the user
-supplies (a database copy, a temporary tree, a namespace) and records the evidence for the PR. The
-live step itself is its own final task, headed `### T-N.X: LIVE — <what it changes>`. `execute`
-never runs a `LIVE` task on its own: it stops before it, shows the rehearsal evidence, and asks the
-operator, whatever the autopilot setting. The stop list cannot see sends or spending in a command
-line, so this gate is what protects them.
+**T3: a rehearsal task, and a live step that is not a task.** A T3 plan includes a task that
+performs the real mutations (the migration, the deploy step, the deletion, the send) against a
+sandbox the user supplies (a database copy, a temporary tree, a namespace) and records the evidence
+for the PR. The live change itself is **not** a task `execute` runs. The plan ends with a
+`## Live step` section: the exact commands, whether they run before or after the merge, how to
+verify the result, and how to roll back. `ship` hands it to the operator only after the code review
+has converged and CI is green, so a defect the review finds can never reach production first.
 
 **Scope bias: exhaustive.** Enumerate every task the spec implies. Don't truncate to look simpler.
 
