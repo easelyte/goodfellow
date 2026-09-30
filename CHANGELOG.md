@@ -11,6 +11,57 @@ afterwards at the commits that declared them, without Releases. See [RELEASING.m
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-29
+
+goodfellow now sizes the process to the change. A classify step puts each change in one of four
+risk tiers, from a one-line fix to a live migration, and runs only the design work that tier needs;
+the code checks run at every tier. Autopilot is now the default, with a hook-enforced stop list for
+the actions it must hand back to you. **Heads up:** two behaviour changes below need a look before
+you upgrade.
+
+### Changed
+
+- **Autopilot is on by default (behaviour change).** The chain no longer pauses for approval
+  between steps, and `ship` merges your own-repo PR once review converges and CI is green. Set
+  `GOODFELLOW_AUTOPILOT=0` to approve each step as before. `dry-run` is unchanged ([#34](https://github.com/easelyte/goodfellow/pull/34)).
+- **A stop list is enforced in every mode (behaviour change).** The `PreToolUse` hook now
+  stops pushes and PRs to repositories outside your owner list (default: the owner of `origin`),
+  default-branch pushes, tag pushes and PR-opens on public repositories, `gh release` writes,
+  package publishes, deploy-style migrations and plain force-pushes. Add owners with
+  `stop_list.owners` in `.goodfellow/guards.json`, or turn off one stop with its id in
+  `disable_builtins`. `GOODFELLOW_AUTOPILOT=0` keeps it on; `GOODFELLOW_STOP_LIST=0` is the
+  dedicated opt-out ([#34](https://github.com/easelyte/goodfellow/pull/34)).
+- **`ship --quick` is now an alias for `--tier T0`.** It is refused when the diff touches a
+  high-stakes or live-state path, instead of running a single review round ([#34](https://github.com/easelyte/goodfellow/pull/34)).
+- **`ship` reviews to convergence at every tier,** with a round cap of 3 at T0 and T1 and 6 at T2
+  and T3, and reviews the final commit before the PR opens or merges ([#34](https://github.com/easelyte/goodfellow/pull/34)).
+- New short description, README, logo and social preview; "adversarial" no longer leads the
+  description ([#34](https://github.com/easelyte/goodfellow/pull/34)).
+
+### Added
+
+- **Risk tiers.** `brainstorm` and `ship` classify each change as T0 fix, T1 feature, T2 design or
+  T3 live state, announce it, and only ever raise it. A fix gets a failing test and the fix; a
+  feature gets a short plan in the PR; a design gets a reviewed spec and plan; a live-state change
+  also needs a rehearsal against a sandbox you supply, and its live step is handed to you only after
+  review and CI pass ([#34](https://github.com/easelyte/goodfellow/pull/34)).
+- **`--tier T0..T3`** on `brainstorm` and `ship`, with hard floors: a high-stakes path forces at
+  least T1, and a live-state path (built-in: migrations, service and timer units, crontabs,
+  Terraform; extend with `.goodfellow/live_state_paths.txt`) forces T3. A tier below the floor is
+  refused with the reason (`scripts/tier.py`) ([#34](https://github.com/easelyte/goodfellow/pull/34)).
+- **`review-doc --spec | --plan`**, one review skill for specs and plans ([#34](https://github.com/easelyte/goodfellow/pull/34)).
+- **`brainstorm --grill`** for the one-question-at-a-time interview ([#34](https://github.com/easelyte/goodfellow/pull/34)).
+- `docs/configuration.md`, the full configuration reference ([#34](https://github.com/easelyte/goodfellow/pull/34)).
+
+### Deprecated
+
+- **`spec-review`, `plan-review` and `grill`** still work as aliases for `review-doc --spec`,
+  `review-doc --plan` and `brainstorm --grill` through 0.4.x, and are removed in 0.5.0 ([#34](https://github.com/easelyte/goodfellow/pull/34)).
+
+### Removed
+
+- The old hero, icon and pipeline graphics ([#34](https://github.com/easelyte/goodfellow/pull/34)).
+
 ## [0.3.0] - 2026-09-29
 
 ### Added
@@ -185,7 +236,8 @@ Initial release.
 - Autopilot mode with dry-run.
 - Triage with two-reviewer reconciliation.
 
-[Unreleased]: https://github.com/easelyte/goodfellow/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/easelyte/goodfellow/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/easelyte/goodfellow/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/easelyte/goodfellow/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/easelyte/goodfellow/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/easelyte/goodfellow/tree/v0.1.0

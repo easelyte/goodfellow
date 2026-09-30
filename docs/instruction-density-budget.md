@@ -36,7 +36,7 @@ run cost roughly:
 | core + web full bodies | ~19,900 | ~349 |
 
 That is ~6× the erosion ceiling and well past the adherence cliff — on *every*
-brainstorm, spec-review, plan, plan-review, and execute run, before the skill's own
+brainstorm, review-doc, plan, and execute run, before the skill's own
 instructions and the task itself are even added. The principles were, in effect,
 crowding out the work they were meant to guide.
 

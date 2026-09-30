@@ -90,6 +90,9 @@ import sys
 from pathlib import PurePosixPath, PureWindowsPath
 from typing import Iterable, List, NamedTuple, Optional, Sequence
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import stop_list  # noqa: E402
+
 DEFAULT_PROTECTED_BRANCHES = ("main", "master")
 BUILTIN_IDS = ("git-add-all", "dangerous-skip-permissions", "force-push-protected")
 SKIP_PERMS_FLAG = "--dangerously-skip-permissions"
@@ -110,6 +113,18 @@ _WRAPPERS = {
     "exec",
 }
 _SHELLS = {"sh", "bash", "zsh", "dash", "ash", "ksh"}
+# git's own options (before the subcommand) that take the NEXT token as their value.
+_GIT_VALUE_OPTS = {
+    "-C",
+    "-c",
+    "--git-dir",
+    "--work-tree",
+    "--namespace",
+    "--config-env",
+    "--super-prefix",
+    "--list-cmds",
+    "--attr-source",
+}
 _MAX_NEST_DEPTH = 4
 _REGEX_BUDGET_S = 2.0  # one hard wall-clock budget for ALL regex rules combined
 _ALLOWED_REGEX_FLAGS = set("ims")
@@ -251,13 +266,12 @@ def _git_arg_start(tokens: List[str]) -> Optional[int]:
     index = 1
     while index < len(stripped):
         token = stripped[index]
-        if token in {"-C", "--git-dir", "--work-tree"}:
-            index += 2
+        if token in _GIT_VALUE_OPTS:
+            index += 2  # the option and its value
             continue
-        if token.startswith("-C") and token != "-C":
-            index += 1
-            continue
-        if token.startswith("--git-dir=") or token.startswith("--work-tree="):
+        if token.startswith("-"):
+            # `-C<dir>`, `--git-dir=…`, `--config-env=…`, and boolean globals such
+            # as `--no-pager`, `-p` or `--bare`: none of them is the subcommand.
             index += 1
             continue
         break
@@ -531,11 +545,27 @@ def validate_config(data: dict, path: str = "guards.json") -> None:
     disabled = data.get("disable_builtins", [])
     if not isinstance(disabled, list) or not all(isinstance(b, str) for b in disabled):
         raise GuardConfigError(f"{path}: 'disable_builtins' must be a list of strings")
-    for bad in [b for b in disabled if b not in BUILTIN_IDS]:
+    known = BUILTIN_IDS + stop_list.STOP_IDS
+    for bad in [b for b in disabled if b not in known]:
         raise GuardConfigError(
             f"{path}: unknown built-in '{bad}' in 'disable_builtins' "
-            f"(known: {', '.join(BUILTIN_IDS)})"
+            f"(known: {', '.join(known)})"
         )
+    stops = data.get("stop_list", {})
+    if not isinstance(stops, dict):
+        raise GuardConfigError(f"{path}: 'stop_list' must be an object")
+    for key in ("owners", "migration_commands", "publish_commands"):
+        value = stops.get(key)
+        if value is not None and (
+            not isinstance(value, list)
+            or not all(isinstance(v, str) and v.strip() for v in value)
+        ):
+            raise GuardConfigError(
+                f"{path}: 'stop_list.{key}' must be a list of non-empty strings"
+            )
+    for key in stops:
+        if key not in ("owners", "migration_commands", "publish_commands"):
+            raise GuardConfigError(f"{path}: unknown key 'stop_list.{key}'")
     rules = data.get("block", [])
     if not isinstance(rules, list):
         raise GuardConfigError(f"{path}: 'block' must be a list")
@@ -761,6 +791,24 @@ def evaluate_builtins(
     return None
 
 
+def evaluate_stop_list(
+    command: str, cwd: str, config: dict, project_dir: str
+) -> Optional[str]:
+    """The stop list (see stop_list.py): on in every mode. `GOODFELLOW_AUTOPILOT=0`
+    only restores step approvals; `GOODFELLOW_STOP_LIST=0` is the dedicated opt-out."""
+    if os.environ.get("GOODFELLOW_STOP_LIST") == "0":
+        return None
+    if os.environ.get("GOODFELLOW_GUARDS") == "0":
+        return None
+    try:
+        segments = expand_segments(command)
+    except ValueError:
+        return None
+    return stop_list.evaluate(
+        segments, cwd, config, project_dir, config.get("disable_builtins", [])
+    )
+
+
 def decision_for_input(hook_input: dict, project_dir: str) -> Optional[str]:
     """Return a deny reason for a PreToolUse payload, or None to allow.
 
@@ -785,6 +833,11 @@ def decision_for_input(hook_input: dict, project_dir: str) -> Optional[str]:
     if tool_name == "Bash":
         command = tool_input.get("command", "") or ""
         reason = evaluate_builtins(command, protected, disabled)
+        if reason:
+            return reason
+        reason = evaluate_stop_list(
+            command, hook_input.get("cwd") or project_dir, config, project_dir
+        )
         if reason:
             return reason
 
@@ -863,6 +916,9 @@ def active_guard_set(project_dir: str) -> dict:
         "builtins_enabled": []
         if builtins_off
         else [b for b in BUILTIN_IDS if b not in disabled],
+        "stop_list_enabled": []
+        if builtins_off or os.environ.get("GOODFELLOW_STOP_LIST") == "0"
+        else [b for b in stop_list.STOP_IDS if b not in disabled],
         "protected_branches": config.get(
             "protected_branches", list(DEFAULT_PROTECTED_BRANCHES)
         ),

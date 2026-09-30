@@ -71,3 +71,15 @@ def test_path_is_appendable():
         with open(out, "a") as fh:
             fh.write('{"event": "test"}\n')
         assert Path(out).read_text().strip() == '{"event": "test"}'
+
+
+def test_init_state_does_not_touch_gitignore_under_dry_run():
+    """Dry-run writes only the decision log: init_state must leave .gitignore alone."""
+    with tempfile.TemporaryDirectory() as d:
+        subprocess.run(
+            ["bash", str(Path(__file__).parent / "init_state.sh"), d],
+            check=True,
+            env={**os.environ, "GOODFELLOW_AUTOPILOT": "dry-run"},
+        )
+        assert not (Path(d) / ".gitignore").exists()
+        assert (Path(d) / ".goodfellow" / "runs").is_dir()

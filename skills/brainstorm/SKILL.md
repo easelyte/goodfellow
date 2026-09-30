@@ -1,23 +1,54 @@
 ---
 name: brainstorm
-description: Design exploration with knowledge compounding — reads accumulated principles before proposing approaches, writes spec, auto-dispatches spec-review. Accepts --from-loop N to seed from a tracked follow-up.
+description: Entry point for new work. Classifies the change into a risk tier (T0 fix … T3 live state), then does only the design work that tier needs — none for a fix, a short plan for a feature, a reviewed spec for a design. Reads accumulated principles first. `--grill` interviews you one question at a time for fuzzy intent; `--from-loop N` seeds from a tracked follow-up; `--tier Tn` overrides the tier (never below its hard floor).
 ---
 
-The operator wants a design brainstorm. Run a streamlined exploration that compounds on prior knowledge.
+Start the work described in: $ARGUMENTS
 
-## 1. Initialize project state
+Flags: `--grill` (interview mode, §5b), `--from-loop N` (§3), `--tier T0..T3` (operator override,
+§1). Autopilot is on by default (`GOODFELLOW_AUTOPILOT=0` turns it off): no approval gates between
+steps. It still stops for **product calls** (naming, pricing, public positioning, UX choices that
+differ only by taste, scope beyond the request) and for anything on the stop list.
+
+## 0. Initialize project state
 
 ```bash
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/init_state.sh"
 ```
 
-This ensures `.goodfellow/` exists and is gitignored.
+## 1. Classify the tier
+
+Pick the tier from this rubric. The first matching row from the top wins; **when unsure, pick the
+higher tier.** A tier can be raised later, never lowered.
+
+| Tier | Pick when |
+|---|---|
+| **T3 live** | The change mutates live state: migrations or production data, deploy/cron/services, credentials, deleting or backing up data, money, messages to real people. |
+| **T2 design** | A new concept, data model or cross-component contract; ambiguous intent; or two or more reasonable designs. |
+| **T1 feature** | A new, bounded, reversible behaviour inside the existing model. |
+| **T0 fix** | Existing behaviour is wrong and can be reproduced. |
+
+Then let the resolver apply the hard floors (a high-stakes path forces at least T1; a live-state path
+or trigger forces T3) and any `--tier` the operator gave:
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/tier.py" resolve --paths <files you expect to touch> \
+  --proposed <T0..T3> [--tier <operator's --tier>] [--live-state "<what live state it touches>"] \
+  --reason "<one line: the rubric row that decided it>"
+```
+
+- **Exit 0:** print its two lines as the announcement (`Tier T1 (feature): …` / `Floor …`) and go on.
+- **Exit 3:** the operator's `--tier` is below a hard floor. Say so with the resolver's reason and
+  continue at the floor tier. Never honour it silently.
+- **Exit 2:** the resolver could not decide (for example a configured path list is missing). Stop
+  and report it; never fall back to T0.
+
+Pass `--live-state` whenever the T3 row matched on intent rather than on a path, so the operator
+cannot lower it by accident.
 
 ## 2. Read accumulated knowledge
 
-Before proposing approaches, read the project's accumulated design knowledge:
-
-1. Read the project's accumulated knowledge, backend-aware (invalid `GOODFELLOW_MEMORY` hard-errors here):
+Read the project's knowledge, backend-aware (invalid `GOODFELLOW_MEMORY` hard-errors here):
 
 ```bash
 MODE=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/memory_config.py" resolve-mode) || { echo "$MODE"; exit 1; }
@@ -32,10 +63,10 @@ else
 fi
 ```
 
-In rich mode, auto-pull the full bodies of facts whose `domain` matches the brainstorm topic (`.goodfellow/memory/<name>.md` / `.goodfellow/memory/domains/<domain>.md`); for everything else, open relevant fact bodies by name from the index as a human would scan an index.
-
-2. If no knowledge exists, skip silently — first chain run starts empty
-3. Read the plugin-shipped universal design principles (the web supplement is read only when web context is opted in — `GOODFELLOW_PRINCIPLES_WEB=1` or a `package.json` at the project root; an invalid value hard-errors here):
+In rich mode, auto-pull the full bodies of facts whose `domain` matches the topic. With no knowledge
+yet, skip silently. Then read the plugin-shipped design principles (the web supplement loads only
+when `GOODFELLOW_PRINCIPLES_WEB=1` or a `package.json` is at the project root; an invalid value
+hard-errors here):
 
 ```bash
 # Progressive disclosure (docs/instruction-density-budget.md): inject only the
@@ -46,60 +77,74 @@ In rich mode, auto-pull the full bodies of facts whose `domain` matches the brai
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/principles_context.py" --index --project-root .
 ```
 
-Scan the category routing table. For any category relevant to this work, expand its one-liners with
-`python3 "${CLAUDE_PLUGIN_ROOT}/scripts/principles_context.py" --category NAME --project-root .`, then pull the
-full body of a relevant principle with `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/principles_context.py" --show P-NNN [P-NNN ...] --project-root .`
-before applying or citing it — requesting a parent id (e.g. `P-017`) includes its
-sub-principles. Cite violations by P-NNN.
+For a relevant category, expand it with
+`python3 "${CLAUDE_PLUGIN_ROOT}/scripts/principles_context.py" --category NAME --project-root .`, and
+pull a full principle with `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/principles_context.py" --show P-NNN [P-NNN ...] --project-root .`
+before citing it. Internalize silently; let the principles shape the design.
 
-Internalize silently. Don't list principles back to the operator. Let them shape the design.
-
-## 3. Resolve --from-loop sourcing
-
-If the operator's prompt starts with `--from-loop <N>`:
+## 3. `--from-loop N`
 
 ```bash
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/loop_store.py" --root . list
 ```
 
-Find loop N, use its title + description as the brainstorm seed. If not found, tell the operator.
+Use loop N's title and description as the seed. If it does not exist, say so and stop.
 
-## 4. Clarifying questions (max 3, asked once)
+## 4. Route by tier
 
-- Pick only questions whose answers genuinely change the design
-- Skip questions answerable by reading the codebase
-- Bundle into one message
-- For each question, propose a recommended default answer so the operator can confirm with one word instead of composing a reply. The cap stays at 3 — this adds a default per question, not more questions.
+- **T0 fix.** No documents. Reproduce the bug with a failing test first (the red must be an
+  assertion about the wrong behaviour, not a missing symbol), make the smallest fix, then run
+  `/goodfellow:ship --previous T0`.
+- **T1 feature.** No spec. Write a short plan in chat, three headings: **Goal**, **Approach**,
+  **Tests** (each new test and its expected red). It goes into the PR body at ship. Build it
+  test-first, then run `/goodfellow:ship --previous T1`.
+- **T2 design and T3 live.** Continue with §5 to §7: questions, approaches, a spec, then review.
 
-**Autopilot mode (`GOODFELLOW_AUTOPILOT=1` or `dry-run`):** skip questions entirely. Record unresolved questions in spec frontmatter as `unresolved_questions:`.
+**Dry-run (`GOODFELLOW_AUTOPILOT=dry-run`):** after the tier announcement, write nothing (no test,
+no code, no spec). Log `{"event": "would_route", "would_act": true, "tier": "<Tn>"}` to the run
+log and stop.
 
-## 5. Propose approaches
+## 5a. Questions (default mode)
 
-Present 2-3 high-level approaches with a strong recommendation:
+Ask only what changes the design and cannot be read from the code: at most three, in one message,
+each with a recommended answer so a one-word reply works. Under autopilot, ask only the product
+calls; decide the rest yourself and record them in the spec frontmatter as `assumptions:`.
+**Dry-run:** ask nothing; record open questions as `unresolved_questions:`.
 
-**Required format:** "**My pick: C** because <reason>. (A trims X; B phases Z.)" — lead with the pick.
+## 5b. `--grill` (interview mode)
 
-**Scope bias: most-ambitious is the default.** Frame slim options as cut-downs from the ambitious default.
+For fuzzy or high-stakes intent, when the operator asks to be grilled (`--grill`, "grill me on X",
+"interview me about X"). Never chosen automatically. Read `grill.md` in this skill's directory and
+follow it: a bounded fact-finding pass, then one question at a time until no decision is open.
+`--grill` is an explicit request for questions, so it interviews even under autopilot; only dry-run
+skips the interview.
 
-**Autopilot:** pick the highest-conviction approach. Record rejected alternatives in spec frontmatter as `rejected_alternatives:`.
+## 6. Approaches
 
-## 6. Write the spec
+Propose two or three approaches and lead with your pick: "**My pick: B** because <reason>.
+(A trims X; C phases Z.)" Under autopilot, take the highest-conviction approach and record the
+others as `rejected_alternatives:`, unless the choice between them is a product call.
 
-After the operator picks (or autopilot self-picks), write the full design document in one pass:
+## 7. Write the spec, then review it
 
-- Path: `docs/specs/<slug>-design.md`
-- Include proper frontmatter: title, status (draft), date, confidence (high/medium/low), related_principles
-- **Confidence field:** `high` if approach has precedent in knowledge file, `medium` if novel, `low` if any unresolved_questions affect architecture (system boundaries, data flow, source-of-truth)
-- Self-review pass: catch internal inconsistencies before showing the operator
+Path: `docs/specs/<slug>-design.md`. Validate the slug before it touches a path: lowercase, fold
+anything outside `[a-z0-9-]` to `-`, collapse and trim dashes, and **halt** if it still does not
+match `^[a-z0-9]+(-[a-z0-9]+)*$`. Never overwrite an existing spec: publish with an exclusive
+create (write a temp file in the same directory, then `ln` it to the target, retrying
+`-2`, `-3`, … on collision).
 
-**Autopilot dry-run (`GOODFELLOW_AUTOPILOT=dry-run`):** log `{"event": "approach_selected", "would_act": true, ...}` to `.goodfellow/runs/<timestamp>.jsonl`. Do NOT write the spec or dispatch spec-review. Log `would_act` for each mutation.
+Frontmatter: `title`, `status: draft`, `date`, **`tier`** (from §1), `confidence`
+(`high` = precedent in the knowledge file; `medium` = novel; `low` = open questions that affect
+architecture), `related_principles`, plus `assumptions` / `unresolved_questions` /
+`rejected_alternatives` when present.
 
-## 7. Auto-dispatch spec-review
+**T3 specs** add a **Rehearsal** section: which real mutations will be performed against which
+sandbox the user supplies (a database copy, a temporary tree, a namespace), and what evidence the
+PR will carry. goodfellow does not build the sandbox; it insists the rehearsal happens.
 
-After writing the spec, in the same turn:
-1. Emit a brief summary (file path, what it commits to)
-2. Dispatch `/goodfellow:spec-review <spec-path>`
+Do a self-review pass for internal contradictions, then in the same turn: emit a one-line summary
+(path, tier, what it commits to) and dispatch `/goodfellow:review-doc --spec <spec-path>`. No gate.
 
-No gate. No "Want me to proceed?" The operator can interrupt if the spec is obviously broken.
-
-**Dry-run:** log `{"event": "would_dispatch", "skill": "spec-review"}` instead of dispatching.
+**Dry-run:** log `{"event": "approach_selected", "would_act": true, …}` and
+`{"event": "would_dispatch", "skill": "review-doc"}` to the run log
+(`RUN_LOG=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/run_log.sh")`) instead of writing or dispatching.

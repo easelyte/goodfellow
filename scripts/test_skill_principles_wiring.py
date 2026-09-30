@@ -1,4 +1,4 @@
-"""Assert all five chain skills wire in the principles read-path (CM1).
+"""Assert every chain skill wires in the principles read-path (CM1).
 
 A missed skill can't ship silently: every chain skill that reads knowledge must
 invoke the principles_context resolver. The always-injected path is the
@@ -22,10 +22,10 @@ def _extract_resolver_block(skill_md_text):
     return None
 
 
-CHAIN_SKILLS = ("brainstorm", "spec-review", "plan", "plan-review", "execute")
+CHAIN_SKILLS = ("brainstorm", "review-doc", "plan", "execute")
 
 
-def test_all_five_skills_invoke_principles_context():
+def test_all_chain_skills_invoke_principles_context():
     for s in CHAIN_SKILLS:
         txt = (SK / s / "SKILL.md").read_text()
         assert "principles_context.py" in txt, f"{s} missing principles read-path"

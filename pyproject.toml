@@ -1,7 +1,7 @@
 [project]
 name = "goodfellow"
-version = "0.3.0"
-description = "Takes a change from idea to pull request with adversarial review at every step, tests that must be able to fail, and knowledge that compounds across runs."
+version = "0.4.0"
+description = "A Claude Code plugin that takes a change from idea to merged PR on autopilot, scaling the rigor to the risk."
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [{name = "easelyte", email = "fantin@easelyte.ai"}]

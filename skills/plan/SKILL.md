@@ -1,6 +1,6 @@
 ---
 name: plan
-description: Write an implementation plan from a spec — exhaustive task decomposition with dependency graph, acceptance criteria, and spec-coverage verification. Auto-dispatches plan-review.
+description: Write an implementation plan from a spec — exhaustive task decomposition with dependency graph, acceptance criteria, and spec-coverage verification. Auto-dispatches review-doc --plan.
 ---
 
 Write a plan for: $ARGUMENTS
@@ -43,7 +43,7 @@ sub-principles. Cite violations by P-NNN.
 
 Only questions whose answers change execution order or task decomposition. Skip questions answerable from the spec + codebase.
 
-**Autopilot:** skip questions entirely.
+**Autopilot (default):** ask only product calls; decide the rest and note them in the plan.
 
 ## 3. Write the plan
 
@@ -54,6 +54,7 @@ Write the complete plan in one pass at `docs/plans/<slug>-plan.md`.
 ---
 title: "<Plan Title>"
 spec: <path to spec file>
+tier: <T2|T3, copied from the spec>
 date: YYYY-MM-DD
 ---
 ```
@@ -74,6 +75,14 @@ date: YYYY-MM-DD
 - for code that signals processes, deletes or writes real resources: the fake or isolated namespace (for example `unshare --pid`) its tests and breaks run in. Such code is never tested or mutated against the live machine;
 - the real entry point the tests drive. A source-text check may accompany a behaviour test, never replace one.
 
+**T3: a rehearsal task, and a live step that is not a task.** A T3 plan includes a task that
+performs the real mutations (the migration, the deploy step, the deletion, the send) against a
+sandbox the user supplies (a database copy, a temporary tree, a namespace) and records the evidence
+for the PR. The live change itself is **not** a task `execute` runs. The plan ends with a
+`## Live step` section: the exact commands, whether they run before or after the merge, how to
+verify the result, and how to roll back. `ship` hands it to the operator only after the code review
+has converged and CI is green, so a defect the review finds can never reach production first.
+
 **Scope bias: exhaustive.** Enumerate every task the spec implies. Don't truncate to look simpler.
 
 **Principles pass:** for each task, check: does the proposed implementation introduce a principle violation per `.goodfellow/knowledge.md`? Fix in-spec or note as deliberate exception.
@@ -84,13 +93,13 @@ date: YYYY-MM-DD
 - Spec-coverage: every spec section has at least one plan task
 - Internal consistency: dependency graph matches task bodies
 
-## 5. Auto-dispatch plan-review
+## 5. Auto-dispatch review-doc
 
 After writing + self-review, in the same turn:
 1. Emit summary (file path, task count, integration risks)
-2. Dispatch `/goodfellow:plan-review <plan-path>`
+2. Dispatch `/goodfellow:review-doc --plan <plan-path>`
 
-No gate. The operator reviews through plan-review, not by approving the plan directly.
+No gate. The operator reviews through review-doc, not by approving the plan directly.
 
 **Execution footer:**
 > Use `/goodfellow:execute <plan-path>` to implement this plan.
