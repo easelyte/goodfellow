@@ -36,9 +36,9 @@ What a command line reveals, and so what this module enforces:
 What a command line does not reveal (sending messages, spending money, product calls
 such as naming, pricing or public positioning) stays a written rule in the skills.
 
-The list is on whenever autopilot is on, which is the default. `GOODFELLOW_AUTOPILOT=0`
-turns autopilot off and with it this list (you then approve each step yourself).
-`GOODFELLOW_GUARDS=0` turns off all built-in guards. Any single stop can be turned off
+The list is on in every mode: `GOODFELLOW_AUTOPILOT=0` restores step approvals but
+keeps the list. `GOODFELLOW_STOP_LIST=0` is its dedicated opt-out, and
+`GOODFELLOW_GUARDS=0` turns off all built-in guards including it. Any single stop can be turned off
 with its id in `disable_builtins` in .goodfellow/guards.json.
 
 Standard library only.
@@ -304,7 +304,7 @@ def lookup(dest: Dest, project_dir: str) -> Optional[Tuple[str, str]]:
 
 def _stop(stop_id: str, what: str) -> str:
     return (
-        f"goodfellow stop list ({stop_id}): {what} Autopilot stops here: ask the "
+        f"goodfellow stop list ({stop_id}): {what} goodfellow stops here: ask the "
         "user before doing this. They can run it themselves, or turn this stop off "
         f'with "{stop_id}" in disable_builtins in .goodfellow/guards.json.'
     )

@@ -24,12 +24,13 @@ you upgrade.
 - **Autopilot is on by default (behaviour change).** The chain no longer pauses for approval
   between steps, and `ship` merges your own-repo PR once review converges and CI is green. Set
   `GOODFELLOW_AUTOPILOT=0` to approve each step as before. `dry-run` is unchanged ([#34](https://github.com/easelyte/goodfellow/pull/34)).
-- **The stop list is enforced while autopilot is on (behaviour change).** The `PreToolUse` hook now
+- **A stop list is enforced in every mode (behaviour change).** The `PreToolUse` hook now
   stops pushes and PRs to repositories outside your owner list (default: the owner of `origin`),
   default-branch pushes, tag pushes and PR-opens on public repositories, `gh release` writes,
   package publishes, deploy-style migrations and plain force-pushes. Add owners with
   `stop_list.owners` in `.goodfellow/guards.json`, or turn off one stop with its id in
-  `disable_builtins` ([#34](https://github.com/easelyte/goodfellow/pull/34)).
+  `disable_builtins`. `GOODFELLOW_AUTOPILOT=0` keeps it on; `GOODFELLOW_STOP_LIST=0` is the
+  dedicated opt-out ([#34](https://github.com/easelyte/goodfellow/pull/34)).
 - **`ship --quick` is now an alias for `--tier T0`.** It is refused when the diff touches a
   high-stakes or live-state path, instead of running a single review round ([#34](https://github.com/easelyte/goodfellow/pull/34)).
 - **`ship` reviews to convergence at every tier,** with a round cap of 3 at T0 and T1 and 6 at T2

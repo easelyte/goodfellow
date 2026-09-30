@@ -68,7 +68,12 @@ def env(tmp_path, monkeypatch):
     table.write_text(json.dumps({"acme/app": ["PUBLIC", "main"]}))
     log = tmp_path / "gh.log"
     log.write_text("")
-    for k in ("GOODFELLOW_AUTOPILOT", "CLAUDE_HOOK_BYPASS", "GOODFELLOW_GUARDS"):
+    for k in (
+        "GOODFELLOW_AUTOPILOT",
+        "CLAUDE_HOOK_BYPASS",
+        "GOODFELLOW_GUARDS",
+        "GOODFELLOW_STOP_LIST",
+    ):
         monkeypatch.delenv(k, raising=False)
     monkeypatch.setenv("GOODFELLOW_GH", str(gh))
     monkeypatch.setenv("FAKE_GH_TABLE", str(table))
@@ -446,9 +451,21 @@ def test_force_with_lease_to_a_feature_branch_is_allowed(env):
 # --------------------------------------------------------------------------- #
 
 
-def test_autopilot_off_disables_the_stop_list(env, monkeypatch):
+def test_autopilot_off_keeps_the_stop_list(env, monkeypatch):
+    """Supervised mode still stops: autopilot=0 only restores step approvals."""
     monkeypatch.setenv("GOODFELLOW_AUTOPILOT", "0")
+    denied(env.decide("gh release create v1"), "release")
+
+
+def test_dedicated_opt_out_disables_the_stop_list(env, monkeypatch):
+    monkeypatch.setenv("GOODFELLOW_STOP_LIST", "0")
     assert env.decide("gh release create v1") is None
+
+
+@pytest.mark.parametrize("value", ["1", "false", "off", ""])
+def test_only_exactly_zero_opts_out(env, monkeypatch, value):
+    monkeypatch.setenv("GOODFELLOW_STOP_LIST", value)
+    denied(env.decide("gh release create v1"), "release")
 
 
 def test_dry_run_autopilot_keeps_the_stop_list(env, monkeypatch):

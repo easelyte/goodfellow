@@ -139,7 +139,8 @@ Everything works without configuration. Invalid values fail loudly rather than f
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `GOODFELLOW_AUTOPILOT` | on | `0` pauses at each step and turns the stop list off; `dry-run` logs decisions without changing files. |
+| `GOODFELLOW_AUTOPILOT` | on | `0` pauses for your approval at each step (the stop list stays on); `dry-run` logs decisions without changing files. |
+| `GOODFELLOW_STOP_LIST` | on | `0` turns the stop list off, in every mode. Only for a session where you accept those risks yourself. |
 | `GOODFELLOW_CODEX` | `1` | `0` disables Codex even when it is installed. |
 | `GOODFELLOW_CODEX_MODEL` | Codex default | GPT model for the Codex reviewer. |
 | `GOODFELLOW_REVIEW_MODEL` | `sonnet` / `opus` | Claude reviewer model (`opus` when it is the only reviewer). |

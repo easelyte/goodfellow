@@ -10,7 +10,8 @@ values fail loudly rather than falling back.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `GOODFELLOW_AUTOPILOT` | on | Autopilot is the default. `0` pauses for your go at each step and turns the stop list off; `dry-run` logs decisions without changing project files. |
+| `GOODFELLOW_AUTOPILOT` | on | Autopilot is the default. `0` pauses for your go at each step; the stop list stays on. `dry-run` logs decisions without changing project files. |
+| `GOODFELLOW_STOP_LIST` | on | `0` is the dedicated opt-out: it turns the stop list off in every mode. The other built-in guards stay on. |
 | `GOODFELLOW_CODEX` | `1` | `0` disables Codex even when it is installed. |
 | `GOODFELLOW_CODEX_MODEL` | Codex default | GPT model for the Codex reviewer. |
 | `GOODFELLOW_REVIEW_MODEL` | see below | Claude reviewer model: `opus`, `sonnet` or `haiku`. |
@@ -143,8 +144,9 @@ the stop list, which a `PreToolUse` hook enforces (`scripts/stop_list.py`):
 | `stop-force-push` | `git push --force`, `-f` or a `+refspec`. `--force-with-lease` to a feature branch is allowed. |
 
 Sending messages, spending money and product calls cannot be read from a command line; the skills
-carry those as written rules. `GOODFELLOW_AUTOPILOT=0` turns autopilot and the stop list off;
-`dry-run` shows what it would do and writes only the decision log
+carry those as written rules. The stop list is on in every mode: `GOODFELLOW_AUTOPILOT=0` only
+brings back step approvals. `GOODFELLOW_STOP_LIST=0` turns the stop list off (its dedicated
+opt-out), and `GOODFELLOW_GUARDS=0` turns off every built-in guard including it. `dry-run` shows what it would do and writes only the decision log
 (`.goodfellow/runs/<timestamp>-<pid>.jsonl`). Turn off one stop with its id in `disable_builtins`.
 
 ## Principles

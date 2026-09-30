@@ -794,9 +794,9 @@ def evaluate_builtins(
 def evaluate_stop_list(
     command: str, cwd: str, config: dict, project_dir: str
 ) -> Optional[str]:
-    """The autopilot stop list (see stop_list.py): on while autopilot is on, which
-    is the default; `GOODFELLOW_AUTOPILOT=0` turns autopilot and the list off."""
-    if os.environ.get("GOODFELLOW_AUTOPILOT") == "0":
+    """The stop list (see stop_list.py): on in every mode. `GOODFELLOW_AUTOPILOT=0`
+    only restores step approvals; `GOODFELLOW_STOP_LIST=0` is the dedicated opt-out."""
+    if os.environ.get("GOODFELLOW_STOP_LIST") == "0":
         return None
     if os.environ.get("GOODFELLOW_GUARDS") == "0":
         return None
@@ -917,7 +917,7 @@ def active_guard_set(project_dir: str) -> dict:
         if builtins_off
         else [b for b in BUILTIN_IDS if b not in disabled],
         "stop_list_enabled": []
-        if builtins_off or os.environ.get("GOODFELLOW_AUTOPILOT") == "0"
+        if builtins_off or os.environ.get("GOODFELLOW_STOP_LIST") == "0"
         else [b for b in stop_list.STOP_IDS if b not in disabled],
         "protected_branches": config.get(
             "protected_branches", list(DEFAULT_PROTECTED_BRANCHES)
