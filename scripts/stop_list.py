@@ -473,18 +473,6 @@ def _push_targets(
             _git_out(wd, "config", "--bool", "--get", "push.followTags", cfg=cfg)
             == "true"
         )
-    if follow and not tags:
-        # --follow-tags sends annotated tags reachable from what is pushed; only
-        # when such a tag exists can this push write a tag.
-        kinds = _git_out(
-            wd,
-            "for-each-ref",
-            "--merged=HEAD",
-            "--format=%(objecttype)",
-            "refs/tags",
-            cfg=cfg,
-        )
-        tags = "tag" in (kinds or "").split()
     refspecs = list(p.refspecs)
     if not refspecs and not (p.all_branches or p.tags):
         configured = (
@@ -505,6 +493,7 @@ def _push_targets(
                 refspecs = [f"HEAD:{merge}" if merge else "HEAD"]
             elif mode != "nothing":
                 refspecs = ["HEAD"]
+    sources: List[str] = []
     for ref in refspecs:
         if "*" in ref:
             all_branches = True  # a wildcard refspec can write any branch
@@ -513,9 +502,12 @@ def _push_targets(
         if src_dst == ":":
             all_branches = True  # the matching refspec updates every matching branch
             continue
+        src = src_dst.split(":", 1)[0] if ":" in src_dst else src_dst
         dst = src_dst.split(":")[-1] if ":" in src_dst else src_dst
+        if src:
+            sources.append("HEAD" if src == "@" else src)
         if dst == "":
-            continue  # `src:` with an empty destination writes nothing named
+            dst = src  # `src:` pushes to the same name
         if dst in ("HEAD", "@"):
             if current:
                 targets.add(current)
@@ -532,7 +524,39 @@ def _push_targets(
             tags = True
             continue
         targets.add(_normalize_ref(dst))
+    if follow and not tags:
+        tags = _follow_tags_can_write(wd, cfg, sources, all_branches)
     return targets, tags, all_branches
+
+
+def _follow_tags_can_write(
+    wd: str, cfg: Sequence[str], sources: Sequence[str], all_branches: bool
+) -> bool:
+    """With --follow-tags, git also sends annotated tags reachable from the refs
+    being pushed. True when such a tag exists, or when a source cannot be resolved
+    (fail closed)."""
+    if all_branches or not sources:
+        kinds = _git_out(
+            wd, "for-each-ref", "--format=%(objecttype)", "refs/tags", cfg=cfg
+        )
+        return "tag" in (kinds or "").split()
+    for src in sources:
+        sha = _git_out(
+            wd, "rev-parse", "--verify", "--quiet", f"{src}^{{commit}}", cfg=cfg
+        )
+        if not sha:
+            return True
+        kinds = _git_out(
+            wd,
+            "for-each-ref",
+            f"--merged={sha}",
+            "--format=%(objecttype)",
+            "refs/tags",
+            cfg=cfg,
+        )
+        if "tag" in (kinds or "").split():
+            return True
+    return False
 
 
 def check_push(

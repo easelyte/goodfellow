@@ -620,3 +620,18 @@ def test_no_follow_tags_overrides_the_config(env):
     git(env.repo, "config", "push.followTags", "true")
     env.set_repos({"acme/app": ["PRIVATE", "main"]})
     assert env.decide("git push --no-follow-tags origin feature") is None
+
+
+def test_follow_tags_checks_the_pushed_branch_not_head(env):
+    """An annotated tag reachable only from the pushed branch still travels."""
+    git(env.repo, "switch", "-q", "-c", "release")
+    (env.repo / "r.txt").write_text("r\n")
+    git(env.repo, "add", "r.txt")
+    git(env.repo, "commit", "-q", "-m", "release work")
+    git(env.repo, "tag", "-a", "v2.0.0", "-m", "release")
+    git(env.repo, "switch", "-q", "feature")
+    denied(env.decide("git push --follow-tags origin release"), "tag")
+
+
+def test_follow_tags_with_an_unresolvable_source_fails_closed(env):
+    denied(env.decide("git push --follow-tags origin no-such-branch:topic"), "tag")

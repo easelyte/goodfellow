@@ -244,6 +244,9 @@ Goal / Approach / Tests, as written before building.
 
 ## 7. Merge
 
+**T3 with a pre-merge live step:** if the plan's `## Live step` must run before the merge (for
+example a migration the merged code depends on), do §7a now and merge only after it is verified.
+
 **Autopilot (default):** merge when the review converged with no unresolved blocker, the final-HEAD
 check is clean and CI is green. The stop list still applies: opening a PR on a public repository,
 pushing to its default branch, a repository outside your owner list, releases and migrations stop
@@ -252,8 +255,8 @@ for the operator, whatever the tier. **Dry-run:** log `would_act: merge` instead
 
 ## 7a. T3 live step
 
-Only after the review converged, the final-HEAD check is clean and CI is green: present the plan's
-`## Live step` (the exact commands, before or after the merge, verification, rollback) together
+Only after the review converged, the final-HEAD check is clean and CI is green (and, for a
+post-merge step, after the merge): present the plan's `## Live step` (the exact commands, before or after the merge, verification, rollback) together
 with the rehearsal evidence, and hand it to the operator, whatever the autopilot setting. The
 operator runs it: the stop list deliberately denies migrations, deploys, publishes and releases from
 the session, and sends or spending are never automated. Then verify the result as the plan says,
