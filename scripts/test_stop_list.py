@@ -652,3 +652,23 @@ def test_follow_tags_checks_the_pushed_branch_not_head(env):
 
 def test_follow_tags_with_an_unresolvable_source_fails_closed(env):
     denied(env.decide("git push --follow-tags origin no-such-branch:topic"), "tag")
+
+
+@pytest.mark.parametrize(
+    "env_var, value, enabled",
+    [
+        ("GOODFELLOW_AUTOPILOT", "0", True),
+        ("GOODFELLOW_STOP_LIST", "0", False),
+        ("GOODFELLOW_STOP_LIST", "off", True),
+        ("GOODFELLOW_GUARDS", "0", False),
+    ],
+)
+def test_selfcheck_reports_the_stop_list_switch(
+    env, monkeypatch, env_var, value, enabled
+):
+    from guard_engine import active_guard_set
+
+    monkeypatch.setenv(env_var, value)
+    state = active_guard_set(str(env.repo))
+    expected = list(stop_list.STOP_IDS) if enabled else []
+    assert state["stop_list_enabled"] == expected
