@@ -8,8 +8,8 @@
 <h3 align="center">Idea to merged PR, on autopilot.</h3>
 
 <p align="center">
-  <a href="https://github.com/easelyte/goodfellow/releases"><img alt="Release" src="https://img.shields.io/github/v/release/easelyte/goodfellow?sort=semver&style=flat-square&color=f5a524&label=release"></a>
-  <a href="https://github.com/easelyte/goodfellow/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/easelyte/goodfellow/ci.yml?branch=main&style=flat-square&label=CI"></a>
+  <a href="https://github.com/easelyte/goodfellow/releases"><img alt="Release" src="https://img.shields.io/github/v/release/easelyte/goodfellow?sort=semver&style=flat-square&color=4b5563&label=release"></a>
+  <a href="#install"><img alt="Claude Code plugin" src="https://img.shields.io/badge/Claude_Code-plugin-f5a524?style=flat-square&labelColor=2b2f36"></a>
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/github/license/easelyte/goodfellow?style=flat-square&color=4b5563"></a>
 </p>
 
