@@ -11,6 +11,50 @@ afterwards at the commits that declared them, without Releases. See [RELEASING.m
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-10-01
+
+The red and mutation checks now run your tests in a sandbox, the mutation check stops counting a
+slow machine as a kill, and the final review survives a rebase. **Heads up:** the old skill
+aliases are gone, and the checks need bubblewrap (or an explicit opt-out). Both are below.
+
+### Removed
+
+- **The `spec-review`, `plan-review` and `grill` skills (breaking).** Use `review-doc --spec`,
+  `review-doc --plan` and `brainstorm --grill`. 0.4.0 announced their removal for 0.5.0; it moves
+  up because people rarely type multi-word commands: Claude picks a skill from what you say. The
+  phrases the aliases answered to ("review my spec", "stress test this plan", "grill me on X") are
+  now in the canonical skills' descriptions, so asking in words works as before ([#35](https://github.com/easelyte/goodfellow/pull/35)).
+
+### Changed
+
+- **The red and mutation checks run tests in a sandbox (behaviour change).** Every test command
+  goes through [bubblewrap](https://github.com/containers/bubblewrap) with a private PID namespace
+  and a filesystem allowlist; the only writable host directory is the check's own throwaway copy,
+  and your home directory, checkout and credentials are not mounted. If `bwrap` is missing or a
+  probe shows it does not isolate, the check exits 2 and runs nothing; it never falls back to
+  running unisolated. On Linux, install `bubblewrap`. On macOS or in a container without user
+  namespaces, set `GOODFELLOW_SANDBOX=off` to run the tests unisolated, knowingly; every run warns.
+  `GOODFELLOW_SANDBOX_RO` adds read-only paths. See `docs/configuration.md` ([#35](https://github.com/easelyte/goodfellow/pull/35)).
+- **Mutation timeouts are calibrated to the load (behaviour change).** Each mutant gets at least
+  three times the suite's runtime measured in every parallel sandbox at once (never under 30 s;
+  `--timeout` still overrides), and is capped at what is left of `--budget`. A timeout counts as a
+  kill only when its limit was at least three times that loaded runtime; otherwise it is
+  `timeout_unverified` and the result is incomplete (exit 3) instead of a pass ([#35](https://github.com/easelyte/goodfellow/pull/35)).
+- With the sandbox on, mutation targets that signal or spawn processes no longer need
+  `--isolated`, since every test run has its own PID namespace. Targets that delete or write files
+  still need `--fakes` ([#35](https://github.com/easelyte/goodfellow/pull/35)).
+
+### Added
+
+- **Sampling for large new files in the mutation check.** A file that is new on the branch, longer
+  than 400 lines and with more than 150 mutants is reduced to a fixed, seeded sample of 150, and
+  the verdict says `(SAMPLED: file k/N)`. Edits to existing files are never sampled. `--sample`,
+  `--sample-min-lines` and `--no-sample` tune it ([#35](https://github.com/easelyte/goodfellow/pull/35)).
+- **Rebase-aware final review.** `ship`'s final-HEAD check maps the last reviewed commit to its
+  rebased counterpart by patch-id and file content (`scripts/review_delta.py`), so after a rebase it
+  reviews only the commits that came after the reviewed ones. A dropped, reordered or rewritten
+  reviewed commit, a merge commit, or any git failure reviews the whole branch ([#35](https://github.com/easelyte/goodfellow/pull/35)).
+
 ## [0.4.0] - 2026-09-29
 
 goodfellow now sizes the process to the change. A classify step puts each change in one of four
@@ -236,7 +280,8 @@ Initial release.
 - Autopilot mode with dry-run.
 - Triage with two-reviewer reconciliation.
 
-[Unreleased]: https://github.com/easelyte/goodfellow/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/easelyte/goodfellow/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/easelyte/goodfellow/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/easelyte/goodfellow/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/easelyte/goodfellow/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/easelyte/goodfellow/compare/v0.1.0...v0.2.0
