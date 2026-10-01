@@ -116,13 +116,27 @@ review, not a clean one.
 
 The loop ends by *fixing* the last round's findings, so the last fix commit has been reviewed by
 nobody. Before the PR is opened or merged, if HEAD moved after the last reviewed state, run one
-narrow review of just the fix commits:
+narrow review of just the fix commits. If you rebased since that review, the reviewed SHA is no
+longer an ancestor of HEAD, so map it first:
 
 ```bash
-OUT=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/codex-bridge.sh" --kind diff --base <last-reviewed-sha>) || {
-  echo "review bridge failed: $OUT" >&2; exit 1; }
-case "$OUT" in REVIEW_FAILED\ *) echo "review bridge failed: $OUT" >&2; exit 1 ;; esac
+# Prints "<sha> <mode> <reason>". ancestor/rebase: review <sha>...HEAD. reviewed: nothing new
+# (HEAD is the reviewed commit or its exact rebase). full: review the whole branch.
+# Exit 2 (git failed): review the whole branch against BASE.
+read -r DELTA MODE REASON < <(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/review_delta.py" \
+  --last <last-reviewed-sha> --base "$BASE") || { DELTA=$BASE MODE=full; }
+echo "final-HEAD check: $MODE ($REASON)"
+[ "$MODE" = reviewed ] || {
+  OUT=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/codex-bridge.sh" --kind diff --base "$DELTA") || {
+    echo "review bridge failed: $OUT" >&2; exit 1; }
+  case "$OUT" in REVIEW_FAILED\ *) echo "review bridge failed: $OUT" >&2; exit 1 ;; esac
+}
 ```
+
+The mapping matches the reviewed commits to the rebased ones by patch-id and requires the reviewed
+files to be byte-identical; a dropped, reordered or rewritten reviewed commit, or a merge commit in
+the branch, reviews the whole branch. Unmapped is unreviewed. A `full` result is still this gate,
+not a new round.
 
 It asks one question: did the fix introduce a defect? Only a blocker or major inside those commits
 halts; anything else is recorded, not fixed here. It is a gate, not a round, and runs at most twice.
