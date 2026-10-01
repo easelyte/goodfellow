@@ -130,7 +130,8 @@ Invoke any skill as `/goodfellow:<name>`. The chain skills hand off to the next 
 | **snap-compact**, **close** | Save learnings before compaction, and at the end of a session. |
 | **branch**, **prune-stale** | Create a feature worktree; remove merged branches and old logs. |
 
-`spec-review`, `plan-review` and `grill` still work as aliases through 0.4.x and are removed in 0.5.0.
+You rarely need to type these. Say what you want ("review my spec", "grill me on the auth flow",
+"ship this") and Claude picks the skill.
 
 <details>
 <summary><b>Settings</b></summary>

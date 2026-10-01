@@ -1,6 +1,6 @@
 ---
 name: brainstorm
-description: Entry point for new work. Classifies the change into a risk tier (T0 fix … T3 live state), then does only the design work that tier needs — none for a fix, a short plan for a feature, a reviewed spec for a design. Reads accumulated principles first. `--grill` interviews you one question at a time for fuzzy intent; `--from-loop N` seeds from a tracked follow-up; `--tier Tn` overrides the tier (never below its hard floor).
+description: "Entry point for new work. Classifies the change into a risk tier (T0 fix … T3 live state), then does only the design work that tier needs — none for a fix, a short plan for a feature, a reviewed spec for a design. Reads accumulated principles first. Use when someone says \"brainstorm X\", \"design X\", \"let's build X\", \"scope X\" or \"help me think through X\". `--grill` interviews you one question at a time for fuzzy or high-stakes intent, and only on request: \"grill me on X\", \"interview me about X\", \"grill me\". `--from-loop N` seeds from a tracked follow-up; `--tier Tn` overrides the tier (never below its hard floor)."
 ---
 
 Start the work described in: $ARGUMENTS
