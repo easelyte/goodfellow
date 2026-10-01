@@ -24,6 +24,9 @@ values fail loudly rather than falling back.
 | `GOODFELLOW_HIGH_STAKES_PATHS` | `.goodfellow/high_stakes_paths.txt` | Glob list that sets a T1 floor and enables the mutation check. |
 | `GOODFELLOW_LIVE_STATE_PATHS` | `.goodfellow/live_state_paths.txt` | Globs added to the built-in T3 list; a `!glob` line drops a built-in one. |
 | `GOODFELLOW_GUARDS` | `1` | `0` turns off the built-in guards and the stop list. Project rules still apply. |
+| `GOODFELLOW_SANDBOX` | `bwrap` | The test sandbox for the red and mutation checks (see below). `off` runs their tests unisolated, knowingly. |
+| `GOODFELLOW_SANDBOX_RO` | unset | Extra read-only paths inside the sandbox, separated by `:`. |
+| `GOODFELLOW_BWRAP` | `bwrap` on `PATH` | Path to the bubblewrap binary. |
 | `GOODFELLOW_TRIAGE_RETENTION_DAYS` | `90` | Days to keep closed triage entries. |
 | `GOODFELLOW_RUNS_RETENTION_DAYS` | `90` | Days to keep autopilot run logs. |
 
@@ -84,6 +87,38 @@ Add project rules in `.goodfellow/guards.json` (see
 `--selfcheck` prints what is enforced. A malformed config at runtime skips the project rules with a
 warning but keeps the built-ins, so a typo cannot lock you out of fixing it. `CLAUDE_HOOK_BYPASS=1`
 disables all guards for one command.
+
+## Test sandbox
+
+`red_check.py` and `mutation_check.py` run your test suite, and the mutation check runs it against
+deliberately broken code: a mutant of a cleanup routine can delete the wrong directory, and a
+mutant of process-selection code can signal the wrong process. So every test command they run goes
+through [bubblewrap](https://github.com/containers/bubblewrap) (`bwrap`):
+
+- **A private PID namespace.** The tests see and can signal only their own processes.
+- **A filesystem allowlist.** Read-only: `/usr` and the `/bin`, `/lib` links, a short list of
+  `/etc` files, the Python interpreter and its site-packages, the directories on `PATH`, and
+  anything in `GOODFELLOW_SANDBOX_RO`. `/tmp`, `/var/tmp`, `/run` and `HOME` are private and empty.
+  The only writable host directory is the check's own throwaway copy. Your home directory, your
+  checkout and your credentials are not mounted.
+
+Before the first test runs, a probe goes through the same wrapper. It must show a private PID
+namespace, no write reaching your home directory or your checkout, and none of the usual
+credential paths (`~/.ssh`, `~/.aws`, `~/.config/gh`, ...). If `bwrap` is missing or the probe
+fails, the check exits 2 and runs nothing. There is no silent fallback.
+
+- **Linux:** install bubblewrap (`apt install bubblewrap`, `dnf install bubblewrap`,
+  `pacman -S bubblewrap`). On Ubuntu 24.04 and later, unprivileged user namespaces may be
+  restricted by AppArmor; use the distribution's `bwrap` package, which ships a profile, or allow
+  them for your user.
+- **macOS, or a container without user namespaces:** `GOODFELLOW_SANDBOX=off` runs the tests
+  unisolated, knowingly. Every run warns, and the JSON report records `"sandbox": "off"`.
+- **Tests that need files outside the allowlist** (a toolchain under `/opt`, fixtures elsewhere):
+  add the paths to `GOODFELLOW_SANDBOX_RO`. The network is not isolated.
+
+With the sandbox on, the mutation check accepts targets that signal or spawn processes without
+`--isolated`, because every run already has its own PID namespace. Targets that delete or write
+files still need `--fakes`.
 
 ## Knowledge and memory backends
 

@@ -574,7 +574,8 @@ DELETER = GATE + "\n\nimport shutil\n\n\ndef purge(d):\n    shutil.rmtree(d)\n"
 def test_target_that_signals_is_refused_without_isolation(tmp_path):
     repo, base = _repo(tmp_path, STRONG_TESTS)
     _write(repo, {"gate.py": KILLER})
-    proc = _run(repo, "--base", base)
+    # unisolated: the sandbox would give every run its own PID namespace
+    proc = _run(repo, "--base", base, env={"GOODFELLOW_SANDBOX": "off"})
     assert proc.returncode == 2, proc.stdout + proc.stderr
     assert "gate.py:15 signal (os.kill)" in proc.stderr
     assert "--isolated" in proc.stderr
@@ -603,7 +604,11 @@ def test_isolated_fails_closed_when_no_namespace_can_be_made(tmp_path):
     repo, base = _repo(tmp_path, STRONG_TESTS)
     _write(repo, {"gate.py": KILLER})
     proc = _run(
-        repo, "--base", base, "--isolated", env={"GOODFELLOW_UNSHARE": "/nonexistent"}
+        repo,
+        "--base",
+        base,
+        "--isolated",
+        env={"GOODFELLOW_UNSHARE": "/nonexistent", "GOODFELLOW_SANDBOX": "off"},
     )
     assert proc.returncode == 2
     assert "namespace" in proc.stderr

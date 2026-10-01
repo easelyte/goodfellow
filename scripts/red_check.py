@@ -31,6 +31,12 @@ throwaway copy of your working tree, and in a temporary `git worktree` of the
 base with the branch's changed test files (plus any --support files) copied
 over it; the two JUnit XML reports are compared. Both are removed afterwards.
 
+Every test command runs in a sandbox (see sandbox.py): bubblewrap with a
+private PID namespace and a filesystem allowlist, where the only writable host
+directory is this check's temporary directory. If the sandbox is unavailable
+the check refuses (exit 2) and runs nothing; GOODFELLOW_SANDBOX=off runs the
+tests unisolated, knowingly, with a warning.
+
 OK means the base failure came from an assertion. It does not prove it was the
 assertion you meant: the base message is printed next to each verdict, so
 compare it with the expected red the plan named.
@@ -49,7 +55,7 @@ Exit codes:
      tests passes unless --require-tests)
   1  at least one bad verdict
   2  fail-closed: unknown base, no report (or an empty one) on head,
-     duplicate test ids, git failure
+     duplicate test ids, git failure, no sandbox
 """
 
 from __future__ import annotations
@@ -73,6 +79,7 @@ if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
 import proc_group  # noqa: E402
+import sandbox  # noqa: E402
 
 DEFAULT_TEST_CMD = (
     f"{shlex.quote(sys.executable)} -m pytest -q -p no:cacheprovider "
@@ -242,15 +249,23 @@ def run_tests(
     cmd_template: str,
     timeout: int,
     returncodes: Optional[List[int]] = None,
+    sb: Optional[sandbox.Sandbox] = None,
+    scratch: Optional[Path] = None,
 ) -> Optional[Dict[str, Tuple[str, Optional[str], str]]]:
     """Run the test command in cwd; return parsed JUnit, or None if no report.
-    The runner's exit code is appended to `returncodes` when given."""
-    fd, junit = tempfile.mkstemp(prefix="red-check-", suffix=".xml")
+    The runner's exit code is appended to `returncodes` when given. With a
+    sandbox, the command runs inside it and may write only `scratch` (which
+    holds cwd and the JUnit report)."""
+    fd, junit = tempfile.mkstemp(
+        prefix="red-check-", suffix=".xml", dir=str(scratch) if scratch else None
+    )
     os.close(fd)
     os.unlink(junit)
     cmd = cmd_template.replace(
         "{tests}", " ".join(shlex.quote(t) for t in tests)
     ).replace("{junit}", shlex.quote(junit))
+    if sb is not None:
+        cmd = sb.wrap(cmd, [scratch or cwd], cwd)
     env = dict(os.environ)
     env.pop("PYTHONPATH", None)
     rc, _out, _err = proc_group.run(cmd, cwd, env, timeout, sweep=True)
@@ -285,6 +300,7 @@ def check(
     extra_assertion_types: Sequence[str],
     all_tests: bool,
     assertion_patterns: Sequence[str] = (),
+    sb: Optional[sandbox.Sandbox] = None,
 ) -> Tuple[List[dict], List[str]]:
     _git(workdir, ["rev-parse", "--verify", "--quiet", f"{base}^{{commit}}"])
     merge_base = _git(workdir, ["merge-base", base, "HEAD"]).strip()
@@ -292,7 +308,7 @@ def check(
     if not files:
         return [], []
 
-    tmp = Path(tempfile.mkdtemp(prefix="red-check-wt-"))
+    tmp = Path(tempfile.mkdtemp(prefix="red-check-wt-")).resolve()
     wt = tmp / "base"
     try:
         # Head side: a throwaway copy of the working tree (committed or not),
@@ -300,7 +316,7 @@ def check(
         head_copy = tmp / "head"
         _copy_worktree(workdir, head_copy)
         head_rc: List[int] = []
-        head = run_tests(head_copy, files, cmd_template, timeout, head_rc)
+        head = run_tests(head_copy, files, cmd_template, timeout, head_rc, sb, tmp)
         if head and head_rc and head_rc[0] != 0:
             if all(tag in ("pass", "skipped") for tag, _t, _m in head.values()):
                 raise RedCheckError(
@@ -317,7 +333,9 @@ def check(
         _git(workdir, ["worktree", "add", "--detach", "--quiet", str(wt), merge_base])
         # The base's OWN tests identify which head tests are new.
         own = [f for f in files if (wt / f).is_file()]
-        base_own = run_tests(wt, own, cmd_template, timeout) if own else {}
+        base_own = (
+            run_tests(wt, own, cmd_template, timeout, None, sb, tmp) if own else {}
+        )
         base_own = base_own or {}
         for rel in list(files) + list(support):
             src = workdir / rel
@@ -325,7 +343,7 @@ def check(
                 dst = wt / rel
                 dst.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(src, dst)
-        base_run = run_tests(wt, files, cmd_template, timeout) or {}
+        base_run = run_tests(wt, files, cmd_template, timeout, None, sb, tmp) or {}
     finally:
         _git(workdir, ["worktree", "remove", "--force", str(wt)], check=False)
         proc_group.sweep_cwd(tmp)
@@ -429,6 +447,14 @@ def main(argv: Optional[List[str]] = None) -> int:
     workdir = Path(a.workdir).resolve()
     proc_group.install_handlers()
     try:
+        # Before anything runs: no sandbox, no test run (never a fallback).
+        sb = sandbox.create([workdir])
+    except sandbox.SandboxError as exc:
+        print(f"red-check BLOCK: {exc}", file=sys.stderr)
+        return 2
+    if not sb.isolated:
+        print(sandbox.unisolated_warning("red-check"), file=sys.stderr)
+    try:
         results, unreplayed = check(
             workdir,
             a.base,
@@ -440,6 +466,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             tuple(a.assertion_type),
             a.all_tests,
             tuple(a.assertion_pattern),
+            sb,
         )
     except (RedCheckError, OSError) as exc:
         print(f"red-check BLOCK: {exc}", file=sys.stderr)
@@ -449,7 +476,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     if a.json:
         print(
             json.dumps(
-                {"base": a.base, "results": results, "not_replayed": unreplayed},
+                {
+                    "base": a.base,
+                    "sandbox": sb.mode,
+                    "results": results,
+                    "not_replayed": unreplayed,
+                },
                 indent=1,
             )
         )

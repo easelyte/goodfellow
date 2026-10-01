@@ -12,7 +12,11 @@ and reports every mutant the tests fail to notice (a SURVIVOR).
     not thousands).
   - Safety: mutants are applied in throwaway copies of the checkout (file modes
     kept; PYTHONPATH entries that point into the checkout are redirected to the
-    copy). Your working tree is never written.
+    copy). Your working tree is never written. Every test run happens in a
+    sandbox (see sandbox.py): bubblewrap with a private PID namespace and a
+    filesystem allowlist, where the only writable host directory is that run's
+    copy. No sandbox means no run (exit 2); GOODFELLOW_SANDBOX=off runs the
+    tests unisolated, knowingly, with a warning.
   - Operators: comparison swap and boundary (`>=` to `>`), and/or swap, dropped
     `not`, negated `if`, flipped bool, int +1, arithmetic swap, `return X` to
     `return None`, `raise` to `pass` (fail-open), dropped call statement,
@@ -21,8 +25,9 @@ and reports every mutant the tests fail to notice (a SURVIVOR).
     resources outside a fake or an isolated namespace. A mutant can turn "kill
     our child" into "kill every process on the machine", and a sandbox copy of
     the files does not contain that. A target that signals or spawns processes
-    needs --isolated (every run happens inside a private PID namespace, where
-    only the check's own processes are visible) or --fakes; a target that
+    runs only with the sandbox (each run has its own PID namespace), or, with
+    the sandbox off, with --isolated (the whole check runs inside a private
+    PID namespace) or --fakes; a target that
     deletes or writes files needs --fakes (the tests replace those calls with
     fakes or temp directories), because a PID namespace does not protect the
     filesystem.
@@ -88,6 +93,7 @@ if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
 import proc_group  # noqa: E402
+import sandbox  # noqa: E402
 
 DEFAULT_TEST_CMD = (
     f"{shlex.quote(sys.executable)} -m pytest -x -q -p no:cacheprovider {{tests}}"
@@ -614,7 +620,10 @@ def run_tests(
     timeout: int,
     workdir: Optional[Path] = None,
     error_codes=RUNNER_ERROR_CODES,
+    sb: Optional[sandbox.Sandbox] = None,
 ) -> str:
+    if sb is not None:
+        cmd = sb.wrap(cmd, [cwd], cwd)  # this run may write only its own copy
     env = dict(os.environ)
     env["PYTHONDONTWRITEBYTECODE"] = "1"  # never trust a stale .pyc of a mutant
     env["GIT_CEILING_DIRECTORIES"] = str(cwd.parent)
@@ -717,6 +726,7 @@ def check(a: argparse.Namespace, workdir: Path) -> dict:
     changes = branch_changes(workdir, a.base)
     summary: dict = {
         "base": a.base,
+        "sandbox": "unused",
         "targets": [],
         "out_of_scope": [],
         "unsupported": [],
@@ -769,15 +779,21 @@ def check(a: argparse.Namespace, workdir: Path) -> dict:
                 )
         except SyntaxError as exc:
             raise CheckError(f"{path}: cannot parse ({exc})") from exc
+    # Before any test runs: no sandbox, no run (never a fallback). A check
+    # with nothing to mutate needs none.
+    sb = sandbox.create([workdir]) if summary["targets"] else sandbox.Sandbox("off")
+    summary["sandbox"] = sb.mode if summary["targets"] else "unused"
+    if summary["targets"] and not sb.isolated:
+        print(sandbox.unisolated_warning("mutation-check"), file=sys.stderr)
     problems = []
-    if process_sites and not (a.isolated or a.fakes):
+    if process_sites and not (sb.isolated or a.isolated or a.fakes):
         problems.append(
             "signals or spawns processes (a mutant can aim it at every process "
             "on the machine):\n  "
             + "\n  ".join(process_sites)
-            + "\n  -> pass --isolated to run every test inside its own PID "
-            "namespace (unshare --pid --fork --mount-proc), or use fakes and "
-            "--fakes"
+            + "\n  -> run with the sandbox (unset GOODFELLOW_SANDBOX), pass "
+            "--isolated to run the check inside its own PID namespace (unshare "
+            "--pid --fork --mount-proc), or use fakes and --fakes"
         )
     if fs_sites and not a.fakes:
         problems.append(
@@ -793,7 +809,7 @@ def check(a: argparse.Namespace, workdir: Path) -> dict:
             "refusing to mutate code that acts on real resources. It "
             + "\nIt ".join(problems)
         )
-    summary["pid_namespace"] = os.getpid() == 1
+    summary["pid_namespace"] = sb.isolated or os.getpid() == 1
     new = added_files(workdir, a.base) if summary["targets"] else set()
     sampled = []
     for path in summary["targets"]:
@@ -827,7 +843,7 @@ def check(a: argparse.Namespace, workdir: Path) -> dict:
             workers.append(w)
         pristine = _manifest(workers[0])
         t0 = time.time()
-        if run_tests(workers[0], cmd, a.baseline_timeout, workdir) != "survived":
+        if run_tests(workers[0], cmd, a.baseline_timeout, workdir, sb=sb) != "survived":
             raise CheckError(
                 "baseline is not green in the sandbox copy; fix the suite (or "
                 "--test-cmd) before measuring mutants"
@@ -841,7 +857,7 @@ def check(a: argparse.Namespace, workdir: Path) -> dict:
             # THIS, so contention between workers can never become a kill.
             def calibrate(w: Path) -> Tuple[str, float]:
                 t1 = time.time()
-                st = run_tests(w, cmd, a.baseline_timeout, workdir)
+                st = run_tests(w, cmd, a.baseline_timeout, workdir, sb=sb)
                 return st, time.time() - t1
 
             with cf.ThreadPoolExecutor(max_workers=len(workers)) as ex:
@@ -878,7 +894,7 @@ def check(a: argparse.Namespace, workdir: Path) -> dict:
                 rec["timeout_s"] = max(1, min(per_mutant, int(deadline - time.time())))
                 t1 = time.time()
                 rec["status"] = run_tests(
-                    w, cmd, rec["timeout_s"], workdir, error_codes
+                    w, cmd, rec["timeout_s"], workdir, error_codes, sb
                 )
                 rec["secs"] = round(time.time() - t1, 1)
             finally:
@@ -1027,9 +1043,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument(
         "--isolated",
         action="store_true",
-        help="re-run inside a private PID namespace (unshare --pid --fork "
-        "--mount-proc), so mutants of code that signals or spawns processes can "
-        "only see the check's own processes; fails closed if none can be made",
+        help="with GOODFELLOW_SANDBOX=off: re-run inside a private PID namespace "
+        "(unshare --pid --fork --mount-proc), so mutants of code that signals or "
+        "spawns processes can only see the check's own processes; fails closed if "
+        "none can be made. With the sandbox (the default) every test run already "
+        "has its own PID namespace, so this is not needed",
     )
     ap.add_argument(
         "--fakes",
@@ -1039,9 +1057,15 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
     ap.add_argument("--json", action="store_true")
     a = ap.parse_args(argv)
-    if a.isolated and os.environ.get(_IN_PIDNS) != "1":
+    try:
+        unsandboxed = sandbox.mode_from_env() == "off"
+    except sandbox.SandboxError as exc:
+        print(f"mutation-check BLOCK: {exc}", file=sys.stderr)
+        return 2
+    reexec = a.isolated and unsandboxed
+    if reexec and os.environ.get(_IN_PIDNS) != "1":
         return _reexec_in_pid_namespace(sys.argv[1:] if argv is None else argv)
-    if a.isolated and os.getpid() != 1:
+    if reexec and os.getpid() != 1:
         print(
             "mutation-check BLOCK: --isolated but not in a PID namespace",
             file=sys.stderr,
@@ -1055,7 +1079,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     try:
         s = check(a, workdir)
-    except (CheckError, OSError) as exc:
+    except (CheckError, sandbox.SandboxError, OSError) as exc:
         print(f"mutation-check BLOCK: {exc}", file=sys.stderr)
         return 2
 
