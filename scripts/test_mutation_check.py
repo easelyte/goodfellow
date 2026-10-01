@@ -226,7 +226,9 @@ def test_mutant_that_hangs_counts_as_killed(tmp_path):
     )
     repo, base = _repo(tmp_path, tests)
     _write(repo, {"gate.py": loop})
-    data = json.loads(_run(repo, "--base", base, "--timeout", "3").stdout)
+    # 20 s: a timeout is a kill only at >= 3x the loaded baseline (see
+    # test_mutation_budget.py), so leave room for a busy machine.
+    data = json.loads(_run(repo, "--base", base, "--timeout", "20").stdout)
     hang = [r for r in data["results"] if r["op"] == "binop"]
     assert hang and hang[0]["status"] == "timeout"
     assert data["killed"] == data["ran"]
@@ -532,7 +534,8 @@ def test_timed_out_mutants_leave_no_process_behind(tmp_path):
     )
     assert out["rc"] != "hung" and out["left"] == [], out
     data = json.loads(out["stdout"])
-    assert any(r["status"] == "timeout" for r in data["results"])
+    # verified or not (a 2 s limit on a busy machine), the run timed out
+    assert any(r["status"].startswith("timeout") for r in data["results"])
 
 
 # --- refusing targets with real side effects --------------------------------
