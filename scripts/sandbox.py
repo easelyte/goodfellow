@@ -120,8 +120,17 @@ def mode_from_env(environ=os.environ) -> str:
 def find_bwrap(
     environ=os.environ, which: Callable[[str], Optional[str]] = shutil.which
 ) -> Optional[str]:
-    bwrap = environ.get(BWRAP_ENV) or which("bwrap")
-    return bwrap if bwrap and os.path.exists(bwrap) else None
+    """The bwrap binary, or None when it is not installed. A GOODFELLOW_BWRAP
+    that names no file is a configuration error, never "not installed": a typo
+    must not turn the sandbox off."""
+    override = environ.get(BWRAP_ENV)
+    if override:
+        if not os.path.exists(override):
+            raise SandboxError(
+                f"{BWRAP_ENV}={override!r} does not exist; fix or unset it"
+            )
+        return override
+    return which("bwrap")
 
 
 def _home() -> Optional[Path]:

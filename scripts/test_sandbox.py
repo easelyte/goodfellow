@@ -334,3 +334,13 @@ def test_start_and_completion_are_distinct_markers():
     assert sb.started(started_only) and not sb.completed(started_only)
     assert not sb.started("")
     assert sandbox.Sandbox(mode="off").started("")
+
+
+def test_a_missing_bwrap_override_is_a_configuration_error(tmp_path):
+    with pytest.raises(sandbox.SandboxError, match="GOODFELLOW_BWRAP") as exc:
+        sandbox.create(
+            [],
+            environ={"PATH": "/usr/bin", "GOODFELLOW_BWRAP": str(tmp_path / "nope")},
+            allow_missing=True,
+        )
+    assert not isinstance(exc.value, sandbox.SandboxMissing)
