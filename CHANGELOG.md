@@ -14,8 +14,8 @@ afterwards at the commits that declared them, without Releases. See [RELEASING.m
 ## [0.4.1] - 2026-10-02
 
 The red and mutation checks now run your tests in a sandbox, the mutation check stops counting a
-slow machine as a kill, and the final review survives a rebase. **Heads up:** the old skill
-aliases are gone (see Removed).
+slow machine as a kill, and the final review survives a rebase. The stop list now asks instead of
+blocking. **Heads up:** the old skill aliases are gone (see Removed).
 
 ### Removed
 
@@ -24,9 +24,23 @@ aliases are gone (see Removed).
   up because people rarely type multi-word commands: Claude picks a skill from what you say. The
   phrases the aliases answered to ("review my spec", "stress test this plan", "grill me on X") are
   now in the canonical skills' descriptions, so asking in words works as before ([#35](https://github.com/easelyte/goodfellow/pull/35)).
+- **Stop-list rules that blocked reviewable or reversible work.** Opening or merging a pull
+  request, pushes to repositories outside an owner list, and migration commands no longer stop
+  anything, so `stop-foreign-remote`, `stop-public-repo` (and its `gh repo view` visibility
+  lookup) and `stop-migration` are gone, with the `stop_list.owners` and
+  `stop_list.migration_commands` settings. Old configs that name them still load ([#35](https://github.com/easelyte/goodfellow/pull/35)).
+- **The `git add -A` and protected-branch force-push guards.** Staging is reversible, and every
+  force-push now asks through `stop-force-push`. `GOODFELLOW_GUARDS` is gone too:
+  `GOODFELLOW_STOP_LIST=0` is the one switch ([#35](https://github.com/easelyte/goodfellow/pull/35)).
 
 ### Changed
 
+- **The stop list asks, it never blocks (behaviour change).** Before a force-push, a push to the
+  default branch, a tag push or `gh release` write, a package publish, or a command carrying
+  `--dangerously-skip-permissions`, the hook returns `permissionDecision: "ask"` with a one-line
+  reason: Claude Code shows its normal confirmation and your yes goes through. The default branch
+  comes from `protected_branches` (default `main`, `master`) and the remote's HEAD; no network
+  lookup remains. Your own `block` rules in `.goodfellow/guards.json` still deny ([#35](https://github.com/easelyte/goodfellow/pull/35)).
 - **Test sandbox: convenient by default, strict where it matters.** Where
   [bubblewrap](https://github.com/containers/bubblewrap) is installed, the red and mutation checks
   run your tests with a private PID namespace and a filesystem allowlist: the only writable host

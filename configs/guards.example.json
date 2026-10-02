@@ -6,8 +6,7 @@
   "disable_builtins": [],
 
   "stop_list": {
-    "owners": ["your-github-user", "your-org"],
-    "migration_commands": ["prisma migrate deploy", "alembic upgrade", "manage.py migrate", "make migrate-prod"]
+    "publish_commands": ["npm publish", "twine upload", "make release"]
   },
 
   "block": [

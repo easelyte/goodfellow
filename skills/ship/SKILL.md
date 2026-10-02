@@ -271,9 +271,9 @@ Goal / Approach / Tests, as written before building.
 example a migration the merged code depends on), do §7a now and merge only after it is verified.
 
 **Autopilot (default):** merge when the review converged with no unresolved blocker, the final-HEAD
-check is clean and CI is green. The stop list still applies: opening a PR on a public repository,
-pushing to its default branch, a repository outside your owner list, releases and migrations stop
-for the operator, whatever the tier. **Dry-run:** log `would_act: merge` instead.
+check is clean and CI is green. A force-push, a push to the default branch, a tag or release and
+a package publish ask the operator through Claude Code's confirmation, whatever the tier; their yes
+goes through. **Dry-run:** log `would_act: merge` instead.
 **`GOODFELLOW_AUTOPILOT=0`:** ask once whether to merge.
 
 ## 7a. T3 live step
@@ -281,7 +281,7 @@ for the operator, whatever the tier. **Dry-run:** log `would_act: merge` instead
 Only after the review converged, the final-HEAD check is clean and CI is green (and, for a
 post-merge step, after the merge): present the plan's `## Live step` (the exact commands, before or after the merge, verification, rollback) together
 with the rehearsal evidence, and hand it to the operator, whatever the autopilot setting. The
-operator runs it: the stop list deliberately denies migrations, deploys, publishes and releases from
-the session, and sends or spending are never automated. Then verify the result as the plan says,
+operator decides when it runs: migrations, deploys, publishes and releases touch live state, and
+sends or spending are never automated. Then verify the result as the plan says,
 record it in the PR, and only then report the work done. **Dry-run:** log
 `{"event": "would_hand_off_live_step", "would_act": true}`.

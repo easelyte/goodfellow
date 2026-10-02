@@ -8,7 +8,8 @@ Start the work described in: $ARGUMENTS
 Flags: `--grill` (interview mode, §5b), `--from-loop N` (§3), `--tier T0..T3` (operator override,
 §1). Autopilot is on by default (`GOODFELLOW_AUTOPILOT=0` turns it off): no approval gates between
 steps. It still stops for **product calls** (naming, pricing, public positioning, UX choices that
-differ only by taste, scope beyond the request) and for anything on the stop list.
+differ only by taste, scope beyond the request), and the stop list asks before a force-push,
+a default-branch push, a release or a publish.
 
 ## 0. Initialize project state
 

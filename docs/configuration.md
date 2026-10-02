@@ -11,7 +11,7 @@ values fail loudly rather than falling back.
 | Variable | Default | Purpose |
 |---|---|---|
 | `GOODFELLOW_AUTOPILOT` | on | Autopilot is the default. `0` pauses for your go at each step; the stop list stays on. `dry-run` logs decisions without changing project files. |
-| `GOODFELLOW_STOP_LIST` | on | `0` is the dedicated opt-out: it turns the stop list off in every mode. The other built-in guards stay on. |
+| `GOODFELLOW_STOP_LIST` | on | `0` turns off the stop list's confirmations (the built-in asks) in every mode. Project `block` rules still apply. |
 | `GOODFELLOW_CODEX` | `1` | `0` disables Codex even when it is installed. |
 | `GOODFELLOW_CODEX_MODEL` | Codex default | GPT model for the Codex reviewer. |
 | `GOODFELLOW_REVIEW_MODEL` | see below | Claude reviewer model: `opus`, `sonnet` or `haiku`. |
@@ -23,7 +23,6 @@ values fail loudly rather than falling back.
 | `GOODFELLOW_PRINCIPLES_WEB` | auto | `1` loads the web principles (JS, React, Next.js, Postgres). Auto-enabled when a `package.json` is present. |
 | `GOODFELLOW_HIGH_STAKES_PATHS` | `.goodfellow/high_stakes_paths.txt` | Glob list that sets a T1 floor and enables the mutation check. |
 | `GOODFELLOW_LIVE_STATE_PATHS` | `.goodfellow/live_state_paths.txt` | Globs added to the built-in T3 list; a `!glob` line drops a built-in one. |
-| `GOODFELLOW_GUARDS` | `1` | `0` turns off the built-in guards and the stop list. Project rules still apply. |
 | `GOODFELLOW_SANDBOX` | `auto` | The test sandbox for the red and mutation checks (see below). `auto` uses bubblewrap when installed; `bwrap` requires it; `off` runs the tests unisolated, knowingly. |
 | `GOODFELLOW_SANDBOX_RO` | unset | Extra read-only paths inside the sandbox, separated by `:`. |
 | `GOODFELLOW_SANDBOX_ENV` | unset | Extra environment variable names the sandboxed tests keep, comma-separated. |
@@ -50,18 +49,15 @@ a note if not.
 
 ## Tool-layer guards
 
-A rule whose violation is expensive to undo should not live only in a prompt: compaction can drop it,
-and the session that inherits the summary was never told. Goodfellow's `PreToolUse` hook
-(`scripts/guard_engine.py`) checks every tool call instead.
-
-Built in, on by default:
-
-- `git add -A`, `git add .`, `git add --all`: stage specific files instead.
-- `--dangerously-skip-permissions`.
-- Force-push to a protected branch (`main` and `master` by default). Feature branches are not affected.
+Goodfellow's `PreToolUse` hook (`scripts/guard_engine.py`) keeps its own checks few, and none of
+them blocks. Each returns `permissionDecision: "ask"` with a one-line reason: Claude Code shows its
+normal confirmation and your yes goes through. Built in: `--dangerously-skip-permissions`, which
+turns off the permission prompt for every tool call, plus the stop list below.
 
 Matching is by shell token, and the built-ins only inspect `Bash` commands, so documenting a flag in a
-file or a commit message does not trip a guard.
+file or a commit message does not trip a check.
+
+Your project's own rules, the `block` list in `.goodfellow/guards.json`, do deny: you wrote them.
 
 Add project rules in `.goodfellow/guards.json` (see
 [`configs/guards.example.json`](../configs/guards.example.json)):
@@ -69,7 +65,6 @@ Add project rules in `.goodfellow/guards.json` (see
 ```json
 {
   "protected_branches": ["main", "master"],
-  "stop_list": { "owners": ["your-user", "your-org"] },
   "block": [
     {
       "id": "no-prod-db-writes",
@@ -87,7 +82,7 @@ Add project rules in `.goodfellow/guards.json` (see
 `python3 scripts/guard_engine.py --validate` checks a config (non-zero on error, for CI) and
 `--selfcheck` prints what is enforced. A malformed config at runtime skips the project rules with a
 warning but keeps the built-ins, so a typo cannot lock you out of fixing it. `CLAUDE_HOOK_BYPASS=1`
-disables all guards for one command.
+turns everything off, project rules included.
 
 ## Test sandbox
 
@@ -179,23 +174,23 @@ and a warning appears at 15 open loops.
 
 ## Autopilot and the stop list
 
-Autopilot is on by default: the chain runs without approvals between steps. It stops only for
+Autopilot is on by default: the chain runs without approvals between steps. It pauses only for
 product calls (naming, pricing, public positioning, taste-only UX, scope beyond the request) and for
-the stop list, which a `PreToolUse` hook enforces (`scripts/stop_list.py`):
+the stop list. **The stop list asks, it never blocks** (`scripts/stop_list.py`): Claude Code shows its
+normal confirmation with a one-line reason, and your yes goes through. Opening or merging a pull
+request is reviewable and reversible, so it asks nothing. Nothing here makes a network call.
 
-| Stop | What it catches |
+| Stop | When it asks |
 |---|---|
-| `stop-foreign-remote` | `git push` or `gh pr create` to a repository whose owner is not in `stop_list.owners` (entries `owner` for GitHub, or `host/owner`; default: the host and owner of `origin`), or whose destination cannot be resolved. The same account name on another host counts as foreign. |
-| `stop-public-repo` | On a public repository you own: a push to its default branch, a tag push, or `gh pr create`. Visibility is looked up with `gh repo view` and cached for ten minutes; a failed lookup stops the action. The push target honours `git -c` overrides, `remote.<name>.push`, `push.default` and every URL of the remote. Pushes to other branches are checked against the live default branch too, but a failed lookup never blocks them. |
-| `stop-release` | `gh release create/upload/edit/delete` and `gh api` writes to a releases endpoint. |
+| `stop-default-branch` | A push that writes the default branch: `protected_branches` (default `main`, `master`) or the remote's HEAD as git knows it locally. `--all`, `--mirror` and wildcard refspecs count. |
+| `stop-release` | A tag push, `gh release create/upload/edit/delete`, and `gh api` writes to a releases endpoint. |
 | `stop-publish` | `npm publish`, `twine upload`, `cargo publish`, `docker push` and similar. `--dry-run` is allowed. |
-| `stop-migration` | Deploy-style migrations: `prisma migrate deploy`, `alembic upgrade`, `manage.py migrate`, `rails db:migrate` and similar. Replace the list with `stop_list.migration_commands`. |
 | `stop-force-push` | `git push --force`, `-f` or a `+refspec`. `--force-with-lease` to a feature branch is allowed. |
 
-Sending messages, spending money and product calls cannot be read from a command line; the skills
-carry those as written rules. The stop list is on in every mode: `GOODFELLOW_AUTOPILOT=0` only
-brings back step approvals. `GOODFELLOW_STOP_LIST=0` turns the stop list off (its dedicated
-opt-out), and `GOODFELLOW_GUARDS=0` turns off every built-in guard including it. `dry-run` shows what it would do and writes only the decision log
+Sending messages, spending money, migrations and product calls cannot be read reliably from a
+command line; the skills carry those as written rules. The stop list is on in every mode:
+`GOODFELLOW_AUTOPILOT=0` only brings back step approvals, and `GOODFELLOW_STOP_LIST=0` turns the
+stop list off. `dry-run` shows what it would do and writes only the decision log
 (`.goodfellow/runs/<timestamp>-<pid>.jsonl`). Turn off one stop with its id in `disable_builtins`.
 
 ## Principles
