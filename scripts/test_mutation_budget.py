@@ -227,3 +227,39 @@ def test_sampling_boundary_is_strictly_more_than_400_lines():
         min_lines=mc.DEFAULT_SAMPLE_MIN_LINES,
     )
     assert len(kept) == 150 and info["population"] == len(muts)
+
+
+def test_timeouts_are_rechecked_against_a_fresh_control_run():
+    """Load can rise after calibration. If every mutant then times out, no
+    survivor raises the baseline, so a fresh unmutated control run decides."""
+    calls = []
+
+    def slow_control():
+        calls.append(1)
+        return "survived", 50.0  # the machine is now this slow
+
+    results = [{"status": "timeout", "timeout_s": 60}, {"status": "killed", "secs": 1}]
+    loaded = mc.confirm_timeouts(results, 10.0, slow_control)
+    assert loaded == 50.0 and results[0]["status"] == "timeout_unverified"
+    assert calls == [1]
+
+
+def test_a_control_that_does_not_pass_leaves_every_timeout_unverified():
+    results = [{"status": "timeout", "timeout_s": 600}]
+    mc.confirm_timeouts(results, 1.0, lambda: ("timeout", 900.0))
+    assert results[0]["status"] == "timeout_unverified"
+
+
+def test_no_timeouts_no_control_run():
+    results = [{"status": "killed", "secs": 1}]
+
+    def boom():
+        raise AssertionError("control must not run")
+
+    assert mc.confirm_timeouts(results, 2.0, boom) == 2.0
+
+
+def test_a_fast_control_keeps_the_timeout_a_kill():
+    results = [{"status": "timeout", "timeout_s": 60}]
+    mc.confirm_timeouts(results, 10.0, lambda: ("survived", 11.0))
+    assert results[0]["status"] == "timeout"

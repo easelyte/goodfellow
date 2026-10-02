@@ -86,7 +86,7 @@ import tempfile
 import threading
 import time
 from pathlib import Path
-from typing import Dict, Iterator, List, NamedTuple, Optional, Set, Tuple
+from typing import Callable, Dict, Iterator, List, NamedTuple, Optional, Set, Tuple
 
 _HERE = str(Path(__file__).resolve().parent)
 if _HERE not in sys.path:
@@ -631,9 +631,11 @@ def run_tests(
         env["PYTHONPATH"] = remap_pythonpath(env["PYTHONPATH"], workdir, cwd)
     if sb is not None:
         env = sb.env(env)  # credentials in the environment stay outside
-    rc, _out, _err = proc_group.run(cmd, cwd, env, timeout, sweep=True)
+    rc, _out, err = proc_group.run(cmd, cwd, env, timeout, sweep=True)
     if rc is None:
         return "timeout"
+    if sb is not None and not sb.completed(err):
+        return "error"  # the sandbox failed, no test judged this run
     return status_for_returncode(rc, error_codes)
 
 
@@ -677,6 +679,25 @@ def recheck_timeouts(results: List[dict], loaded_s: float) -> float:
         ):
             r["status"] = "timeout_unverified"
     return loaded
+
+
+def confirm_timeouts(
+    results: List[dict], loaded_s: float, control: Callable[[], Tuple[str, float]]
+) -> float:
+    """Load can rise after calibration; if every mutant then times out, no
+    survivor raises the baseline. So when any timeout would count as a kill,
+    run the unmutated suite once more (`control`, returning (status, seconds))
+    and recheck against the slower of the two. A control that does not pass
+    leaves no baseline at all: every timeout becomes unverified."""
+    if not any(r.get("status") == "timeout" for r in results):
+        return loaded_s
+    status, secs = control()
+    if status != "survived":
+        for r in results:
+            if r.get("status") == "timeout":
+                r["status"] = "timeout_unverified"
+        return loaded_s
+    return recheck_timeouts(results, max(loaded_s, secs))
 
 
 def calibration_problem(statuses: List[str]) -> Optional[str]:
@@ -911,7 +932,18 @@ def check(a: argparse.Namespace, workdir: Path) -> dict:
 
         with cf.ThreadPoolExecutor(max_workers=len(workers)) as ex:
             results = list(ex.map(job, mutants))
-        summary["loaded_baseline_s"] = round(recheck_timeouts(results, loaded), 1)
+        loaded = recheck_timeouts(results, loaded)
+
+        def control() -> Tuple[str, float]:
+            w = workers[0]
+            _reset_sandbox(w, pristine, workdir)
+            t1 = time.time()
+            st = run_tests(w, cmd, a.baseline_timeout, workdir, sb=sb)
+            return st, time.time() - t1
+
+        summary["loaded_baseline_s"] = round(
+            confirm_timeouts(results, loaded, control), 1
+        )
     finally:
         proc_group.kill_all()
         proc_group.sweep_cwd(tmp)  # anything still running inside a sandbox

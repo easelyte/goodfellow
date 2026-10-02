@@ -63,19 +63,21 @@ def _run(
     )
 
 
-def _git(repo: Path, *args: str) -> str:
+def _git(repo: Path, *args: str, raw: bool = False) -> str:
+    """git's stdout; `raw` keeps it byte-exact (patches, NUL-delimited paths,
+    where a leading space is part of a file name)."""
     p = _run(repo, list(args))
     if p.returncode != 0:
         raise DeltaError(f"git {' '.join(args)} failed: {p.stderr.strip()[:200]}")
-    return p.stdout.strip()
+    return p.stdout if raw else p.stdout.strip()
 
 
 def _patch_ids(repo: Path, rev_range: str) -> List[Tuple[str, str]]:
     """[(commit, verbatim patch-id)] oldest first; an empty commit gets "empty"."""
     out = []
     for c in _git(repo, "rev-list", "--reverse", rev_range).splitlines():
-        patch = _git(repo, "diff-tree", "-p", "--no-color", "--no-ext-diff", c)
-        p = _run(repo, ["patch-id", "--verbatim"], stdin=patch + "\n")
+        patch = _git(repo, "diff-tree", "-p", "--no-color", "--no-ext-diff", c, raw=True)
+        p = _run(repo, ["patch-id", "--verbatim"], stdin=patch)
         if p.returncode != 0:
             raise DeltaError(
                 f"git patch-id failed for {c[:10]}: {p.stderr.strip()[:200]}"
@@ -90,7 +92,7 @@ def _patch_ids(repo: Path, rev_range: str) -> List[Tuple[str, str]]:
 
 
 def _changed(repo: Path, a: str, b: str) -> Set[str]:
-    out = _git(repo, "diff", "-z", "--name-only", "--no-renames", a, b)
+    out = _git(repo, "diff", "-z", "--name-only", "--no-renames", a, b, raw=True)
     return {p for p in out.split("\0") if p}
 
 
@@ -146,11 +148,12 @@ def delta_base(repo: Path, last: str, base: str) -> Delta:
             mapped,
             "--",
             *sorted(paths),
+            raw=True,
         ).split("\0")
         if p
     )
     if differ:
-        return Delta(whole, "full", f"{differ[0]} differs from the reviewed content")
+        return Delta(whole, "full", f"{differ[0]!r} differs from the reviewed content")
     n = len(reviewed)
     if mapped == head:
         return Delta(

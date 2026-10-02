@@ -223,3 +223,48 @@ def test_red_check_tests_cannot_read_a_checkout_on_path(tmp_path):
     proc = _red(repo, base, env)
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert [r["verdict"] for r in json.loads(proc.stdout)["results"]] == ["OK"]
+
+
+@needs_live
+def test_a_sandbox_that_fails_after_the_probe_is_never_a_kill(tmp_path):
+    """bwrap exits 1 when its own setup fails, the same code as a failing test.
+    A wrapper failure after a good probe and baseline must make the result
+    incomplete (runner error), never count every mutant as killed."""
+    import shutil
+
+    real = shutil.which("bwrap")
+    count = tmp_path / "calls"
+    fake = tmp_path / "flaky-bwrap"
+    fake.write_text(
+        "#!/bin/bash\n"
+        f"n=$(cat {count} 2>/dev/null || echo 0); n=$((n+1)); echo $n > {count}\n"
+        f'[ "$n" -le 2 ] && exec {real} "$@"\n'
+        'echo "bwrap: setting up uid map: Permission denied" >&2; exit 1\n'
+    )
+    fake.chmod(0o755)
+    repo, base = _repo(tmp_path, "    assert f() == 2\n")
+    proc = _mut(repo, base, _env(GOODFELLOW_BWRAP=str(fake)))
+    data = json.loads(proc.stdout)
+    assert data["killed"] == 0, data
+    assert data["runner_errors"] == data["mutants"] > 0
+    assert proc.returncode == 3, proc.stderr
+
+
+@needs_live
+def test_red_check_fails_closed_when_the_sandbox_breaks_on_the_base_run(tmp_path):
+    import shutil
+
+    real = shutil.which("bwrap")
+    count = tmp_path / "calls"
+    fake = tmp_path / "flaky-bwrap"
+    fake.write_text(
+        "#!/bin/bash\n"
+        f"n=$(cat {count} 2>/dev/null || echo 0); n=$((n+1)); echo $n > {count}\n"
+        f'[ "$n" -le 2 ] && exec {real} "$@"\n'
+        'echo "bwrap: setting up uid map: Permission denied" >&2; exit 1\n'
+    )
+    fake.chmod(0o755)
+    repo, base = _repo(tmp_path, "    assert f() == 2\n")
+    proc = _red(repo, base, _env(GOODFELLOW_BWRAP=str(fake)))
+    assert proc.returncode == 2, proc.stdout + proc.stderr
+    assert "sandbox" in proc.stderr

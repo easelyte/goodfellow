@@ -203,16 +203,24 @@ def _final_head_block() -> str:
 
 
 def _run_final_head(
-    repo: Path, tmp_path: Path, last: str, base: str
+    repo: Path, tmp_path: Path, last: str, base: str, mapper_fails: bool = False
 ) -> tuple[int, str]:
     """Execute the skill's own final-HEAD shell block with a stub review bridge
     that records the base it was asked to review."""
     root = tmp_path / "plugin"
     (root / "scripts").mkdir(parents=True)
-    (root / "scripts" / "review_delta.py").symlink_to(SCRIPT)
+    if mapper_fails:
+        (root / "scripts" / "review_delta.py").write_text("import sys\nsys.exit(2)\n")
+    else:
+        (root / "scripts" / "review_delta.py").symlink_to(SCRIPT)
     calls = tmp_path / "bridge-calls"
+    # Like the real bridge, refuse a base that does not resolve: a fallback to
+    # an unusable base must fail here, not pass.
     (root / "scripts" / "codex-bridge.sh").write_text(
-        f'#!/bin/bash\necho "$*" >> {calls}\necho /tmp/review-artifact.md\n'
+        "#!/bin/bash\n"
+        'git rev-parse --verify --quiet "$4^{commit}" >/dev/null || '
+        '{ echo "REVIEW_FAILED 2 bad-base"; exit 2; }\n'
+        f'echo "$*" >> {calls}\necho /tmp/review-artifact.md\n'
     )
     block = _final_head_block().replace("<last-reviewed-sha>", last)
     p = subprocess.run(
@@ -258,6 +266,23 @@ def test_final_head_block_reviews_everything_when_the_mapper_fails(
     repo: Path, tmp_path: Path
 ):
     last = git(repo, "rev-parse", "HEAD")
-    commit(repo, "c.py", "c = 3\n", "fix")
-    rc, calls = _run_final_head(repo, tmp_path, last, "no-such-base")
-    assert calls.split() == ["--kind", "diff", "--base", "no-such-base"]
+    commit(repo, "c.py", "c = 3\\n", "fix")
+    rc, calls = _run_final_head(repo, tmp_path, last, "main", mapper_fails=True)
+    assert rc == 0
+    assert calls.split() == ["--kind", "diff", "--base", "main"]
+
+
+def test_leading_space_filename_is_compared_exactly(repo: Path):
+    """Raw -z output: a reviewed file named ' secret.py' must not be compared
+    under a stripped name that matches nothing."""
+    lines = [f"line{i}\n" for i in range(12)]
+    git(repo, "switch", "-q", "main")
+    commit(repo, " secret.py", "".join(lines), "add secret")
+    git(repo, "switch", "-q", "feature")
+    git(repo, "rebase", "-q", "main")
+    commit(repo, " secret.py", "".join(lines[:1] + ["CHANGED\n"] + lines[2:]), "edit")
+    last = git(repo, "rev-parse", "HEAD")
+    main_gains(repo, " secret.py", "".join(lines[:11] + ["upstream\n"]))
+    git(repo, "rebase", "-q", "main")
+    d = review_delta.delta_base(repo, last, "main")
+    assert d.mode == "full" and " secret.py" in d.reason, d

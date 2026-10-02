@@ -198,6 +198,11 @@ class Sandbox:
     mode: str
     bwrap: str = "bwrap"
     ro: List[str] = field(default_factory=list)
+    # Printed on stderr by the shell INSIDE the sandbox after the test command
+    # finishes. bwrap exits 1 when its own setup fails, the same code as a
+    # failing test; without this line a broken sandbox would read as a failure
+    # (a "killed" mutant, a red test).
+    nonce: str = field(default_factory=lambda: uuid.uuid4().hex)
 
     @property
     def isolated(self) -> bool:
@@ -253,7 +258,19 @@ class Sandbox:
         the sandbox. With mode 'off' it is `cmd` unchanged."""
         if not self.isolated:
             return cmd
-        return shlex.join([*self.argv(writable, cwd), "/bin/sh", "-c", cmd])
+        inner = '/bin/sh -c "$1"; rc=$?; echo "%s:$rc" >&2; exit $rc' % self._tag()
+        return shlex.join(
+            [*self.argv(writable, cwd), "/bin/sh", "-c", inner, "sh", cmd]
+        )
+
+    def _tag(self) -> str:
+        return f"goodfellow-sandbox-ran:{self.nonce}"
+
+    def completed(self, stderr: str) -> bool:
+        """Did the wrapped command actually run inside the sandbox? Always True
+        with mode 'off'. False means the sandbox itself failed: a runner error,
+        never a test result."""
+        return not self.isolated or self._tag() + ":" in (stderr or "")
 
 
 _PROBE = r"""

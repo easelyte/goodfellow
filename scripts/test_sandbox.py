@@ -278,3 +278,18 @@ def test_live_checkout_on_path_stays_invisible(tmp_path):
         timeout=60,
     )
     assert "s3cret" not in p.stdout and "hidden" in p.stdout
+
+
+def test_completion_is_proven_by_the_inner_shell_only():
+    sb = sandbox.Sandbox(mode="bwrap", bwrap="bwrap")
+    assert not sb.completed("")
+    assert not sb.completed("bwrap: setting up uid map: Permission denied")
+    assert not sb.completed("goodfellow-sandbox-ran:someone-else:0")
+    assert sb.completed(f"noise\ngoodfellow-sandbox-ran:{sb.nonce}:1\n")
+    assert sandbox.Sandbox(mode="off").completed("")
+
+
+@needs_live
+def test_live_wrapped_command_reports_completion_and_keeps_its_exit_code(tmp_path):
+    p = _run(LIVE, "exit 3", tmp_path)
+    assert p.returncode == 3 and LIVE.completed(p.stderr)

@@ -270,9 +270,15 @@ def run_tests(
     env.pop("PYTHONPATH", None)
     if sb is not None:
         env = sb.env(env)  # credentials in the environment stay outside
-    rc, _out, _err = proc_group.run(cmd, cwd, env, timeout, sweep=True)
+    rc, _out, err = proc_group.run(cmd, cwd, env, timeout, sweep=True)
     if rc is None:
         return None
+    if sb is not None and not sb.completed(err):
+        # bwrap's own failure exits like a failing test; never read it as one
+        raise RedCheckError(
+            f"the test sandbox failed to run the tests in {cwd.name}: "
+            f"{(err or '').strip()[-300:]}"
+        )
     if returncodes is not None:
         returncodes.append(rc)
     try:
