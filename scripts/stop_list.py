@@ -481,6 +481,12 @@ def check_push(
             "stop-force-push",
             "a force-push rewrites the remote branch and can drop commits.",
         )
+    if g.opaque and "stop-default-branch" not in disabled:
+        return _stop(
+            "stop-default-branch",
+            "--config-env sets git config from an environment variable the hook "
+            "cannot read, so this push may write any branch.",
+        )
     if p.repo is None:
         remote_name: Optional[str] = _push_remote(wd, cfg=cfg)
     elif _is_url_like(p.repo):

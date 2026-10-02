@@ -58,6 +58,8 @@ Matching is by shell token, and the built-ins only inspect `Bash` commands, so d
 file or a commit message does not trip a check.
 
 Your project's own rules, the `block` list in `.goodfellow/guards.json`, do deny: you wrote them.
+They are checked first, so a stop that would ask never turns a forbidden action into a
+confirmation. The confirmation itself is Claude Code's: a mode that auto-approves prompts may skip it.
 
 Add project rules in `.goodfellow/guards.json` (see
 [`configs/guards.example.json`](../configs/guards.example.json)):
@@ -184,7 +186,7 @@ request is reviewable and reversible, so it asks nothing. Nothing here makes a n
 |---|---|
 | `stop-default-branch` | A push that writes the default branch: `protected_branches` (default `main`, `master`) or the remote's HEAD as git knows it locally. `--all`, `--mirror` and wildcard refspecs count. |
 | `stop-release` | A tag push, `gh release create/upload/edit/delete`, and `gh api` writes to a releases endpoint. |
-| `stop-publish` | `npm publish`, `twine upload`, `cargo publish`, `docker push` and similar. `--dry-run` is allowed. |
+| `stop-publish` | `npm publish`, `twine upload`, `cargo publish`, `docker push` and similar. `--dry-run` is allowed. `stop_list.publish_commands` replaces the whole list, so include the defaults you still want. |
 | `stop-force-push` | `git push --force`, `-f` or a `+refspec`. `--force-with-lease` to a feature branch is allowed. |
 
 Sending messages, spending money, migrations and product calls cannot be read reliably from a

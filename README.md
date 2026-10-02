@@ -157,8 +157,9 @@ Everything works without configuration. Invalid values fail loudly rather than f
 branch, a tag push or `gh release` write, a package publish, and `--dangerously-skip-permissions`.
 Opening or merging a PR asks nothing. Turn one off with its id in `disable_builtins` in
 `.goodfellow/guards.json` (see [the example](configs/guards.example.json)), where you can also add
-your project's own `block` rules. `python3 scripts/guard_engine.py --selfcheck` prints what is
-active. The full reference, including reviewers, memory backends and loops, is in
+your project's own `block` rules; those deny, and they win over a stop that would ask. The
+confirmation is Claude Code's own: a mode that auto-approves prompts may skip it.
+`python3 scripts/guard_engine.py --selfcheck` prints what is active. The full reference, including reviewers, memory backends and loops, is in
 [docs/configuration.md](docs/configuration.md).
 
 </details>

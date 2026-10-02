@@ -214,3 +214,32 @@ def test_hook_emits_ask_with_a_one_line_reason(repo):
     hs = json.loads(p.stdout)["hookSpecificOutput"]
     assert hs["permissionDecision"] == "ask"
     assert "\n" not in hs["permissionDecisionReason"]
+
+
+def test_a_project_block_rule_still_denies_when_a_stop_would_ask(repo):
+    """The project's own block rules win: a matching stop must not turn a
+    forbidden action into a confirmation."""
+    cfg = {"block": [{"id": "no-publish", "pattern": "npm publish", "reason": "never"}]}
+    d = decide(
+        {"tool_name": "Bash", "tool_input": {"command": "npm publish"}, "cwd": str(repo)},
+        str(repo),
+        config=cfg,
+    )
+    assert d is not None and d[0] == "deny" and "no-publish" in d[1]
+
+
+def test_config_env_that_can_redirect_a_push_asks(repo):
+    """`--config-env` takes a setting from an environment variable the hook cannot
+    read, so where the push lands is unknown: ask rather than guess."""
+    cmd = "git --config-env=remote.origin.push=PUSH_REFS push origin"
+    assert "stop-default-branch" in ask(repo, cmd)
+
+
+def test_the_example_config_keeps_every_default_publish_command(tmp_path):
+    example = os.path.join(os.path.dirname(HERE), "configs", "guards.example.json")
+    with open(example) as fh:
+        cfg = json.load(fh)
+    publishes = stop_list._command_list(
+        cfg, "publish_commands", stop_list.DEFAULT_PUBLISH_COMMANDS
+    )
+    assert set(stop_list.DEFAULT_PUBLISH_COMMANDS) <= set(publishes)

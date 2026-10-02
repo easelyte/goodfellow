@@ -5,10 +5,6 @@
 
   "disable_builtins": [],
 
-  "stop_list": {
-    "publish_commands": ["npm publish", "twine upload", "make release"]
-  },
-
   "block": [
     {
       "id": "no-prod-db-writes",

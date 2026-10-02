@@ -645,6 +645,13 @@ def decide(
     protected = config.get("protected_branches", list(DEFAULT_PROTECTED_BRANCHES))
     disabled = config.get("disable_builtins", [])
 
+    # The project's own rules come first: a stop that would ask must never turn
+    # an action the project forbids into a confirmation.
+    text = extract_text(tool_name, tool_input)
+    reason = check_user_rules(text, tool_name, config.get("block", []))
+    if reason:
+        return "deny", reason
+
     if tool_name == "Bash":
         command = tool_input.get("command", "") or ""
         reason = evaluate_builtins(command, protected, disabled)
@@ -655,10 +662,7 @@ def decide(
         )
         if reason:
             return "ask", reason
-
-    text = extract_text(tool_name, tool_input)
-    reason = check_user_rules(text, tool_name, config.get("block", []))
-    return ("deny", reason) if reason else None
+    return None
 
 
 def decision_for_input(hook_input: dict, project_dir: str) -> Optional[str]:
