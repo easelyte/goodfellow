@@ -221,7 +221,11 @@ def test_a_project_block_rule_still_denies_when_a_stop_would_ask(repo):
     forbidden action into a confirmation."""
     cfg = {"block": [{"id": "no-publish", "pattern": "npm publish", "reason": "never"}]}
     d = decide(
-        {"tool_name": "Bash", "tool_input": {"command": "npm publish"}, "cwd": str(repo)},
+        {
+            "tool_name": "Bash",
+            "tool_input": {"command": "npm publish"},
+            "cwd": str(repo),
+        },
         str(repo),
         config=cfg,
     )
@@ -243,3 +247,11 @@ def test_the_example_config_keeps_every_default_publish_command(tmp_path):
         cfg, "publish_commands", stop_list.DEFAULT_PUBLISH_COMMANDS
     )
     assert set(stop_list.DEFAULT_PUBLISH_COMMANDS) <= set(publishes)
+
+
+def test_config_env_push_still_asks_when_only_the_release_stop_is_on(repo):
+    cmd = "git --config-env=remote.origin.push=PUSH_REFS push origin"
+    reason = ask(repo, cmd, {"disable_builtins": ["stop-default-branch"]})
+    assert reason and "stop-release" in reason
+    both_off = {"disable_builtins": ["stop-default-branch", "stop-release"]}
+    assert ask(repo, cmd, both_off) is None
