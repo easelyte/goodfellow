@@ -191,3 +191,35 @@ def test_mutation_check_tests_cannot_write_outside_the_copy(tmp_path):
     assert data["sandbox"] == "bwrap", proc.stderr
     assert data["ran"] > 0
     assert not outside.exists(), "a test under mutation_check wrote to the host"
+
+
+@needs_live
+@pytest.mark.parametrize("gate", ["red", "mutation"])
+def test_credentials_in_the_environment_do_not_reach_tests(tmp_path, gate):
+    body = "    import os\n    assert os.environ.get('GH_TOKEN') is None\n    assert f() == 2\n"
+    repo, base = _repo(tmp_path, body)
+    env = _env(GH_TOKEN="canary-token")
+    proc = _red(repo, base, env) if gate == "red" else _mut(repo, base, env)
+    assert proc.returncode in (0, 1), proc.stdout + proc.stderr
+    data = json.loads(proc.stdout)
+    if gate == "red":
+        assert [r["verdict"] for r in data["results"]] == ["OK"], data
+    else:
+        assert data["ran"] > 0, data
+
+
+@needs_live
+def test_red_check_tests_cannot_read_a_checkout_on_path(tmp_path):
+    repo, base = _repo(tmp_path, "    assert f() == 2\n")
+    (repo / "secret.env").write_text("TOKEN=s3cret")  # untracked, never copied
+    body = (
+        f"    import os\n    assert not os.path.exists({str(repo / 'secret.env')!r})\n"
+        "    assert f() == 2\n"
+    )
+    _commit(
+        repo, {"test_gate.py": "from gate import f\n\n\ndef test_f():\n" + body}, "read"
+    )
+    env = _env(PATH=f"{repo}{os.pathsep}{os.environ['PATH']}")
+    proc = _red(repo, base, env)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert [r["verdict"] for r in json.loads(proc.stdout)["results"]] == ["OK"]

@@ -192,3 +192,72 @@ def test_ship_final_head_check_uses_the_mapper():
     assert "DELTA=$BASE MODE=full" in section, (
         "a mapper failure must review the whole branch"
     )
+
+
+def _final_head_block() -> str:
+    ship = (
+        Path(__file__).resolve().parents[1] / "skills" / "ship" / "SKILL.md"
+    ).read_text()
+    section = ship.split("### Final-HEAD check", 1)[1].split("\n## ", 1)[0]
+    return section.split("```bash\n", 1)[1].split("```", 1)[0]
+
+
+def _run_final_head(
+    repo: Path, tmp_path: Path, last: str, base: str
+) -> tuple[int, str]:
+    """Execute the skill's own final-HEAD shell block with a stub review bridge
+    that records the base it was asked to review."""
+    root = tmp_path / "plugin"
+    (root / "scripts").mkdir(parents=True)
+    (root / "scripts" / "review_delta.py").symlink_to(SCRIPT)
+    calls = tmp_path / "bridge-calls"
+    (root / "scripts" / "codex-bridge.sh").write_text(
+        f'#!/bin/bash\necho "$*" >> {calls}\necho /tmp/review-artifact.md\n'
+    )
+    block = _final_head_block().replace("<last-reviewed-sha>", last)
+    p = subprocess.run(
+        ["bash", "-c", block],
+        cwd=repo,
+        env={**__import__("os").environ, "CLAUDE_PLUGIN_ROOT": str(root), "BASE": base},
+        capture_output=True,
+        text=True,
+    )
+    return p.returncode, calls.read_text() if calls.exists() else ""
+
+
+def test_final_head_block_reviews_only_the_fix(repo: Path, tmp_path: Path):
+    last = git(repo, "rev-parse", "HEAD")
+    commit(repo, "c.py", "c = 3\n", "fix")
+    rc, calls = _run_final_head(repo, tmp_path, last, "main")
+    assert rc == 0
+    assert calls.split() == ["--kind", "diff", "--base", last]
+
+
+def test_final_head_block_reviews_the_rebased_delta(repo: Path, tmp_path: Path):
+    last = git(repo, "rev-parse", "HEAD")
+    commit(repo, "c.py", "c = 3\n", "fix")
+    main_gains(repo)
+    git(repo, "rebase", "-q", "main")
+    rc, calls = _run_final_head(repo, tmp_path, last, "main")
+    assert rc == 0
+    assert calls.split() == [
+        "--kind",
+        "diff",
+        "--base",
+        git(repo, "rev-parse", "HEAD~1"),
+    ]
+
+
+def test_final_head_block_skips_only_when_nothing_is_new(repo: Path, tmp_path: Path):
+    last = git(repo, "rev-parse", "HEAD")
+    rc, calls = _run_final_head(repo, tmp_path, last, "main")
+    assert rc == 0 and calls == ""
+
+
+def test_final_head_block_reviews_everything_when_the_mapper_fails(
+    repo: Path, tmp_path: Path
+):
+    last = git(repo, "rev-parse", "HEAD")
+    commit(repo, "c.py", "c = 3\n", "fix")
+    rc, calls = _run_final_head(repo, tmp_path, last, "no-such-base")
+    assert calls.split() == ["--kind", "diff", "--base", "no-such-base"]

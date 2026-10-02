@@ -15,7 +15,8 @@ process. So every test command these gates run goes through bubblewrap
     all read-only. /tmp, /var/tmp and /run are private and empty, and HOME is a
     private directory. The only host directory the tests can write is the
     gate's own throwaway copy. Your home directory, your checkout and your
-    credentials are not mounted at all.
+    credentials are not mounted at all, and nothing that contains them is;
+  - a minimal environment: credentials in environment variables are dropped.
 
 Before the first test runs, a probe runs through the same wrapper and must
 show a private PID namespace, no write reaching your home directory or your
@@ -32,6 +33,10 @@ Configuration:
                           user namespaces).
   GOODFELLOW_SANDBOX_RO   extra read-only paths, separated by ":" (a toolchain
                           outside /usr, a shared fixture directory).
+  GOODFELLOW_SANDBOX_ENV  extra environment variable names the tests keep,
+                          comma-separated. By default a sandboxed test sees
+                          only PATH, locale, terminal and Python variables:
+                          tokens and keys in your environment are dropped.
   GOODFELLOW_BWRAP        path to the bwrap binary (default: found on PATH).
 
 The network is not isolated: tests that need a local service keep working.
@@ -111,8 +116,13 @@ def _is_ancestor_or_same(a: Path, b: Path) -> bool:
     return a == b or a in b.parents
 
 
-def readonly_paths(environ=os.environ) -> List[str]:
-    """Host paths mounted read-only, besides /usr, the system links and /etc."""
+def readonly_paths(environ=os.environ, guarded: Sequence[Path] = ()) -> List[str]:
+    """Host paths mounted read-only, besides /usr, the system links and /etc.
+
+    Never / and never a directory that contains (or is) the home directory or a
+    `guarded` one (the user's checkout): mounting it would expose every file in
+    it, however private. A directory INSIDE one (a virtualenv in the checkout,
+    ~/.local/bin) exposes only itself."""
     cands: List[str] = [
         sys.prefix,
         sys.base_prefix,
@@ -130,23 +140,55 @@ def readonly_paths(environ=os.environ) -> List[str]:
     cands += [p for p in environ.get("PATH", "").split(os.pathsep) if p]
     extra = [p for p in environ.get(RO_ENV, "").split(os.pathsep) if p]
     home = _home()
+    protect = [Path("/")] + [Path(g).resolve() for g in guarded]
+    if home is not None:
+        protect.append(home)
+
+    def exposes(real: Path) -> bool:
+        return any(_is_ancestor_or_same(real, g) for g in protect)
+
     out: List[str] = []
     for c in cands:
         if not os.path.isabs(c) or not os.path.isdir(c):
             continue
         real = Path(c).resolve()
-        # Never mount / or an ancestor of the home directory: that would expose
-        # every file the user can read.
-        if real == Path("/") or (home is not None and _is_ancestor_or_same(real, home)):
-            continue
-        if str(real) not in out:
+        if not exposes(real) and str(real) not in out:
             out.append(str(real))
     for c in extra:
         if not os.path.isabs(c):
             raise SandboxError(f"{RO_ENV} entries must be absolute paths: {c!r}")
-        if os.path.exists(c) and str(Path(c).resolve()) not in out:
-            out.append(str(Path(c).resolve()))
+        if not os.path.exists(c):
+            continue
+        real = Path(c).resolve()
+        if exposes(real):
+            raise SandboxError(
+                f"{RO_ENV} entry {c!r} would expose the root, your home directory or "
+                "the checkout; list the specific directories the tests need instead"
+            )
+        if str(real) not in out:
+            out.append(str(real))
     return out
+
+
+# Variables a sandboxed test command keeps; everything else (tokens, keys,
+# session credentials) is dropped. GOODFELLOW_SANDBOX_ENV adds names.
+ENV_ALLOWLIST = frozenset(
+    {
+        "PATH", "LANG", "LANGUAGE", "TZ", "TERM", "COLUMNS", "LINES", "CI",
+        "PYTHONPATH", "PYTHONDONTWRITEBYTECODE", "PYTHONHASHSEED",
+        "PYTHONIOENCODING", "PYTHONUTF8", "PYTHONWARNINGS", "VIRTUAL_ENV",
+        "CONDA_PREFIX", "GIT_CEILING_DIRECTORIES", "NO_COLOR", "FORCE_COLOR",
+    }
+)  # fmt: skip
+ENV_EXTRA = "GOODFELLOW_SANDBOX_ENV"
+
+
+def sandbox_env(env: dict) -> dict:
+    """The environment a sandboxed test command gets: the allowlist, LC_*, and
+    the names in GOODFELLOW_SANDBOX_ENV (comma-separated)."""
+    extra = {n.strip() for n in env.get(ENV_EXTRA, "").split(",") if n.strip()}
+    keep = ENV_ALLOWLIST | extra
+    return {k: v for k, v in env.items() if k in keep or k.startswith("LC_")}
 
 
 @dataclass
@@ -200,6 +242,11 @@ class Sandbox:
             a += ["--bind", str(w), str(w)]
         a += ["--chdir", str(cwd), "--"]
         return a
+
+    def env(self, env: dict) -> dict:
+        """The environment for a wrapped command: credentials dropped (see
+        sandbox_env). Unchanged with mode 'off'."""
+        return sandbox_env(env) if self.isolated else env
 
     def wrap(self, cmd: str, writable: Sequence[Path], cwd: Path) -> str:
         """A shell command line that runs `cmd` (itself a shell command) inside
@@ -283,14 +330,30 @@ def create(
         raise SandboxError(
             "no test sandbox: bwrap (bubblewrap) not found. " + _install_hint()
         )
-    sb = Sandbox(mode="bwrap", bwrap=bwrap, ro=readonly_paths(environ))
     home = _home()
     guarded = [Path(c).resolve() for c in canaries]
     if home is not None:
         guarded.append(home)
     guarded = [g for g in dict.fromkeys(guarded) if g.is_dir()]
+    sb = Sandbox(mode="bwrap", bwrap=bwrap, ro=readonly_paths(environ, guarded))
+    # Paths that must be invisible inside: the usual credential locations, and
+    # a few real entries of each guarded directory (so a mount that exposes the
+    # checkout or the home directory is caught by what the tests can read, not
+    # only by what they can write). Entries holding a read-only mount are
+    # skipped: their mounted part is visible by design.
     secrets = [str(home / s) for s in SECRET_HOME_PATHS] if home else []
     secrets = [s for s in secrets if os.path.lexists(s)]
+    for g in guarded:
+        try:
+            names = sorted(os.listdir(g))
+        except OSError:
+            continue
+        sample = [
+            str(g / n)
+            for n in names
+            if not any(_is_ancestor_or_same(g / n, Path(r)) for r in sb.ro)
+        ]
+        secrets += [s for s in sample[:3] if s not in secrets]
     marker = f".goodfellow-sandbox-probe-{uuid.uuid4().hex}"
     with tempfile.TemporaryDirectory(prefix="goodfellow-probe-") as d:
         probe_dir = Path(d)
@@ -299,7 +362,13 @@ def create(
             str(len(guarded)), *map(str, guarded), *secrets,
         ]  # fmt: skip
         try:
-            p = run(cmd, capture_output=True, text=True, timeout=60)
+            p = run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=60,
+                env=sb.env(dict(environ)),
+            )
             rc, out = (
                 p.returncode,
                 (p.stdout or "") + ((p.stderr or "") if p.returncode else ""),

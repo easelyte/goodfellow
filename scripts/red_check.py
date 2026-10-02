@@ -268,6 +268,8 @@ def run_tests(
         cmd = sb.wrap(cmd, [scratch or cwd], cwd)
     env = dict(os.environ)
     env.pop("PYTHONPATH", None)
+    if sb is not None:
+        env = sb.env(env)  # credentials in the environment stay outside
     rc, _out, _err = proc_group.run(cmd, cwd, env, timeout, sweep=True)
     if rc is None:
         return None

@@ -199,3 +199,31 @@ def test_no_sample_mutates_everything(tmp_path):
     )
     assert data["mutants"] == len(_mutants(src))
     assert "sampled" not in data
+
+
+def test_sampling_boundary_is_strictly_more_than_400_lines():
+    assert (mc.DEFAULT_SAMPLE, mc.DEFAULT_SAMPLE_MIN_LINES) == (150, 400)
+    exact = _big_module(100)  # exactly 400 lines
+    assert len(exact.splitlines()) == 400
+    muts = _mutants(exact)
+    assert len(muts) > 150
+    kept, info = mc.sample_mutants(
+        "edge.py",
+        exact,
+        True,
+        muts,
+        k=mc.DEFAULT_SAMPLE,
+        min_lines=mc.DEFAULT_SAMPLE_MIN_LINES,
+    )
+    assert kept == muts and info is None
+    over = exact + "X = 1\n"  # 401 lines
+    muts = _mutants(over)
+    kept, info = mc.sample_mutants(
+        "edge.py",
+        over,
+        True,
+        muts,
+        k=mc.DEFAULT_SAMPLE,
+        min_lines=mc.DEFAULT_SAMPLE_MIN_LINES,
+    )
+    assert len(kept) == 150 and info["population"] == len(muts)

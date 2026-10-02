@@ -30,7 +30,8 @@ aliases are gone, and the checks need bubblewrap (or an explicit opt-out). Both 
 - **The red and mutation checks run tests in a sandbox (behaviour change).** Every test command
   goes through [bubblewrap](https://github.com/containers/bubblewrap) with a private PID namespace
   and a filesystem allowlist; the only writable host directory is the check's own throwaway copy,
-  and your home directory, checkout and credentials are not mounted. If `bwrap` is missing or a
+  your home directory, checkout and credentials are not mounted, and tokens in your environment
+  are dropped (`GOODFELLOW_SANDBOX_ENV` keeps named variables). If `bwrap` is missing or a
   probe shows it does not isolate, the check exits 2 and runs nothing; it never falls back to
   running unisolated. On Linux, install `bubblewrap`. On macOS or in a container without user
   namespaces, set `GOODFELLOW_SANDBOX=off` to run the tests unisolated, knowingly; every run warns.

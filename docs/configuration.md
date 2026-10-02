@@ -26,6 +26,7 @@ values fail loudly rather than falling back.
 | `GOODFELLOW_GUARDS` | `1` | `0` turns off the built-in guards and the stop list. Project rules still apply. |
 | `GOODFELLOW_SANDBOX` | `bwrap` | The test sandbox for the red and mutation checks (see below). `off` runs their tests unisolated, knowingly. |
 | `GOODFELLOW_SANDBOX_RO` | unset | Extra read-only paths inside the sandbox, separated by `:`. |
+| `GOODFELLOW_SANDBOX_ENV` | unset | Extra environment variable names the sandboxed tests keep, comma-separated. |
 | `GOODFELLOW_BWRAP` | `bwrap` on `PATH` | Path to the bubblewrap binary. |
 | `GOODFELLOW_TRIAGE_RETENTION_DAYS` | `90` | Days to keep closed triage entries. |
 | `GOODFELLOW_RUNS_RETENTION_DAYS` | `90` | Days to keep autopilot run logs. |
@@ -100,11 +101,15 @@ through [bubblewrap](https://github.com/containers/bubblewrap) (`bwrap`):
   `/etc` files, the Python interpreter and its site-packages, the directories on `PATH`, and
   anything in `GOODFELLOW_SANDBOX_RO`. `/tmp`, `/var/tmp`, `/run` and `HOME` are private and empty.
   The only writable host directory is the check's own throwaway copy. Your home directory, your
-  checkout and your credentials are not mounted.
+  checkout and your credentials are not mounted, and neither is any directory that contains them
+  (a `PATH` entry that does is skipped; a `GOODFELLOW_SANDBOX_RO` entry that does is refused).
+- **A minimal environment.** Tests keep `PATH`, locale, terminal and Python variables; tokens and
+  keys in your environment are dropped. `GOODFELLOW_SANDBOX_ENV` names any others they need.
 
 Before the first test runs, a probe goes through the same wrapper. It must show a private PID
-namespace, no write reaching your home directory or your checkout, and none of the usual
-credential paths (`~/.ssh`, `~/.aws`, `~/.config/gh`, ...). If `bwrap` is missing or the probe
+namespace, no write reaching your home directory or your checkout, and nothing readable from
+either: neither the usual credential paths (`~/.ssh`, `~/.aws`, `~/.config/gh`, ...) nor files
+in your checkout. If `bwrap` is missing or the probe
 fails, the check exits 2 and runs nothing. There is no silent fallback.
 
 - **Linux:** install bubblewrap (`apt install bubblewrap`, `dnf install bubblewrap`,

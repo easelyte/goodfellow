@@ -214,3 +214,67 @@ def test_live_python_and_pytest_run(tmp_path):
     (tmp_path / "test_x.py").write_text("def test_x():\n    assert 1\n")
     p = _run(LIVE, f"{sys.executable} -m pytest -q -p no:cacheprovider", tmp_path)
     assert p.returncode == 0, p.stdout + p.stderr
+
+
+# --- nothing that contains the checkout or home is mounted ------------------
+
+
+def test_path_entries_exposing_a_guarded_dir_are_not_mounted(monkeypatch, tmp_path):
+    monkeypatch.setattr(sandbox, "_home", lambda: None)
+    checkout = tmp_path / "work" / "repo"
+    (checkout / ".venv" / "bin").mkdir(parents=True)
+    env = {
+        "PATH": os.pathsep.join(
+            [str(checkout), str(tmp_path / "work"), str(checkout / ".venv" / "bin")]
+        )
+    }
+    ro = sandbox.readonly_paths(env, [checkout])
+    assert str(checkout.resolve()) not in ro
+    assert str((tmp_path / "work").resolve()) not in ro
+    assert str((checkout / ".venv" / "bin").resolve()) in ro  # inside: only itself
+
+
+def test_explicit_extra_that_exposes_the_checkout_is_refused(monkeypatch, tmp_path):
+    monkeypatch.setattr(sandbox, "_home", lambda: None)
+    checkout = tmp_path / "repo"
+    checkout.mkdir()
+    with pytest.raises(sandbox.SandboxError, match="expose"):
+        sandbox.readonly_paths(
+            {"PATH": "", "GOODFELLOW_SANDBOX_RO": str(tmp_path)}, [checkout]
+        )
+
+
+def test_environment_credentials_are_dropped():
+    env = {
+        "PATH": "/usr/bin",
+        "LC_ALL": "C.UTF-8",
+        "GH_TOKEN": "canary",
+        "AWS_SECRET_ACCESS_KEY": "canary",
+        "MY_FIXTURE_DIR": "/data",
+        "GOODFELLOW_SANDBOX_ENV": "MY_FIXTURE_DIR",
+    }
+    out = sandbox.sandbox_env(env)
+    assert out["PATH"] == "/usr/bin" and out["LC_ALL"] == "C.UTF-8"
+    assert "GH_TOKEN" not in out and "AWS_SECRET_ACCESS_KEY" not in out
+    assert out["MY_FIXTURE_DIR"] == "/data"
+    assert sandbox.Sandbox(mode="off").env(env) == env
+
+
+@needs_live
+def test_live_checkout_on_path_stays_invisible(tmp_path):
+    checkout = tmp_path / "repo"
+    checkout.mkdir()
+    (checkout / "secret.env").write_text("TOKEN=s3cret")
+    env = {**os.environ, "PATH": f"{checkout}{os.pathsep}{os.environ['PATH']}"}
+    sb = sandbox.create([checkout], environ={**env, "GOODFELLOW_SANDBOX": "bwrap"})
+    w = tmp_path / "w"
+    w.mkdir()
+    p = subprocess.run(
+        sb.wrap(f"cat {checkout}/secret.env || echo hidden", [w], w),
+        shell=True,
+        capture_output=True,
+        text=True,
+        env=sb.env(env),
+        timeout=60,
+    )
+    assert "s3cret" not in p.stdout and "hidden" in p.stdout

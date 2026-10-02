@@ -629,6 +629,8 @@ def run_tests(
     env["GIT_CEILING_DIRECTORIES"] = str(cwd.parent)
     if workdir is not None and env.get("PYTHONPATH"):
         env["PYTHONPATH"] = remap_pythonpath(env["PYTHONPATH"], workdir, cwd)
+    if sb is not None:
+        env = sb.env(env)  # credentials in the environment stay outside
     rc, _out, _err = proc_group.run(cmd, cwd, env, timeout, sweep=True)
     if rc is None:
         return "timeout"
