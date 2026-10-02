@@ -11,7 +11,7 @@ afterwards at the commits that declared them, without Releases. See [RELEASING.m
 
 ## [Unreleased]
 
-## [0.4.1] - 2026-10-01
+## [0.4.1] - 2026-10-02
 
 The red and mutation checks now run your tests in a sandbox, the mutation check stops counting a
 slow machine as a kill, and the final review survives a rebase. **Heads up:** the old skill
