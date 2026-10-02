@@ -151,10 +151,11 @@ def test_mutation_signal_target_still_needs_explicit_consent(tmp_path):
         },
         "signals",
     )
-    for env in (_env(GOODFELLOW_SANDBOX="off"), _env()):
-        proc = _mut(repo, base, env)
+    proc = _mut(repo, base, _env(GOODFELLOW_SANDBOX="off"))
+    assert proc.returncode == 2 and "--isolated" in proc.stderr, proc.stderr
+    if _live_ok():  # without bwrap the default run stops earlier, at the sandbox
+        proc = _mut(repo, base, _env())
         assert proc.returncode == 2 and "--isolated" in proc.stderr, proc.stderr
-    if _live_ok():
         proc = _mut(repo, base, _env(), "--isolated")
         assert proc.returncode in (0, 1), proc.stderr
         data = json.loads(proc.stdout)
