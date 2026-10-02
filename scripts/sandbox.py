@@ -395,7 +395,12 @@ def create(
     guarded = [Path(c).resolve() for c in canaries]
     if home is not None:
         guarded.append(home)
-    guarded = [g for g in dict.fromkeys(guarded) if g.is_dir()]
+    # A directory this process cannot write is no leak target for a sandbox that
+    # runs as the same user (inside a user namespace, HOME can be /root owned by
+    # nobody): skip it rather than crash on the host-side check.
+    guarded = [
+        g for g in dict.fromkeys(guarded) if g.is_dir() and os.access(g, os.W_OK)
+    ]
     sb = Sandbox(mode="bwrap", bwrap=bwrap, ro=readonly_paths(environ, guarded))
     # Paths that must be invisible inside: the usual credential locations, and
     # a few real entries of each guarded directory (so a mount that exposes the

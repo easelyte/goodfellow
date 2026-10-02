@@ -344,3 +344,32 @@ def test_a_missing_bwrap_override_is_a_configuration_error(tmp_path):
             allow_missing=True,
         )
     assert not isinstance(exc.value, sandbox.SandboxMissing)
+
+
+def test_an_unreadable_home_does_not_crash_the_probe(tmp_path, monkeypatch):
+    """Inside a user namespace the home directory can be one the process cannot
+    read (uid 0 mapped, /root owned by nobody). A directory we cannot write is no
+    leak target for a sandbox running as us: skip it, never crash."""
+    home = tmp_path / "root"
+    home.mkdir()
+    home.chmod(0o000)
+    monkeypatch.setattr(sandbox, "_home", lambda: home)
+
+    class Done:
+        returncode = 0
+        stdout = json.dumps(
+            {"nprocs": 3, "driver_visible": False, "visible": [], "cwd_writable": True}
+        )
+        stderr = ""
+
+    fake = tmp_path / "bwrap"
+    fake.write_text("")
+    try:
+        sb = sandbox.create(
+            [],
+            environ={"PATH": "/usr/bin", "GOODFELLOW_BWRAP": str(fake)},
+            run=lambda *a, **k: Done(),
+        )
+    finally:
+        home.chmod(0o700)
+    assert sb.isolated
