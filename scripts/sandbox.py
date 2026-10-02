@@ -395,12 +395,12 @@ def create(
     guarded = [Path(c).resolve() for c in canaries]
     if home is not None:
         guarded.append(home)
-    # A directory this process cannot write is no leak target for a sandbox that
-    # runs as the same user (inside a user namespace, HOME can be /root owned by
-    # nobody): skip it rather than crash on the host-side check.
-    guarded = [
-        g for g in dict.fromkeys(guarded) if g.is_dir() and os.access(g, os.W_OK)
-    ]
+    guarded = [g for g in dict.fromkeys(guarded) if g.is_dir()]
+    # Every guarded directory stays out of the mounts and is sampled for read
+    # exposure. Only the write-marker check skips the ones this process cannot
+    # write (inside a user namespace HOME can be /root owned by nobody): they are
+    # no write target for a sandbox running as us, and the check would crash.
+    markable = [g for g in guarded if os.access(g, os.W_OK)]
     sb = Sandbox(mode="bwrap", bwrap=bwrap, ro=readonly_paths(environ, guarded))
     # Paths that must be invisible inside: the usual credential locations, and
     # a few real entries of each guarded directory (so a mount that exposes the
@@ -425,7 +425,7 @@ def create(
         probe_dir = Path(d)
         cmd = sb.argv([probe_dir], probe_dir) + [
             sys.executable, "-c", _PROBE, marker, str(os.getpid()),
-            str(len(guarded)), *map(str, guarded), *secrets,
+            str(len(markable)), *map(str, markable), *secrets,
         ]  # fmt: skip
         try:
             p = run(
@@ -442,7 +442,7 @@ def create(
         except (OSError, subprocess.TimeoutExpired) as exc:
             rc, out = 1, repr(exc)
     problems = probe_problems(rc, out)
-    for g in guarded:  # the host's own view decides, not the probe's report
+    for g in markable:  # the host's own view decides, not the probe's report
         leak = g / marker
         if leak.exists():
             leak.unlink()

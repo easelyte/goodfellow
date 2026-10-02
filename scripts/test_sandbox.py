@@ -373,3 +373,38 @@ def test_an_unreadable_home_does_not_crash_the_probe(tmp_path, monkeypatch):
     finally:
         home.chmod(0o700)
     assert sb.isolated
+
+
+def test_a_read_only_checkout_is_still_guarded_from_mounts(tmp_path, monkeypatch):
+    monkeypatch.setattr(sandbox, "_home", lambda: None)
+    checkout = tmp_path / "repo"
+    checkout.mkdir()
+    (checkout / "secret.env").write_text("x")
+    checkout.chmod(0o555)
+
+    class Done:
+        returncode = 0
+        stdout = json.dumps(
+            {"nprocs": 3, "driver_visible": False, "visible": [], "cwd_writable": True}
+        )
+        stderr = ""
+
+    seen = {}
+
+    def run(cmd, **_k):
+        seen["cmd"] = cmd
+        return Done()
+
+    fake = tmp_path / "bwrap"
+    fake.write_text("")
+    try:
+        sb = sandbox.create(
+            [checkout],
+            environ={"PATH": f"{checkout}:/usr/bin", "GOODFELLOW_BWRAP": str(fake)},
+            run=run,
+        )
+    finally:
+        checkout.chmod(0o755)
+    assert str(checkout.resolve()) not in sb.ro
+    # the probe still checks that the checkout's files are invisible
+    assert str(checkout.resolve() / "secret.env") in seen["cmd"]
