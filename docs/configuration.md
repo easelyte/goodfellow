@@ -121,9 +121,10 @@ fails, the check exits 2 and runs nothing. There is no silent fallback.
 - **Tests that need files outside the allowlist** (a toolchain under `/opt`, fixtures elsewhere):
   add the paths to `GOODFELLOW_SANDBOX_RO`. The network is not isolated.
 
-With the sandbox on, the mutation check accepts targets that signal or spawn processes without
-`--isolated`, because every run already has its own PID namespace. Targets that delete or write
-files still need `--fakes`.
+The sandbox does not isolate the network. So the mutation check still asks for `--isolated` (or
+`--fakes`) before it mutates code that signals or spawns processes: with the sandbox every run
+already has its own PID namespace, but a mutant of code that spawns `curl` could still reach a
+local service. Targets that delete or write files need `--fakes`.
 
 ## Knowledge and memory backends
 

@@ -293,3 +293,11 @@ def test_completion_is_proven_by_the_inner_shell_only():
 def test_live_wrapped_command_reports_completion_and_keeps_its_exit_code(tmp_path):
     p = _run(LIVE, "exit 3", tmp_path)
     assert p.returncode == 3 and LIVE.completed(p.stderr)
+
+
+def test_start_and_completion_are_distinct_markers():
+    sb = sandbox.Sandbox(mode="bwrap", bwrap="bwrap")
+    started_only = f"goodfellow-sandbox-ran:{sb.nonce}:start\n"
+    assert sb.started(started_only) and not sb.completed(started_only)
+    assert not sb.started("")
+    assert sandbox.Sandbox(mode="off").started("")

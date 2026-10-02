@@ -41,9 +41,6 @@ aliases are gone, and the checks need bubblewrap (or an explicit opt-out). Both 
   `--timeout` still overrides), and is capped at what is left of `--budget`. A timeout counts as a
   kill only when its limit was at least three times that loaded runtime; otherwise it is
   `timeout_unverified` and the result is incomplete (exit 3) instead of a pass ([#35](https://github.com/easelyte/goodfellow/pull/35)).
-- With the sandbox on, mutation targets that signal or spawn processes no longer need
-  `--isolated`, since every test run has its own PID namespace. Targets that delete or write files
-  still need `--fakes` ([#35](https://github.com/easelyte/goodfellow/pull/35)).
 
 ### Added
 

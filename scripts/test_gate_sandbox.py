@@ -139,9 +139,10 @@ def test_opt_out_runs_unisolated_and_says_so(tmp_path, gate):
     assert json.loads(proc.stdout)["sandbox"] == "off"
 
 
-def test_mutation_signal_target_needs_isolation_only_without_the_sandbox(tmp_path):
-    """A target that signals processes is refused unisolated (as before), and
-    runs in the sandbox, where every test run has its own PID namespace."""
+def test_mutation_signal_target_still_needs_explicit_consent(tmp_path):
+    """The sandbox isolates PIDs and files, not the network: a mutant of code
+    that spawns `curl` can still reach a live service. So a target that signals
+    or spawns processes needs --isolated or --fakes with or without it."""
     repo, base = _repo(tmp_path, "    assert f() == 2\n")
     _commit(
         repo,
@@ -150,10 +151,11 @@ def test_mutation_signal_target_needs_isolation_only_without_the_sandbox(tmp_pat
         },
         "signals",
     )
-    proc = _mut(repo, base, _env(GOODFELLOW_SANDBOX="off"))
-    assert proc.returncode == 2 and "--isolated" in proc.stderr
+    for env in (_env(GOODFELLOW_SANDBOX="off"), _env()):
+        proc = _mut(repo, base, env)
+        assert proc.returncode == 2 and "--isolated" in proc.stderr, proc.stderr
     if _live_ok():
-        proc = _mut(repo, base, _env())
+        proc = _mut(repo, base, _env(), "--isolated")
         assert proc.returncode in (0, 1), proc.stderr
         data = json.loads(proc.stdout)
         assert data["sandbox"] == "bwrap" and data["pid_namespace"] is True
@@ -268,3 +270,27 @@ def test_red_check_fails_closed_when_the_sandbox_breaks_on_the_base_run(tmp_path
     proc = _red(repo, base, _env(GOODFELLOW_BWRAP=str(fake)))
     assert proc.returncode == 2, proc.stdout + proc.stderr
     assert "sandbox" in proc.stderr
+
+
+@needs_live
+def test_a_sandbox_that_stalls_before_the_tests_start_is_never_a_kill(tmp_path):
+    """A timeout proves a hang only if the tests started. bwrap stalling in its
+    own setup is a runner error, never a killed mutant."""
+    import shutil
+
+    real = shutil.which("bwrap")
+    count = tmp_path / "calls"
+    fake = tmp_path / "stalling-bwrap"
+    fake.write_text(
+        "#!/bin/bash\n"
+        f"n=$(cat {count} 2>/dev/null || echo 0); n=$((n+1)); echo $n > {count}\n"
+        f'[ "$n" -le 2 ] && exec {real} "$@"\n'
+        "exec sleep 600\n"
+    )
+    fake.chmod(0o755)
+    repo, base = _repo(tmp_path, "    assert f() == 2\n")
+    proc = _mut(repo, base, _env(GOODFELLOW_BWRAP=str(fake)), "--timeout", "4")
+    data = json.loads(proc.stdout)
+    assert data["killed"] == 0, data
+    assert data["runner_errors"] == data["mutants"] > 0
+    assert proc.returncode == 3, proc.stderr

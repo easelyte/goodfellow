@@ -25,9 +25,10 @@ and reports every mutant the tests fail to notice (a SURVIVOR).
     resources outside a fake or an isolated namespace. A mutant can turn "kill
     our child" into "kill every process on the machine", and a sandbox copy of
     the files does not contain that. A target that signals or spawns processes
-    runs only with the sandbox (each run has its own PID namespace), or, with
-    the sandbox off, with --isolated (the whole check runs inside a private
-    PID namespace) or --fakes; a target that
+    needs --isolated (with the sandbox every run already has its own PID
+    namespace; with GOODFELLOW_SANDBOX=off the whole check re-runs inside one)
+    or --fakes. Neither isolates the network: a mutant can still reach a local
+    service, so use fakes for code that calls one. A target that
     deletes or writes files needs --fakes (the tests replace those calls with
     fakes or temp directories), because a PID namespace does not protect the
     filesystem.
@@ -633,7 +634,8 @@ def run_tests(
         env = sb.env(env)  # credentials in the environment stay outside
     rc, _out, err = proc_group.run(cmd, cwd, env, timeout, sweep=True)
     if rc is None:
-        return "timeout"
+        # a timeout proves a hang only if the tests started at all
+        return "timeout" if sb is None or sb.started(err) else "error"
     if sb is not None and not sb.completed(err):
         return "error"  # the sandbox failed, no test judged this run
     return status_for_returncode(rc, error_codes)
@@ -809,14 +811,17 @@ def check(a: argparse.Namespace, workdir: Path) -> dict:
     if summary["targets"] and not sb.isolated:
         print(sandbox.unisolated_warning("mutation-check"), file=sys.stderr)
     problems = []
-    if process_sites and not (sb.isolated or a.isolated or a.fakes):
+    # The sandbox contains PIDs and files but not the network, so a mutant of
+    # code that spawns (say) curl can still reach a live service: process and
+    # signal targets need explicit --isolated or --fakes either way.
+    if process_sites and not (a.isolated or a.fakes):
         problems.append(
             "signals or spawns processes (a mutant can aim it at every process "
             "on the machine):\n  "
             + "\n  ".join(process_sites)
-            + "\n  -> run with the sandbox (unset GOODFELLOW_SANDBOX), pass "
-            "--isolated to run the check inside its own PID namespace (unshare "
-            "--pid --fork --mount-proc), or use fakes and --fakes"
+            + "\n  -> pass --isolated to run every test inside its own PID "
+            "namespace (the sandbox already does; with GOODFELLOW_SANDBOX=off it "
+            "means unshare --pid --fork --mount-proc), or use fakes and --fakes"
         )
     if fs_sites and not a.fakes:
         problems.append(
@@ -1081,7 +1086,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         "(unshare --pid --fork --mount-proc), so mutants of code that signals or "
         "spawns processes can only see the check's own processes; fails closed if "
         "none can be made. With the sandbox (the default) every test run already "
-        "has its own PID namespace, so this is not needed",
+        "has its own PID namespace, and this flag only records your consent: "
+        "neither isolates the network",
     )
     ap.add_argument(
         "--fakes",

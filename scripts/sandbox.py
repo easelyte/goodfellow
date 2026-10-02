@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import pwd
 import shlex
 import shutil
@@ -258,7 +259,11 @@ class Sandbox:
         the sandbox. With mode 'off' it is `cmd` unchanged."""
         if not self.isolated:
             return cmd
-        inner = '/bin/sh -c "$1"; rc=$?; echo "%s:$rc" >&2; exit $rc' % self._tag()
+        tag = self._tag()
+        inner = (
+            f'echo "{tag}:start" >&2; /bin/sh -c "$1"; rc=$?; '
+            f'echo "{tag}:$rc" >&2; exit $rc'
+        )
         return shlex.join(
             [*self.argv(writable, cwd), "/bin/sh", "-c", inner, "sh", cmd]
         )
@@ -266,11 +271,18 @@ class Sandbox:
     def _tag(self) -> str:
         return f"goodfellow-sandbox-ran:{self.nonce}"
 
+    def started(self, stderr: str) -> bool:
+        """Did the shell inside the sandbox start? A timeout without this is
+        the sandbox stalling, not the tests: a runner error, never a kill."""
+        return not self.isolated or f"{self._tag()}:start" in (stderr or "")
+
     def completed(self, stderr: str) -> bool:
-        """Did the wrapped command actually run inside the sandbox? Always True
-        with mode 'off'. False means the sandbox itself failed: a runner error,
-        never a test result."""
-        return not self.isolated or self._tag() + ":" in (stderr or "")
+        """Did the wrapped command run to its end inside the sandbox? Always
+        True with mode 'off'. False means the sandbox itself failed: a runner
+        error, never a test result."""
+        if not self.isolated:
+            return True
+        return re.search(re.escape(self._tag()) + r":\d+\b", stderr or "") is not None
 
 
 _PROBE = r"""
