@@ -1,6 +1,6 @@
 ---
 name: review-doc
-description: Multi-round adversarial review of a spec or a plan — research injection, two reviewers with distinct lenses (Claude + Codex, or Claude alone), a verifier pass, and knowledge-file principle checking. `--spec <path>` hands off to plan; `--plan <path>` hands off to execute.
+description: "Multi-round adversarial review of a spec or a plan — research injection, two reviewers with distinct lenses (Claude + Codex, or Claude alone), a verifier pass, and knowledge-file principle checking. Use when someone says \"review my spec\", \"is the spec ready\", \"stress test this spec\", \"review my plan\", \"is the plan ready\", \"stress test this plan\", \"what could go wrong with this plan\" or \"poke holes in this design doc\". `--spec <path>` hands off to plan; `--plan <path>` hands off to execute."
 ---
 
 Review the document the operator indicated: $ARGUMENTS

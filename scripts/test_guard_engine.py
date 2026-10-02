@@ -19,9 +19,8 @@ from guard_engine import (
     BUILTIN_IDS,
     GuardConfigError,
     active_guard_set,
-    check_force_push_protected,
-    check_git_add_all,
     check_skip_permissions,
+    decide,
     decision_for_input,
     expand_segments,
     load_config,
@@ -36,7 +35,7 @@ HOOKS_JSON = os.path.join(os.path.dirname(HERE), "hooks", "hooks.json")
 def run_hook(payload, project_dir, env=None):
     """Invoke the engine as the harness does: JSON on stdin. Returns (rc, parsed_stdout_or_None)."""
     full_env = dict(os.environ)
-    for k in ("CLAUDE_HOOK_BYPASS", "GOODFELLOW_GUARDS", "CLAUDE_PROJECT_DIR"):
+    for k in ("CLAUDE_HOOK_BYPASS", "GOODFELLOW_STOP_LIST", "CLAUDE_PROJECT_DIR"):
         full_env.pop(k, None)
     if env:
         full_env.update(env)
@@ -69,42 +68,6 @@ def assert_denied(parsed, contains=None):
 # --------------------------------------------------------------------------- #
 # Built-in: git add -A / . / --all  (incl. bypass shapes)
 # --------------------------------------------------------------------------- #
-
-
-@pytest.mark.parametrize(
-    "cmd",
-    [
-        "git add -A",
-        "git add .",
-        "git add --all",
-        "git add -A src/",
-        "git -C /repo add --all",
-        "cd x && git add .",
-        "command git add -A",
-        "echo preparing\ngit add -A",  # multiline
-        "env git add -A",  # env wrapper
-        "FOO=bar git add -A",  # leading assignment
-        "sudo git add --all",  # sudo wrapper
-        "bash -c 'git add -A'",  # nested shell
-        'sh -lc "git add ."',  # nested login shell
-    ],
-)
-def test_git_add_all_denied(cmd):
-    assert check_git_add_all(expand_segments(cmd)) is not None
-
-
-@pytest.mark.parametrize(
-    "cmd",
-    [
-        "git add src/foo.py",
-        "git add path/to/file",
-        "git status",
-        "git commit -m 'add all the things'",  # 'all' in message, not a flag
-        "echo git add -A",  # not a git invocation
-    ],
-)
-def test_git_add_specific_allowed(cmd):
-    assert check_git_add_all(expand_segments(cmd)) is None
 
 
 # --------------------------------------------------------------------------- #
@@ -152,102 +115,24 @@ def test_skip_perms_not_checked_on_write_content():
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.parametrize(
-    "cmd",
-    [
-        "git push --force origin main",
-        "git push -f origin master",
-        "git push origin main --force",
-        "git push --force-with-lease origin main",
-        "git push -f origin HEAD:main",
-        "git push --force origin +main",
-        "git push origin +main",  # + refspec, no flag
-        "git push origin +HEAD:refs/heads/main",  # + refspec + full ref
-        "git push --force origin HEAD:refs/heads/main",  # full ref normalized
-    ],
-)
-def test_force_push_protected_denied(cmd):
-    assert (
-        check_force_push_protected(expand_segments(cmd), ["main", "master"]) is not None
-    )
-
-
-@pytest.mark.parametrize(
-    "cmd",
-    [
-        "git push --force origin feature-x",  # feature branch — legitimate
-        "git push -f origin my/topic",
-        "git push origin main",  # not forced
-        "git push",  # bare, no branch named
-        "git push -f",  # forced but no branch named -> not blocked
-        "git push origin +feature-x",  # + on a non-protected branch
-        "git push --force main feature-x",  # 'main' is the REMOTE, not a refspec
-        "git push -f main topic",  # remote named 'main'
-    ],
-)
-def test_force_push_non_protected_allowed(cmd):
-    assert check_force_push_protected(expand_segments(cmd), ["main", "master"]) is None
-
-
-def test_force_push_repo_option_treats_positionals_as_refspecs():
-    # with --repo the positional is a refspec, not a remote, so a protected
-    # target is still caught.
-    assert (
-        check_force_push_protected(
-            expand_segments("git push --force --repo=origin main"), ["main"]
-        )
-        is not None
-    )
-    assert (
-        check_force_push_protected(
-            expand_segments("git push --force --repo origin main"), ["main"]
-        )
-        is not None
-    )
-
-
-def test_custom_protected_branches():
-    assert (
-        check_force_push_protected(
-            expand_segments("git push -f origin release"), ["release"]
-        )
-        is not None
-    )
-    assert (
-        check_force_push_protected(
-            expand_segments("git push -f origin main"), ["release"]
-        )
-        is None
-    )
-
-
 # --------------------------------------------------------------------------- #
 # Deny contract over the wire (JSON on stdout, exit 0)
 # --------------------------------------------------------------------------- #
 
 
-def test_wire_deny_git_add_all(tmp_path):
-    rc, parsed = run_hook(bash("git add -A"), tmp_path)
-    assert rc == 0  # deny is exit 0 + JSON, never a non-zero exit
-    assert_denied(parsed, contains="Stage specific files")
+def assert_asked(parsed, contains=None):
+    assert parsed is not None, "expected an ask JSON object, got no stdout"
+    hs = parsed["hookSpecificOutput"]
+    assert hs["permissionDecision"] == "ask"
+    assert hs["permissionDecisionReason"] and "\n" not in hs["permissionDecisionReason"]
+    if contains:
+        assert contains in hs["permissionDecisionReason"]
 
 
-def test_wire_deny_git_add_all_multiline(tmp_path):
-    rc, parsed = run_hook(bash("echo hi\ngit add -A"), tmp_path)
-    assert rc == 0
-    assert_denied(parsed, contains="Stage specific files")
-
-
-def test_wire_deny_skip_perms(tmp_path):
+def test_wire_ask_skip_perms(tmp_path):
     rc, parsed = run_hook(bash("claude --dangerously-skip-permissions"), tmp_path)
     assert rc == 0
-    assert_denied(parsed, contains="permission")
-
-
-def test_wire_deny_force_push(tmp_path):
-    rc, parsed = run_hook(bash("git push --force origin main"), tmp_path)
-    assert rc == 0
-    assert_denied(parsed, contains="protected branch")
+    assert_asked(parsed, contains="permission")
 
 
 def test_wire_allow_normal_command(tmp_path):
@@ -262,13 +147,58 @@ def test_wire_allow_normal_command(tmp_path):
 
 
 def test_bypass_env_disables_all(tmp_path):
-    rc, parsed = run_hook(bash("git add -A"), tmp_path, env={"CLAUDE_HOOK_BYPASS": "1"})
+    rc, parsed = run_hook(
+        bash("claude --dangerously-skip-permissions"),
+        tmp_path,
+        env={"CLAUDE_HOOK_BYPASS": "1"},
+    )
     assert parsed is None
 
 
-def test_guards_env_zero_disables_builtins(tmp_path):
-    rc, parsed = run_hook(bash("git add -A"), tmp_path, env={"GOODFELLOW_GUARDS": "0"})
+def test_stop_list_switch_turns_off_every_builtin_ask(tmp_path):
+    rc, parsed = run_hook(
+        bash("claude --dangerously-skip-permissions"),
+        tmp_path,
+        env={"GOODFELLOW_STOP_LIST": "0"},
+    )
     assert parsed is None
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "git add -A",
+        "git push --force origin main",
+        "claude --dangerously-skip-permissions",
+        "gh pr create --fill",
+        "npm publish",
+    ],
+)
+def test_builtins_never_deny(tmp_path, cmd):
+    """A built-in never blocks: at most it asks, and the user's yes goes through."""
+    d = decide(bash(cmd), str(tmp_path))
+    assert d is None or d[0] == "ask", d
+
+
+def test_only_the_permission_skip_builtin_remains():
+    assert BUILTIN_IDS == ("dangerous-skip-permissions",)
+
+
+def test_retired_ids_and_keys_in_old_configs_are_accepted(tmp_path):
+    write_guards(
+        tmp_path,
+        {
+            "disable_builtins": [
+                "git-add-all",
+                "force-push-protected",
+                "stop-public-repo",
+                "stop-foreign-remote",
+                "stop-migration",
+            ],
+            "stop_list": {"owners": ["me"], "migration_commands": ["make migrate"]},
+        },
+    )
+    assert load_config(str(tmp_path))["disable_builtins"]
 
 
 # --------------------------------------------------------------------------- #
@@ -360,18 +290,10 @@ def test_user_rule_bypass_env(tmp_path):
     assert parsed is None
 
 
-def test_custom_protected_branches_from_config(tmp_path):
-    write_guards(tmp_path, {"protected_branches": ["release", "main"]})
-    _, parsed = run_hook(bash("git push -f origin release"), tmp_path)
-    assert_denied(parsed, contains="protected branch")
-
-
 def test_disable_builtin_from_config(tmp_path):
-    write_guards(tmp_path, {"disable_builtins": ["git-add-all"]})
-    _, add_parsed = run_hook(bash("git add -A"), tmp_path)
-    assert add_parsed is None  # disabled
-    _, push_parsed = run_hook(bash("git push -f origin main"), tmp_path)
-    assert_denied(push_parsed)  # other built-ins still active
+    write_guards(tmp_path, {"disable_builtins": ["dangerous-skip-permissions"]})
+    _, parsed = run_hook(bash("claude --dangerously-skip-permissions"), tmp_path)
+    assert parsed is None  # disabled
 
 
 def test_regex_redos_bounded_and_denies(tmp_path):
@@ -476,9 +398,9 @@ def test_malformed_json_fails_safe_open_but_builtins_hold(tmp_path):
         {"tool_name": "Edit", "tool_input": {"new_string": "whatever"}}, tmp_path
     )
     assert edit_ok is None
-    # ...but built-in universal guards still enforce.
-    _, add = run_hook(bash("git add -A"), tmp_path)
-    assert_denied(add)
+    # ...but the built-in still asks.
+    _, asked = run_hook(bash("claude --dangerously-skip-permissions"), tmp_path)
+    assert_asked(asked)
 
 
 def test_validate_cli_fails_loud_on_bad_config(tmp_path):
@@ -685,16 +607,19 @@ def test_hook_registered_selfcheck(tmp_path):
 # the snap-compact drift gate must not mask its own non-zero exit
 # --------------------------------------------------------------------------- #
 
+
 def test_snap_compact_drift_gate_not_masked():
-    skill = os.path.join(
-        os.path.dirname(HERE), "skills", "snap-compact", "SKILL.md")
+    skill = os.path.join(os.path.dirname(HERE), "skills", "snap-compact", "SKILL.md")
     with open(skill, "r", encoding="utf-8") as fh:
         text = fh.read()
     # The assertion must be gated by `if !`, and must NOT swallow the exit via
     # `|| echo` (which would report success precisely when governance drifted).
     assert "--assert-guard-set" in text
     assert "if ! python3" in text
-    assert "--assert-guard-set .goodfellow/guard-set.pre-compact.json \\\n     || echo" not in text
+    assert (
+        "--assert-guard-set .goodfellow/guard-set.pre-compact.json \\\n     || echo"
+        not in text
+    )
     # No `|| echo` on the same logical line as the assertion.
     for line in text.splitlines():
         if "assert-guard-set" in line:
@@ -705,39 +630,27 @@ def test_snap_compact_drift_gate_not_masked():
 # Value-taking push options must not shift remote/refspec parsing
 # --------------------------------------------------------------------------- #
 
-@pytest.mark.parametrize("cmd", [
-    "git push --force --push-option ci.skip main feature-x",  # main is REMOTE
-    "git push -f -o ci.skip main feature-x",
-    "git push --force --push-option=ci.skip main feature-x",
-    "git push -f --receive-pack /x/git main feature-x",
-    "git push -f --exec /x/git main feature-x",
-    "git push -f --recurse-submodules on-demand main feature-x",
-])
-def test_value_option_does_not_flag_remote(cmd):
-    assert check_force_push_protected(expand_segments(cmd), ["main", "master"]) is None
-
-
-@pytest.mark.parametrize("cmd", [
-    "git push --force --push-option ci.skip origin main",   # main IS the refspec
-    "git push -f -o ci.skip origin master",
-])
-def test_value_option_still_catches_protected(cmd):
-    assert check_force_push_protected(expand_segments(cmd), ["main", "master"]) is not None
-
-
 # --------------------------------------------------------------------------- #
 # --validate is a genuine ReDoS diagnostic
 # --------------------------------------------------------------------------- #
 
+
 def test_validate_warns_on_redos_prone_pattern(tmp_path):
-    write_guards(tmp_path, {"block": [
-        {"id": "danger", "match": "regex", "pattern": "(a+)+$", "reason": "x"},
-        {"id": "safe", "match": "regex", "pattern": "^abc$", "reason": "y"},
-    ]})
+    write_guards(
+        tmp_path,
+        {
+            "block": [
+                {"id": "danger", "match": "regex", "pattern": "(a+)+$", "reason": "x"},
+                {"id": "safe", "match": "regex", "pattern": "^abc$", "reason": "y"},
+            ]
+        },
+    )
     proc = subprocess.run(
         [sys.executable, ENGINE, "--project-dir", str(tmp_path), "--validate"],
-        capture_output=True, text=True)
-    assert proc.returncode == 0            # risk is a warning, not an error
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0  # risk is a warning, not an error
     assert "danger" in proc.stderr
     assert "safe" not in proc.stderr
 
@@ -745,50 +658,6 @@ def test_validate_warns_on_redos_prone_pattern(tmp_path):
 # --------------------------------------------------------------------------- #
 # Fail-open gaps found by mutation testing (each test names the break it kills)
 # --------------------------------------------------------------------------- #
-
-
-@pytest.mark.parametrize(
-    "cmd",
-    [
-        "/usr/bin/git add -A",  # absolute path: the bypass `_basename_is` exists for
-        "./git add .",
-        "../bin/git add --all",
-        "usr/bin/git add -A",  # relative path without a leading ./
-        "'C:\\Program Files\\Git\\bin\\git.exe' add -A",  # Windows path
-        "'C:\\Git\\bin\\GIT.EXE' add -A",  # Windows is case-insensitive
-        "/bin/bash -c 'git add -A'",  # full-path shell around a nested program
-    ],
-)
-def test_git_add_all_denied_through_path_forms(cmd):
-    # Break killed: `_basename_is` path branches returning False (or `not in`).
-    assert check_git_add_all(expand_segments(cmd)) is not None
-
-
-@pytest.mark.parametrize(
-    "cmd",
-    [
-        "/usr/bin/legit add -A",  # a different binary whose name ends in "git"
-        "./git-helper add -A",
-        "'C:\\tools\\gitx.exe' add -A",
-    ],
-)
-def test_path_to_other_binary_not_mistaken_for_git(cmd):
-    # Break killed: `_basename_is` path branches returning True.
-    assert check_git_add_all(expand_segments(cmd)) is None
-
-
-@pytest.mark.parametrize(
-    "cmd", ["git add -fA", "git add -Av", "git add -nfA src/", "git add ./", "git add :/"]
-)
-def test_git_add_all_denied_through_bundled_flags_and_whole_tree_pathspecs(cmd):
-    # git bundles short flags (`-fA` is `-f -A`), and `./` and `:/` name the whole
-    # tree, so each is the same blanket add as `git add -A`.
-    assert check_git_add_all(expand_segments(cmd)) is not None
-
-
-def test_git_add_bundled_flags_without_A_allowed():
-    assert check_git_add_all(expand_segments("git add -fv src/a.py")) is None
-    assert check_git_add_all(expand_segments("git add -p")) is None
 
 
 def _assert_guard_set(tmp_path, baseline_path):
@@ -881,7 +750,9 @@ def test_validate_cli_fails_loud_on_rules_that_are_not_a_list(tmp_path):
         ("s", r"begin.*commit", "begin\nwork\ncommit", "begin work"),
     ],
 )
-def test_regex_flags_are_honoured_and_only_when_set(tmp_path, flags, pattern, hit, miss):
+def test_regex_flags_are_honoured_and_only_when_set(
+    tmp_path, flags, pattern, hit, miss
+):
     # Break killed: `if "<flag>" in flags` negated or dropped in `_regex_flags`.
     rule = {"id": "r", "match": "regex", "pattern": pattern, "reason": "x"}
     write_guards(tmp_path, {"block": [dict(rule, flags=flags)]})
@@ -892,79 +763,24 @@ def test_regex_flags_are_honoured_and_only_when_set(tmp_path, flags, pattern, hi
     assert decision_for_input(bash(hit), str(tmp_path)) is None
 
 
-@pytest.mark.parametrize(
-    "cmd",
-    [
-        "C:/Git/bin/GIT.EXE add -A",  # drive path with forward slashes, any case
-        "git add ':(top)'",  # long-form "top" magic: the repository root
-        "git add ':(top,icase).'",
-        "git add :/.",
-        "git add '*'",  # a git glob matches every path
-        "git add ':!secrets.env'",  # exclusions only: "everything except"
-        "git add -- ':(exclude)*.log' ':^tmp/'",
-        "git add ':.'",  # short magic ends at the first non-magic char: `.`
-        "git add ':/*'",  # top magic around a wildcard
-        "git add -v .",  # a non-blanket option before the pathspec
-        "'tools\\git.exe' add -A",  # relative Windows path, backslash only
-    ],
-)
-def test_git_add_all_denied_through_windows_slash_paths_and_pathspec_magic(
-    tmp_path, cmd
-):
-    # Through the real hook: the deny JSON is the contract.
-    rc, parsed = run_hook(bash(cmd), tmp_path)
-    assert rc == 0
-    assert_denied(parsed, contains="git add -A")
-
-
-@pytest.mark.parametrize(
-    "cmd",
-    [
-        "git add ':(top)src/a.py'",  # top magic with a real path is specific
-        "git add ':/docs/'",
-        "git add src/ ':!src/generated.py'",  # an exclusion next to a real path
-        "git add ':(icase)readme.md'",
-        "git add ':/a'",  # one-letter path under top magic
-        "git add ':/:a'",  # explicit `:` ending the short magic
-        "git add ':(top)a'",
-        "git add ':(top'",  # unclosed long magic: not magic at all
-        "git add -- -A",  # after `--`, `-A` is a file name
-    ],
-)
-def test_git_add_specific_pathspec_magic_allowed(tmp_path, cmd):
-    rc, parsed = run_hook(bash(cmd), tmp_path)
-    assert rc == 0
-    assert parsed is None
-
-
-@pytest.mark.parametrize(
-    "cmd",
-    [
-        "git add --pathspec-from-file=paths.txt",  # contents unknown: fail closed
-        "git add --pathspec-from-file paths.txt",
-        "git add --pathspec-from-file=- --pathspec-file-nul",  # stdin
-    ],
-)
-def test_git_add_pathspec_from_file_denied(tmp_path, cmd):
-    rc, parsed = run_hook(bash(cmd), tmp_path)
-    assert rc == 0
-    assert_denied(parsed, contains="git add -A")
-
-
-def test_git_add_literal_star_is_a_specific_file(tmp_path):
-    # `literal` magic turns off wildcards: this names a file called `*`.
-    rc, parsed = run_hook(bash("git add ':(literal)*'"), tmp_path)
-    assert rc == 0
-    assert parsed is None
-
-
 def test_user_rule_matches_edit_new_string(tmp_path):
     # Break killed: `extract_text` returning None for Edit.
-    rule = {"id": "no-secret", "pattern": "SECRET_TOKEN", "reason": "x", "tools": ["Edit"]}
+    rule = {
+        "id": "no-secret",
+        "pattern": "SECRET_TOKEN",
+        "reason": "x",
+        "tools": ["Edit"],
+    }
     write_guards(tmp_path, {"block": [rule]})
-    edit = {"tool_name": "Edit", "tool_input": {"old_string": "a", "new_string": "SECRET_TOKEN=1"}}
+    edit = {
+        "tool_name": "Edit",
+        "tool_input": {"old_string": "a", "new_string": "SECRET_TOKEN=1"},
+    }
     assert_denied(run_hook(edit, tmp_path)[1], contains="no-secret")
-    clean = {"tool_name": "Edit", "tool_input": {"old_string": "SECRET_TOKEN", "new_string": "b"}}
+    clean = {
+        "tool_name": "Edit",
+        "tool_input": {"old_string": "SECRET_TOKEN", "new_string": "b"},
+    }
     assert run_hook(clean, tmp_path)[1] is None
 
 

@@ -11,7 +11,7 @@ values fail loudly rather than falling back.
 | Variable | Default | Purpose |
 |---|---|---|
 | `GOODFELLOW_AUTOPILOT` | on | Autopilot is the default. `0` pauses for your go at each step; the stop list stays on. `dry-run` logs decisions without changing project files. |
-| `GOODFELLOW_STOP_LIST` | on | `0` is the dedicated opt-out: it turns the stop list off in every mode. The other built-in guards stay on. |
+| `GOODFELLOW_STOP_LIST` | on | `0` turns off the stop list's confirmations (the built-in asks) in every mode. Project `block` rules still apply. |
 | `GOODFELLOW_CODEX` | `1` | `0` disables Codex even when it is installed. |
 | `GOODFELLOW_CODEX_MODEL` | Codex default | GPT model for the Codex reviewer. |
 | `GOODFELLOW_REVIEW_MODEL` | see below | Claude reviewer model: `opus`, `sonnet` or `haiku`. |
@@ -23,7 +23,10 @@ values fail loudly rather than falling back.
 | `GOODFELLOW_PRINCIPLES_WEB` | auto | `1` loads the web principles (JS, React, Next.js, Postgres). Auto-enabled when a `package.json` is present. |
 | `GOODFELLOW_HIGH_STAKES_PATHS` | `.goodfellow/high_stakes_paths.txt` | Glob list that sets a T1 floor and enables the mutation check. |
 | `GOODFELLOW_LIVE_STATE_PATHS` | `.goodfellow/live_state_paths.txt` | Globs added to the built-in T3 list; a `!glob` line drops a built-in one. |
-| `GOODFELLOW_GUARDS` | `1` | `0` turns off the built-in guards and the stop list. Project rules still apply. |
+| `GOODFELLOW_SANDBOX` | `auto` | The test sandbox for the red and mutation checks (see below). `auto` uses bubblewrap when installed; `bwrap` requires it; `off` runs the tests unisolated, knowingly. |
+| `GOODFELLOW_SANDBOX_RO` | unset | Extra read-only paths inside the sandbox, separated by `:`. |
+| `GOODFELLOW_SANDBOX_ENV` | unset | Extra environment variable names the sandboxed tests keep, comma-separated. |
+| `GOODFELLOW_BWRAP` | `bwrap` on `PATH` | Path to the bubblewrap binary. |
 | `GOODFELLOW_TRIAGE_RETENTION_DAYS` | `90` | Days to keep closed triage entries. |
 | `GOODFELLOW_RUNS_RETENTION_DAYS` | `90` | Days to keep autopilot run logs. |
 
@@ -46,18 +49,17 @@ a note if not.
 
 ## Tool-layer guards
 
-A rule whose violation is expensive to undo should not live only in a prompt: compaction can drop it,
-and the session that inherits the summary was never told. Goodfellow's `PreToolUse` hook
-(`scripts/guard_engine.py`) checks every tool call instead.
-
-Built in, on by default:
-
-- `git add -A`, `git add .`, `git add --all`: stage specific files instead.
-- `--dangerously-skip-permissions`.
-- Force-push to a protected branch (`main` and `master` by default). Feature branches are not affected.
+Goodfellow's `PreToolUse` hook (`scripts/guard_engine.py`) keeps its own checks few, and none of
+them blocks. Each returns `permissionDecision: "ask"` with a one-line reason: Claude Code shows its
+normal confirmation and your yes goes through. Built in: `--dangerously-skip-permissions`, which
+turns off the permission prompt for every tool call, plus the stop list below.
 
 Matching is by shell token, and the built-ins only inspect `Bash` commands, so documenting a flag in a
-file or a commit message does not trip a guard.
+file or a commit message does not trip a check.
+
+Your project's own rules, the `block` list in `.goodfellow/guards.json`, do deny: you wrote them.
+They are checked first, so a stop that would ask never turns a forbidden action into a
+confirmation. The confirmation itself is Claude Code's: a mode that auto-approves prompts may skip it.
 
 Add project rules in `.goodfellow/guards.json` (see
 [`configs/guards.example.json`](../configs/guards.example.json)):
@@ -65,7 +67,6 @@ Add project rules in `.goodfellow/guards.json` (see
 ```json
 {
   "protected_branches": ["main", "master"],
-  "stop_list": { "owners": ["your-user", "your-org"] },
   "block": [
     {
       "id": "no-prod-db-writes",
@@ -83,7 +84,52 @@ Add project rules in `.goodfellow/guards.json` (see
 `python3 scripts/guard_engine.py --validate` checks a config (non-zero on error, for CI) and
 `--selfcheck` prints what is enforced. A malformed config at runtime skips the project rules with a
 warning but keeps the built-ins, so a typo cannot lock you out of fixing it. `CLAUDE_HOOK_BYPASS=1`
-disables all guards for one command.
+turns everything off, project rules included.
+
+## Test sandbox
+
+`red_check.py` and `mutation_check.py` run your test suite, and the mutation check runs it against
+deliberately broken code: a mutant of a cleanup routine can delete the wrong directory, and a
+mutant of process-selection code can signal the wrong process. So every test command they run goes
+through [bubblewrap](https://github.com/containers/bubblewrap) (`bwrap`):
+
+- **A private PID namespace.** The tests see and can signal only their own processes.
+- **A filesystem allowlist.** Read-only: `/usr` and the `/bin`, `/lib` links, a short list of
+  `/etc` files, the Python interpreter and its site-packages, the directories on `PATH`, and
+  anything in `GOODFELLOW_SANDBOX_RO`. `/tmp`, `/var/tmp`, `/run` and `HOME` are private and empty.
+  The only writable host directory is the check's own throwaway copy. Your home directory, your
+  checkout and your credentials are not mounted, and neither is any directory that contains them
+  (a `PATH` entry that does is skipped; a `GOODFELLOW_SANDBOX_RO` entry that does is refused).
+- **A minimal environment.** Tests keep `PATH`, locale, terminal and Python variables; tokens and
+  keys in your environment are dropped. `GOODFELLOW_SANDBOX_ENV` names any others they need.
+
+Before the first test runs, a probe goes through the same wrapper. It must show a private PID
+namespace, no write reaching your home directory or your checkout, and nothing readable from
+either: neither the usual credential paths (`~/.ssh`, `~/.aws`, `~/.config/gh`, ...) nor files
+in your checkout.
+
+**Convenient by default, strict where it matters:**
+
+- **bubblewrap installed:** both checks run sandboxed. If the probe fails, or isolation is only
+  partial, the check exits 2 and runs nothing. It never degrades silently.
+- **No bubblewrap (macOS, say):** the red check still runs, unsandboxed, with one warning line and
+  an install hint; its JSON report records `"sandbox": "unsandboxed"`. The mutation check, which
+  runs deliberately broken code, refuses (exit 2) unless you pass `--fakes` (your tests replace real
+  side effects) or set `GOODFELLOW_SANDBOX=off`.
+- **`GOODFELLOW_SANDBOX=bwrap`** requires the sandbox in both checks; **`off`** runs both
+  unisolated, knowingly, with a warning on every run.
+
+- **Linux:** install bubblewrap (`apt install bubblewrap`, `dnf install bubblewrap`,
+  `pacman -S bubblewrap`). On Ubuntu 24.04 and later, unprivileged user namespaces may be
+  restricted by AppArmor; use the distribution's `bwrap` package, which ships a profile, or allow
+  them for your user. Until then the check refuses rather than run half-isolated.
+- **Tests that need files outside the allowlist** (a toolchain under `/opt`, fixtures elsewhere):
+  add the paths to `GOODFELLOW_SANDBOX_RO`. The network is not isolated.
+
+The sandbox does not isolate the network. So the mutation check still asks for `--isolated` (or
+`--fakes`) before it mutates code that signals or spawns processes: with the sandbox every run
+already has its own PID namespace, but a mutant of code that spawns `curl` could still reach a
+local service. Targets that delete or write files need `--fakes`.
 
 ## Knowledge and memory backends
 
@@ -130,23 +176,23 @@ and a warning appears at 15 open loops.
 
 ## Autopilot and the stop list
 
-Autopilot is on by default: the chain runs without approvals between steps. It stops only for
+Autopilot is on by default: the chain runs without approvals between steps. It pauses only for
 product calls (naming, pricing, public positioning, taste-only UX, scope beyond the request) and for
-the stop list, which a `PreToolUse` hook enforces (`scripts/stop_list.py`):
+the stop list. **The stop list asks, it never blocks** (`scripts/stop_list.py`): Claude Code shows its
+normal confirmation with a one-line reason, and your yes goes through. Opening or merging a pull
+request is reviewable and reversible, so it asks nothing. Nothing here makes a network call.
 
-| Stop | What it catches |
+| Stop | When it asks |
 |---|---|
-| `stop-foreign-remote` | `git push` or `gh pr create` to a repository whose owner is not in `stop_list.owners` (entries `owner` for GitHub, or `host/owner`; default: the host and owner of `origin`), or whose destination cannot be resolved. The same account name on another host counts as foreign. |
-| `stop-public-repo` | On a public repository you own: a push to its default branch, a tag push, or `gh pr create`. Visibility is looked up with `gh repo view` and cached for ten minutes; a failed lookup stops the action. The push target honours `git -c` overrides, `remote.<name>.push`, `push.default` and every URL of the remote. Pushes to other branches are checked against the live default branch too, but a failed lookup never blocks them. |
-| `stop-release` | `gh release create/upload/edit/delete` and `gh api` writes to a releases endpoint. |
-| `stop-publish` | `npm publish`, `twine upload`, `cargo publish`, `docker push` and similar. `--dry-run` is allowed. |
-| `stop-migration` | Deploy-style migrations: `prisma migrate deploy`, `alembic upgrade`, `manage.py migrate`, `rails db:migrate` and similar. Replace the list with `stop_list.migration_commands`. |
+| `stop-default-branch` | A push that writes the default branch: `protected_branches` (default `main`, `master`) or the remote's HEAD as git knows it locally. `--all`, `--mirror` and wildcard refspecs count. |
+| `stop-release` | A tag push, `gh release create/upload/edit/delete`, and `gh api` writes to a releases endpoint. |
+| `stop-publish` | `npm publish`, `twine upload`, `cargo publish`, `docker push` and similar. `--dry-run` is allowed. `stop_list.publish_commands` replaces the whole list, so include the defaults you still want. |
 | `stop-force-push` | `git push --force`, `-f` or a `+refspec`. `--force-with-lease` to a feature branch is allowed. |
 
-Sending messages, spending money and product calls cannot be read from a command line; the skills
-carry those as written rules. The stop list is on in every mode: `GOODFELLOW_AUTOPILOT=0` only
-brings back step approvals. `GOODFELLOW_STOP_LIST=0` turns the stop list off (its dedicated
-opt-out), and `GOODFELLOW_GUARDS=0` turns off every built-in guard including it. `dry-run` shows what it would do and writes only the decision log
+Sending messages, spending money, migrations and product calls cannot be read reliably from a
+command line; the skills carry those as written rules. The stop list is on in every mode:
+`GOODFELLOW_AUTOPILOT=0` only brings back step approvals, and `GOODFELLOW_STOP_LIST=0` turns the
+stop list off. `dry-run` shows what it would do and writes only the decision log
 (`.goodfellow/runs/<timestamp>-<pid>.jsonl`). Turn off one stop with its id in `disable_builtins`.
 
 ## Principles

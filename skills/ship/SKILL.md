@@ -63,6 +63,14 @@ If verification fails: surface errors, do not proceed to review.
 
 `BASE` is the branch from §0.5.
 
+Both checks below run your tests inside a sandbox where bubblewrap is installed (a private PID
+namespace and a filesystem allowlist; see `docs/configuration.md`). Without it, the red check runs
+unsandboxed and says so: note "unsandboxed" in the PR's Test evidence. The mutation check refuses
+without it unless `--fakes` applies. When either check exits 2 over the sandbox (bubblewrap missing
+for the mutation check, or installed but not isolating), report the check as not run, quote its
+message, and never rerun it with `GOODFELLOW_SANDBOX=off` or `--fakes` on your own: only the user
+decides that.
+
 **Red evidence (P-094).** Every new test must fail on the base with an assertion, then pass:
 
 ```bash
@@ -81,7 +89,8 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/mutation_check.py" --base "$BASE"
 
 - Exit 0: every mutant killed, or nothing in scope, or no path list (it says `SKIPPED`).
 - Exit 1: each surviving mutant is a major finding. Kill it with a test before opening the PR, or write in the PR why it is equivalent (the mutated code behaves identically). Survivors neither killed nor explained are filed as loops per §5.
-- Exit 2: red baseline, bad base, or a configured path list that does not exist, so the check did not run. It also refuses (exit 2) a target that sends signals, spawns processes, deletes or writes files. **Never mutation-test code that signals, deletes or writes real resources outside a fake or an isolated namespace**: a mutant can aim those calls at the wrong target, for example every process on the machine instead of one child. For signal/spawn code, `--isolated` runs the whole check inside its own PID namespace (`unshare --pid --fork --mount-proc`; it fails closed if none can be made). For delete/write code, and calls the check cannot see through (`getattr` on `os`/`shutil`, dynamic imports, `ctypes`), a PID namespace does not help: pass `--fakes` only when the tests replace those calls with fakes or temp directories. Otherwise leave the file out of the mutation run and rely on the deliberate-break evidence. Exit 3: the time budget ran out, so the result is incomplete. Neither is a pass (P-079).
+- Exit 2: red baseline, bad base, or a configured path list that does not exist, so the check did not run. It also refuses (exit 2) a target that sends signals, spawns processes, deletes or writes files. **Never mutation-test code that signals, deletes or writes real resources outside a fake or an isolated namespace**: a mutant can aim those calls at the wrong target, for example every process on the machine instead of one child. For signal/spawn code, pass `--isolated`: the sandbox already gives every test run its own PID namespace, and with `GOODFELLOW_SANDBOX=off` the flag runs the whole check inside one (`unshare --pid --fork --mount-proc`; it fails closed if none can be made). Neither isolates the network, so code that calls a live service needs fakes. For delete/write code, and calls the check cannot see through (`getattr` on `os`/`shutil`, dynamic imports, `ctypes`), a PID namespace does not help: pass `--fakes` only when the tests replace those calls with fakes or temp directories. Otherwise leave the file out of the mutation run and rely on the deliberate-break evidence. Exit 3: the result is incomplete: the time budget ran out, or a mutant timed out under a limit shorter than 3x the suite's runtime under load, which proves no hang. Neither is a pass (P-079).
+- A verdict marked `(SAMPLED: file k/N)` covers a seeded sample of a large new file (over 400 lines, more than 150 mutants). Say so in the PR's Test evidence; edits to existing files are never sampled.
 
 ## 2. Review
 
@@ -116,13 +125,27 @@ review, not a clean one.
 
 The loop ends by *fixing* the last round's findings, so the last fix commit has been reviewed by
 nobody. Before the PR is opened or merged, if HEAD moved after the last reviewed state, run one
-narrow review of just the fix commits:
+narrow review of just the fix commits. If you rebased since that review, the reviewed SHA is no
+longer an ancestor of HEAD, so map it first:
 
 ```bash
-OUT=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/codex-bridge.sh" --kind diff --base <last-reviewed-sha>) || {
-  echo "review bridge failed: $OUT" >&2; exit 1; }
-case "$OUT" in REVIEW_FAILED\ *) echo "review bridge failed: $OUT" >&2; exit 1 ;; esac
+# Prints "<sha> <mode> <reason>". ancestor/rebase: review <sha>...HEAD. reviewed: nothing new
+# (HEAD is the reviewed commit or its exact rebase). full: review the whole branch.
+# Exit 2 (git failed): review the whole branch against BASE.
+read -r DELTA MODE REASON < <(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/review_delta.py" \
+  --last <last-reviewed-sha> --base "$BASE") || { DELTA=$BASE MODE=full; }
+echo "final-HEAD check: $MODE ($REASON)"
+[ "$MODE" = reviewed ] || {
+  OUT=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/codex-bridge.sh" --kind diff --base "$DELTA") || {
+    echo "review bridge failed: $OUT" >&2; exit 1; }
+  case "$OUT" in REVIEW_FAILED\ *) echo "review bridge failed: $OUT" >&2; exit 1 ;; esac
+}
 ```
+
+The mapping matches the reviewed commits to the rebased ones by patch-id and requires the reviewed
+files to be byte-identical; a dropped, reordered or rewritten reviewed commit, or a merge commit in
+the branch, reviews the whole branch. Unmapped is unreviewed. A `full` result is still this gate,
+not a new round.
 
 It asks one question: did the fix introduce a defect? Only a blocker or major inside those commits
 halts; anything else is recorded, not fixed here. It is a gate, not a round, and runs at most twice.
@@ -248,9 +271,9 @@ Goal / Approach / Tests, as written before building.
 example a migration the merged code depends on), do §7a now and merge only after it is verified.
 
 **Autopilot (default):** merge when the review converged with no unresolved blocker, the final-HEAD
-check is clean and CI is green. The stop list still applies: opening a PR on a public repository,
-pushing to its default branch, a repository outside your owner list, releases and migrations stop
-for the operator, whatever the tier. **Dry-run:** log `would_act: merge` instead.
+check is clean and CI is green. A force-push, a push to the default branch, a tag or release and
+a package publish ask the operator through Claude Code's confirmation, whatever the tier; their yes
+goes through. **Dry-run:** log `would_act: merge` instead.
 **`GOODFELLOW_AUTOPILOT=0`:** ask once whether to merge.
 
 ## 7a. T3 live step
@@ -258,7 +281,7 @@ for the operator, whatever the tier. **Dry-run:** log `would_act: merge` instead
 Only after the review converged, the final-HEAD check is clean and CI is green (and, for a
 post-merge step, after the merge): present the plan's `## Live step` (the exact commands, before or after the merge, verification, rollback) together
 with the rehearsal evidence, and hand it to the operator, whatever the autopilot setting. The
-operator runs it: the stop list deliberately denies migrations, deploys, publishes and releases from
-the session, and sends or spending are never automated. Then verify the result as the plan says,
+operator decides when it runs: migrations, deploys, publishes and releases touch live state, and
+sends or spending are never automated. Then verify the result as the plan says,
 record it in the PR, and only then report the work done. **Dry-run:** log
 `{"event": "would_hand_off_live_step", "would_act": true}`.

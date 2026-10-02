@@ -12,7 +12,12 @@ and reports every mutant the tests fail to notice (a SURVIVOR).
     not thousands).
   - Safety: mutants are applied in throwaway copies of the checkout (file modes
     kept; PYTHONPATH entries that point into the checkout are redirected to the
-    copy). Your working tree is never written.
+    copy). Your working tree is never written. Every test run happens in a
+    sandbox (see sandbox.py): bubblewrap with a private PID namespace and a
+    filesystem allowlist, where the only writable host directory is that run's
+    copy. Without bubblewrap the check refuses (exit 2) unless --fakes is
+    given (it then runs unsandboxed, with a warning) or GOODFELLOW_SANDBOX=off;
+    an installed bubblewrap that does not isolate always refuses.
   - Operators: comparison swap and boundary (`>=` to `>`), and/or swap, dropped
     `not`, negated `if`, flipped bool, int +1, arithmetic swap, `return X` to
     `return None`, `raise` to `pass` (fail-open), dropped call statement,
@@ -21,11 +26,21 @@ and reports every mutant the tests fail to notice (a SURVIVOR).
     resources outside a fake or an isolated namespace. A mutant can turn "kill
     our child" into "kill every process on the machine", and a sandbox copy of
     the files does not contain that. A target that signals or spawns processes
-    needs --isolated (every run happens inside a private PID namespace, where
-    only the check's own processes are visible) or --fakes; a target that
+    needs --isolated (with the sandbox every run already has its own PID
+    namespace; with GOODFELLOW_SANDBOX=off the whole check re-runs inside one)
+    or --fakes. Neither isolates the network: a mutant can still reach a local
+    service, so use fakes for code that calls one. A target that
     deletes or writes files needs --fakes (the tests replace those calls with
     fakes or temp directories), because a PID namespace does not protect the
     filesystem.
+  - Time: each mutant gets at least three times the suite's runtime measured
+    under the same parallel load (never under 30 s; --timeout overrides). A
+    timeout counts as a kill only when its limit was at least 3x that loaded
+    baseline; otherwise it is timeout_unverified and the result is incomplete.
+  - Sampling: a NEW file (absent at the base) longer than 400 lines with more
+    than 150 mutants is reduced to a fixed, seeded sample of 150 (--sample,
+    --sample-min-lines, --no-sample), and the verdict says
+    "(SAMPLED: file k/N)". Edits to existing files are never sampled.
   - Not mutated ("arid"): print and logging calls, `if __name__ == "__main__"`,
     `sys.path` edits, docstrings, and any line carrying `# pragma: no mutate`.
 
@@ -48,8 +63,9 @@ Exit codes: 0 every mutant killed (or nothing in scope, or no path list and not
 baseline, no path list with --require-paths, a missing configured path list, or
 a target with real side effects and no --isolated / --fakes, or --isolated
 where no PID namespace can be created); 3 incomplete (time budget ran out
-before every mutant ran, or a mutant run ended in a runner error such as
-"command not found" rather than a test result; neither is a pass).
+before every mutant ran, a mutant timed out under a limit too short to prove a
+hang, or a mutant run ended in a runner error such as "command not found"
+rather than a test result; none is a pass).
 """
 
 from __future__ import annotations
@@ -58,8 +74,11 @@ import argparse
 import ast
 import concurrent.futures as cf
 import copy
+import hashlib
 import json
+import math
 import os
+import random
 import re
 import shlex
 import shutil
@@ -69,13 +88,14 @@ import tempfile
 import threading
 import time
 from pathlib import Path
-from typing import Dict, Iterator, List, NamedTuple, Optional, Set, Tuple
+from typing import Callable, Dict, Iterator, List, NamedTuple, Optional, Set, Tuple
 
 _HERE = str(Path(__file__).resolve().parent)
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
 import proc_group  # noqa: E402
+import sandbox  # noqa: E402
 
 DEFAULT_TEST_CMD = (
     f"{shlex.quote(sys.executable)} -m pytest -x -q -p no:cacheprovider {{tests}}"
@@ -602,22 +622,137 @@ def run_tests(
     timeout: int,
     workdir: Optional[Path] = None,
     error_codes=RUNNER_ERROR_CODES,
+    sb: Optional[sandbox.Sandbox] = None,
 ) -> str:
+    if sb is not None:
+        cmd = sb.wrap(cmd, [cwd], cwd)  # this run may write only its own copy
     env = dict(os.environ)
     env["PYTHONDONTWRITEBYTECODE"] = "1"  # never trust a stale .pyc of a mutant
     env["GIT_CEILING_DIRECTORIES"] = str(cwd.parent)
     if workdir is not None and env.get("PYTHONPATH"):
         env["PYTHONPATH"] = remap_pythonpath(env["PYTHONPATH"], workdir, cwd)
-    rc, _out, _err = proc_group.run(cmd, cwd, env, timeout, sweep=True)
+    if sb is not None:
+        env = sb.env(env)  # credentials in the environment stay outside
+    rc, _out, err = proc_group.run(cmd, cwd, env, timeout, sweep=True)
     if rc is None:
-        return "timeout"
+        # a timeout proves a hang only if the tests started at all
+        return "timeout" if sb is None or sb.started(err) else "error"
+    if sb is not None and not sb.completed(err):
+        return "error"  # the sandbox failed, no test judged this run
     return status_for_returncode(rc, error_codes)
+
+
+# --- time budget --------------------------------------------------------------
+
+MIN_MUTANT_TIMEOUT = 30  # seconds; floor of the derived per-mutant timeout
+DEFAULT_SAMPLE = 150  # mutants kept from a large NEW file
+DEFAULT_SAMPLE_MIN_LINES = (
+    400  # new files at or under this many lines are never sampled
+)
+
+
+def mutant_timeout(loaded_s: float, requested: Optional[int]) -> int:
+    """Per-mutant timeout. An explicit --timeout wins; otherwise at least three
+    times the baseline measured under the same parallel load (never below
+    MIN_MUTANT_TIMEOUT), so a mutant that times out has provably hung instead of
+    just running on a busy machine."""
+    if requested:
+        return int(requested)
+    return max(MIN_MUTANT_TIMEOUT, math.ceil(3 * loaded_s))
+
+
+def timeout_is_a_kill(loaded_s: float, limit_s: int) -> bool:
+    """A timeout proves a hang only if the limit was at least 3x the loaded baseline."""
+    return loaded_s * 3 <= limit_s
+
+
+def recheck_timeouts(results: List[dict], loaded_s: float) -> float:
+    """After the run: the loaded baseline is the slowest passing run seen (the
+    calibration, or any surviving mutant's run under the same load). A timeout
+    stays a kill only if ITS limit (which the budget may have cut down) is at
+    least three times that; otherwise it becomes timeout_unverified, which makes
+    the result incomplete. Returns the loaded baseline."""
+    loaded = max(
+        [loaded_s]
+        + [r.get("secs", 0.0) for r in results if r.get("status") == "survived"]
+    )
+    for r in results:
+        if r.get("status") == "timeout" and not timeout_is_a_kill(
+            loaded, r.get("timeout_s", 0)
+        ):
+            r["status"] = "timeout_unverified"
+    return loaded
+
+
+def confirm_timeouts(
+    results: List[dict], loaded_s: float, control: Callable[[], Tuple[str, float]]
+) -> float:
+    """Load can rise after calibration; if every mutant then times out, no
+    survivor raises the baseline. So when any timeout would count as a kill,
+    run the unmutated suite once more (`control`, returning (status, seconds))
+    and recheck against the slower of the two. A control that does not pass
+    leaves no baseline at all: every timeout becomes unverified."""
+    if not any(r.get("status") == "timeout" for r in results):
+        return loaded_s
+    status, secs = control()
+    if status != "survived":
+        for r in results:
+            if r.get("status") == "timeout":
+                r["status"] = "timeout_unverified"
+        return loaded_s
+    return recheck_timeouts(results, max(loaded_s, secs))
+
+
+def calibration_problem(statuses: List[str]) -> Optional[str]:
+    """Why the unmutated suite is not green in every parallel sandbox, or None."""
+    bad = sorted({s for s in statuses if s != "survived"})
+    if not bad:
+        return None
+    return (
+        f"the unmutated suite is not green when run in {len(statuses)} parallel "
+        f"sandboxes ({', '.join(bad)}); fix the suite or pass --workers 1"
+    )
+
+
+def sample_mutants(
+    path: str,
+    text: str,
+    is_new: bool,
+    mutants: List[Mutant],
+    *,
+    k: int,
+    min_lines: int,
+) -> Tuple[List[Mutant], Optional[dict]]:
+    """Keep a fixed, seeded sample of `k` mutants, but ONLY for bulk new code: a
+    file absent at the base, with more than `min_lines` lines and more than `k`
+    mutants. A file that exists at the base keeps every mutant on its changed
+    lines, however much of it changed. The seed is the path plus the file's
+    text, so the same tree always yields the same sample."""
+    if not is_new or k <= 0 or len(text.splitlines()) <= min_lines or len(mutants) <= k:
+        return mutants, None
+    seed = hashlib.sha256(path.encode() + b"\0" + text.encode()).hexdigest()[:16]
+    ordered = sorted(mutants, key=lambda m: (m.line, m.op, m.source))
+    chosen = sorted(random.Random(seed).sample(range(len(ordered)), k))
+    return [ordered[i] for i in chosen], {
+        "population": len(mutants),
+        "sampled": k,
+        "seed": seed,
+    }
+
+
+def added_files(workdir: Path, base: str) -> Set[str]:
+    """Files absent at the merge base: added on the branch, or untracked."""
+    merge_base = _git(workdir, ["merge-base", base, "HEAD"]).strip()
+    out = _git(workdir, ["diff", "--name-only", "--diff-filter=A", merge_base, "--"])
+    out += _git(workdir, ["ls-files", "--others", "--exclude-standard"])
+    return set(filter(None, out.splitlines()))
 
 
 def check(a: argparse.Namespace, workdir: Path) -> dict:
     changes = branch_changes(workdir, a.base)
     summary: dict = {
         "base": a.base,
+        "sandbox": "unused",
         "targets": [],
         "out_of_scope": [],
         "unsupported": [],
@@ -625,6 +760,7 @@ def check(a: argparse.Namespace, workdir: Path) -> dict:
         "ran": 0,
         "killed": 0,
         "skipped_budget": 0,
+        "timeout_unverified": 0,
         "runner_errors": 0,
         "score": None,
         "survivors": [],
@@ -669,15 +805,38 @@ def check(a: argparse.Namespace, workdir: Path) -> dict:
                 )
         except SyntaxError as exc:
             raise CheckError(f"{path}: cannot parse ({exc})") from exc
+    # Before any test runs. This check runs deliberately broken code, so
+    # without bwrap it runs only with --fakes (or GOODFELLOW_SANDBOX=off); an
+    # installed bwrap that does not isolate always refuses. A check with
+    # nothing to mutate needs no sandbox.
+    if summary["targets"]:
+        try:
+            sb = sandbox.create([workdir], allow_missing=a.fakes)
+        except sandbox.SandboxMissing as exc:
+            raise CheckError(
+                f"{exc} The mutation check runs deliberately broken code, so "
+                "without the sandbox it needs --fakes (your tests replace real "
+                "side effects with fakes or temp directories) or "
+                "GOODFELLOW_SANDBOX=off."
+            ) from exc
+        summary["sandbox"] = sb.mode
+        warn = sandbox.warning("mutation-check", sb)
+        if warn:
+            print(warn, file=sys.stderr)
+    else:
+        sb = sandbox.Sandbox("off")
     problems = []
+    # The sandbox contains PIDs and files but not the network, so a mutant of
+    # code that spawns (say) curl can still reach a live service: process and
+    # signal targets need explicit --isolated or --fakes either way.
     if process_sites and not (a.isolated or a.fakes):
         problems.append(
             "signals or spawns processes (a mutant can aim it at every process "
             "on the machine):\n  "
             + "\n  ".join(process_sites)
             + "\n  -> pass --isolated to run every test inside its own PID "
-            "namespace (unshare --pid --fork --mount-proc), or use fakes and "
-            "--fakes"
+            "namespace (the sandbox already does; with GOODFELLOW_SANDBOX=off it "
+            "means unshare --pid --fork --mount-proc), or use fakes and --fakes"
         )
     if fs_sites and not a.fakes:
         problems.append(
@@ -693,15 +852,25 @@ def check(a: argparse.Namespace, workdir: Path) -> dict:
             "refusing to mutate code that acts on real resources. It "
             + "\nIt ".join(problems)
         )
-    summary["pid_namespace"] = os.getpid() == 1
+    summary["pid_namespace"] = sb.isolated or os.getpid() == 1
+    new = added_files(workdir, a.base) if summary["targets"] else set()
+    sampled = []
     for path in summary["targets"]:
         src = (workdir / path).read_text()
         sources[path] = src
         try:
-            for m in enumerate_mutants(src, changes[path]):
-                mutants.append((path, m))
+            found = list(enumerate_mutants(src, changes[path]))
         except SyntaxError as exc:
             raise CheckError(f"{path}: cannot parse ({exc})") from exc
+        if not a.no_sample:
+            found, info = sample_mutants(
+                path, src, path in new, found, k=a.sample, min_lines=a.sample_min_lines
+            )
+            if info:
+                sampled.append({"file": path, **info})
+        mutants.extend((path, m) for m in found)
+    if sampled:
+        summary["sampled"] = sampled  # the verdict covers a seeded sample of these
     summary["mutants"] = len(mutants)
     if not mutants:
         return summary
@@ -717,13 +886,33 @@ def check(a: argparse.Namespace, workdir: Path) -> dict:
             workers.append(w)
         pristine = _manifest(workers[0])
         t0 = time.time()
-        if run_tests(workers[0], cmd, a.baseline_timeout, workdir) != "survived":
+        if run_tests(workers[0], cmd, a.baseline_timeout, workdir, sb=sb) != "survived":
             raise CheckError(
                 "baseline is not green in the sandbox copy; fix the suite (or "
                 "--test-cmd) before measuring mutants"
             )
+        loaded = time.time() - t0
+        summary["baseline_s"] = round(loaded, 1)
         _reset_sandbox(workers[0], pristine, workdir)
-        per_mutant = a.timeout or max(30, int((time.time() - t0) * 5) + 10)
+        if len(workers) > 1:
+            # Calibrate under the load the mutants will see: the unmutated suite
+            # in every sandbox at once. A timeout proves a hang only at >= 3x
+            # THIS, so contention between workers can never become a kill.
+            def calibrate(w: Path) -> Tuple[str, float]:
+                t1 = time.time()
+                st = run_tests(w, cmd, a.baseline_timeout, workdir, sb=sb)
+                return st, time.time() - t1
+
+            with cf.ThreadPoolExecutor(max_workers=len(workers)) as ex:
+                calib = list(ex.map(calibrate, workers))
+            for w in workers:
+                _reset_sandbox(w, pristine, workdir)
+            problem = calibration_problem([st for st, _s in calib])
+            if problem:
+                raise CheckError(problem)
+            loaded = max([loaded] + [s for _st, s in calib])
+        per_mutant = mutant_timeout(loaded, a.timeout)
+        summary["mutant_timeout_s"] = per_mutant
         deadline = time.time() + a.budget
         free = list(workers)
         lock = threading.Lock()
@@ -743,8 +932,13 @@ def check(a: argparse.Namespace, workdir: Path) -> dict:
                 target.unlink()
                 target.write_text(m.source)
                 os.chmod(target, mode)
+                # never run past the budget; a timeout under a cut-down limit
+                # is then below 3x the loaded baseline and stays unverified
+                rec["timeout_s"] = max(1, min(per_mutant, int(deadline - time.time())))
                 t1 = time.time()
-                rec["status"] = run_tests(w, cmd, per_mutant, workdir, error_codes)
+                rec["status"] = run_tests(
+                    w, cmd, rec["timeout_s"], workdir, error_codes, sb
+                )
                 rec["secs"] = round(time.time() - t1, 1)
             finally:
                 if target.exists():
@@ -758,18 +952,37 @@ def check(a: argparse.Namespace, workdir: Path) -> dict:
 
         with cf.ThreadPoolExecutor(max_workers=len(workers)) as ex:
             results = list(ex.map(job, mutants))
+        loaded = recheck_timeouts(results, loaded)
+
+        def control() -> Tuple[str, float]:
+            w = workers[0]
+            _reset_sandbox(w, pristine, workdir)
+            t1 = time.time()
+            st = run_tests(w, cmd, a.baseline_timeout, workdir, sb=sb)
+            return st, time.time() - t1
+
+        summary["loaded_baseline_s"] = round(
+            confirm_timeouts(results, loaded, control), 1
+        )
     finally:
         proc_group.kill_all()
         proc_group.sweep_cwd(tmp)  # anything still running inside a sandbox
         shutil.rmtree(tmp, ignore_errors=True)
 
-    ran = [r for r in results if r["status"] not in ("skipped_budget", "error")]
+    ran = [
+        r
+        for r in results
+        if r["status"] not in ("skipped_budget", "error", "timeout_unverified")
+    ]
     killed = [r for r in ran if r["status"] in ("killed", "timeout")]
     summary.update(
         {
             "ran": len(ran),
             "killed": len(killed),
             "skipped_budget": sum(r["status"] == "skipped_budget" for r in results),
+            "timeout_unverified": sum(
+                r["status"] == "timeout_unverified" for r in results
+            ),
             "runner_errors": sum(r["status"] == "error" for r in results),
             "score": round(len(killed) / len(ran), 3) if ran else None,
             "survivors": [r for r in ran if r["status"] == "survived"],
@@ -853,7 +1066,25 @@ def main(argv: Optional[List[str]] = None) -> int:
         default=10,
         help="niceness added to this process and its test runs (0 to disable)",
     )
-    ap.add_argument("--timeout", type=int, default=0, help="per-mutant seconds")
+    ap.add_argument(
+        "--timeout",
+        type=int,
+        default=0,
+        help="per-mutant seconds (default: 3x the baseline measured under parallel "
+        f"load, at least {MIN_MUTANT_TIMEOUT}; a timeout counts as a kill only "
+        "when the limit is at least 3x that baseline)",
+    )
+    ap.add_argument(
+        "--sample",
+        type=int,
+        default=DEFAULT_SAMPLE,
+        help="mutants kept (fixed seed) from a NEW file longer than "
+        "--sample-min-lines; edits to existing files are never sampled",
+    )
+    ap.add_argument("--sample-min-lines", type=int, default=DEFAULT_SAMPLE_MIN_LINES)
+    ap.add_argument(
+        "--no-sample", action="store_true", help="mutate every mutant of every target"
+    )
     ap.add_argument("--baseline-timeout", type=int, default=900)
     ap.add_argument(
         "--budget", type=int, default=900, help="total seconds for all mutants"
@@ -866,9 +1097,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument(
         "--isolated",
         action="store_true",
-        help="re-run inside a private PID namespace (unshare --pid --fork "
-        "--mount-proc), so mutants of code that signals or spawns processes can "
-        "only see the check's own processes; fails closed if none can be made",
+        help="with GOODFELLOW_SANDBOX=off: re-run inside a private PID namespace "
+        "(unshare --pid --fork --mount-proc), so mutants of code that signals or "
+        "spawns processes can only see the check's own processes; fails closed if "
+        "none can be made. With the sandbox (the default) every test run already "
+        "has its own PID namespace, and this flag only records your consent: "
+        "neither isolates the network",
     )
     ap.add_argument(
         "--fakes",
@@ -878,9 +1112,15 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
     ap.add_argument("--json", action="store_true")
     a = ap.parse_args(argv)
-    if a.isolated and os.environ.get(_IN_PIDNS) != "1":
+    try:
+        unsandboxed = sandbox.mode_from_env() == "off" or sandbox.find_bwrap() is None
+    except sandbox.SandboxError as exc:
+        print(f"mutation-check BLOCK: {exc}", file=sys.stderr)
+        return 2
+    reexec = a.isolated and unsandboxed
+    if reexec and os.environ.get(_IN_PIDNS) != "1":
         return _reexec_in_pid_namespace(sys.argv[1:] if argv is None else argv)
-    if a.isolated and os.getpid() != 1:
+    if reexec and os.getpid() != 1:
         print(
             "mutation-check BLOCK: --isolated but not in a PID namespace",
             file=sys.stderr,
@@ -894,7 +1134,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     try:
         s = check(a, workdir)
-    except (CheckError, OSError) as exc:
+    except (CheckError, sandbox.SandboxError, OSError) as exc:
         print(f"mutation-check BLOCK: {exc}", file=sys.stderr)
         return 2
 
@@ -906,11 +1146,20 @@ def main(argv: Optional[List[str]] = None) -> int:
     if a.json:
         print(json.dumps(s, indent=1))
     else:
+        note = "".join(
+            f" (SAMPLED: {x['file']} {x['sampled']}/{x['population']})"
+            for x in s.get("sampled", [])
+        )
         print(
-            f"mutation-check: {s['killed']}/{s['ran']} mutants killed "
+            f"mutation-check: {s['killed']}/{s['ran']} mutants killed{note} "
             f"({s['mutants']} generated, {s['skipped_budget']} not run) "
             f"in {len(s['targets'])} high-stakes file(s)"
         )
+        for x in s.get("sampled", []):
+            print(
+                f"  sampled {x['sampled']} of {x['population']} mutants in new file "
+                f"{x['file']} (seed {x['seed']}); edits to existing files are never sampled"
+            )
         for r in s["survivors"]:
             print(f"  SURVIVED {r['file']}:{r['line']} {r['op']:<18} {r['src_line']}")
         for path in s["unsupported"]:
@@ -926,6 +1175,14 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(
             f"mutation-check INCOMPLETE: {s['runner_errors']} mutant run(s) ended in a "
             "runner error (exit 4, 5, 126 or 127), so no test judged them.",
+            file=sys.stderr,
+        )
+        return 3
+    if s["timeout_unverified"]:
+        print(
+            f"mutation-check INCOMPLETE: {s['timeout_unverified']} mutant(s) timed out "
+            "under a limit below 3x the loaded baseline, so the timeout does not prove "
+            "a hang (raise --timeout or --budget, or lower --workers).",
             file=sys.stderr,
         )
         return 3

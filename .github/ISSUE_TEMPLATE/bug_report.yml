@@ -33,7 +33,7 @@ body:
       label: Area
       options:
         - brainstorm (incl. --grill)
-        - review-doc (spec-review / plan-review)
+        - review-doc (spec / plan review)
         - plan
         - execute
         - ship

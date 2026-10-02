@@ -11,6 +11,64 @@ afterwards at the commits that declared them, without Releases. See [RELEASING.m
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-10-02
+
+The red and mutation checks now run your tests in a sandbox, the mutation check stops counting a
+slow machine as a kill, and the final review survives a rebase. The stop list now asks instead of
+blocking. **Heads up:** the old skill aliases are gone (see Removed).
+
+### Removed
+
+- **The `spec-review`, `plan-review` and `grill` skills (breaking).** Use `review-doc --spec`,
+  `review-doc --plan` and `brainstorm --grill`. 0.4.0 announced their removal for 0.5.0; it moves
+  up because people rarely type multi-word commands: Claude picks a skill from what you say. The
+  phrases the aliases answered to ("review my spec", "stress test this plan", "grill me on X") are
+  now in the canonical skills' descriptions, so asking in words works as before ([#35](https://github.com/easelyte/goodfellow/pull/35)).
+- **Stop-list rules that blocked reviewable or reversible work.** Opening or merging a pull
+  request, pushes to repositories outside an owner list, and migration commands no longer stop
+  anything, so `stop-foreign-remote`, `stop-public-repo` (and its `gh repo view` visibility
+  lookup) and `stop-migration` are gone, with the `stop_list.owners` and
+  `stop_list.migration_commands` settings. Old configs that name them still load ([#35](https://github.com/easelyte/goodfellow/pull/35)).
+- **The `git add -A` and protected-branch force-push guards.** Staging is reversible, and every
+  force-push now asks through `stop-force-push`. `GOODFELLOW_GUARDS` is gone too:
+  `GOODFELLOW_STOP_LIST=0` is the one switch ([#35](https://github.com/easelyte/goodfellow/pull/35)).
+
+### Changed
+
+- **The stop list asks, it never blocks (behaviour change).** Before a force-push, a push to the
+  default branch, a tag push or `gh release` write, a package publish, or a command carrying
+  `--dangerously-skip-permissions`, the hook returns `permissionDecision: "ask"` with a one-line
+  reason: Claude Code shows its normal confirmation and your yes goes through. The default branch
+  comes from `protected_branches` (default `main`, `master`) and the remote's HEAD; no network
+  lookup remains. Your own `block` rules in `.goodfellow/guards.json` still deny ([#35](https://github.com/easelyte/goodfellow/pull/35)).
+- **Test sandbox: convenient by default, strict where it matters.** Where
+  [bubblewrap](https://github.com/containers/bubblewrap) is installed, the red and mutation checks
+  run your tests with a private PID namespace and a filesystem allowlist: the only writable host
+  directory is the check's own throwaway copy, your home directory, checkout and credentials are
+  not mounted, and tokens in your environment are dropped (`GOODFELLOW_SANDBOX_ENV` keeps named
+  variables). Without bubblewrap (macOS, say), the red check still runs, with one warning line and
+  an install hint, and its report says `unsandboxed`. The mutation check runs deliberately broken
+  code, so without bubblewrap it asks for `--fakes` or `GOODFELLOW_SANDBOX=off` (behaviour change).
+  Once bubblewrap is installed, a sandbox that does not fully isolate makes either check refuse:
+  it never degrades silently. `GOODFELLOW_SANDBOX=bwrap` requires the sandbox everywhere;
+  `GOODFELLOW_SANDBOX_RO` adds read-only paths. See `docs/configuration.md` ([#35](https://github.com/easelyte/goodfellow/pull/35)).
+- **Mutation timeouts are calibrated to the load (behaviour change).** Each mutant gets at least
+  three times the suite's runtime measured in every parallel sandbox at once (never under 30 s;
+  `--timeout` still overrides), and is capped at what is left of `--budget`. A timeout counts as a
+  kill only when its limit was at least three times that loaded runtime; otherwise it is
+  `timeout_unverified` and the result is incomplete (exit 3) instead of a pass ([#35](https://github.com/easelyte/goodfellow/pull/35)).
+
+### Added
+
+- **Sampling for large new files in the mutation check.** A file that is new on the branch, longer
+  than 400 lines and with more than 150 mutants is reduced to a fixed, seeded sample of 150, and
+  the verdict says `(SAMPLED: file k/N)`. Edits to existing files are never sampled. `--sample`,
+  `--sample-min-lines` and `--no-sample` tune it ([#35](https://github.com/easelyte/goodfellow/pull/35)).
+- **Rebase-aware final review.** `ship`'s final-HEAD check maps the last reviewed commit to its
+  rebased counterpart by patch-id and file content (`scripts/review_delta.py`), so after a rebase it
+  reviews only the commits that came after the reviewed ones. A dropped, reordered or rewritten
+  reviewed commit, a merge commit, or any git failure reviews the whole branch ([#35](https://github.com/easelyte/goodfellow/pull/35)).
+
 ## [0.4.0] - 2026-09-29
 
 goodfellow now sizes the process to the change. A classify step puts each change in one of four
@@ -236,7 +294,8 @@ Initial release.
 - Autopilot mode with dry-run.
 - Triage with two-reviewer reconciliation.
 
-[Unreleased]: https://github.com/easelyte/goodfellow/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/easelyte/goodfellow/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/easelyte/goodfellow/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/easelyte/goodfellow/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/easelyte/goodfellow/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/easelyte/goodfellow/compare/v0.1.0...v0.2.0

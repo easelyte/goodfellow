@@ -86,7 +86,7 @@ def test_review_doc_discard_is_conditional():
 
 def test_review_doc_plan_cap_is_limit_not_convergence():
     """§5 must classify a non-blocking hard-cap halt as a limit, never as
-    convergence (P-079). Mirror of the spec-review assertion (P-057 parity)."""
+    convergence (P-079). Mirror of the spec-mode assertion (P-057 parity)."""
     txt = _read("skills", "review-doc", "SKILL.md")
     flat = " ".join(txt.split())
     assert "Only non-blocking findings → declare convergence" not in flat
@@ -98,11 +98,3 @@ def test_ship_reports_cap_halt_honestly():
     assert "P-079" in txt
     assert "Halted at hard cap" in txt
 
-
-def test_old_review_skill_names_are_aliases_for_review_doc():
-    """spec-review and plan-review stay through 0.4.x as aliases, and must route to
-    review-doc rather than carry a second, drifting copy of the loop."""
-    for name, flag in (("spec-review", "--spec"), ("plan-review", "--plan")):
-        txt = _read("skills", name, "SKILL.md")
-        assert f"review-doc {flag}" in txt, f"{name} does not route to review-doc {flag}"
-        assert "Terminal safety gate" not in txt, f"{name} still carries its own loop"

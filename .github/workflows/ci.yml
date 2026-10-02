@@ -15,8 +15,16 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install test deps
-        run: pip install pytest
+        run: |
+          pip install pytest
+          # The red and mutation checks run tests in bubblewrap. Ubuntu 24.04
+          # restricts unprivileged user namespaces through AppArmor; lift it on
+          # this throwaway runner so the sandbox tests run instead of skipping.
+          sudo apt-get update -q && sudo apt-get install -y -q bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
       - name: Run tests
+        env:
+          GOODFELLOW_REQUIRE_SANDBOX_TESTS: "1"
         run: cd scripts && python -m pytest -v
       - name: Lint shell scripts
         run: |
@@ -41,7 +49,7 @@ jobs:
           fi
       - name: Validate plugin structure
         run: |
-          for skill in brainstorm grill review-doc spec-review plan plan-review execute ship codex-review triage snap-compact close branch prune-stale public-pr; do
+          for skill in brainstorm review-doc plan execute ship codex-review triage snap-compact close branch prune-stale public-pr; do
             if [ ! -f "skills/$skill/SKILL.md" ]; then
               echo "ERROR: Missing skills/$skill/SKILL.md"
               exit 1

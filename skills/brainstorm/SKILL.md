@@ -1,6 +1,6 @@
 ---
 name: brainstorm
-description: Entry point for new work. Classifies the change into a risk tier (T0 fix … T3 live state), then does only the design work that tier needs — none for a fix, a short plan for a feature, a reviewed spec for a design. Reads accumulated principles first. `--grill` interviews you one question at a time for fuzzy intent; `--from-loop N` seeds from a tracked follow-up; `--tier Tn` overrides the tier (never below its hard floor).
+description: "Entry point for new work. Classifies the change into a risk tier (T0 fix … T3 live state), then does only the design work that tier needs — none for a fix, a short plan for a feature, a reviewed spec for a design. Reads accumulated principles first. Use when someone says \"brainstorm X\", \"design X\", \"let's build X\", \"scope X\" or \"help me think through X\". `--grill` interviews you one question at a time for fuzzy or high-stakes intent, and only on request: \"grill me on X\", \"interview me about X\", \"grill me\". `--from-loop N` seeds from a tracked follow-up; `--tier Tn` overrides the tier (never below its hard floor)."
 ---
 
 Start the work described in: $ARGUMENTS
@@ -8,7 +8,8 @@ Start the work described in: $ARGUMENTS
 Flags: `--grill` (interview mode, §5b), `--from-loop N` (§3), `--tier T0..T3` (operator override,
 §1). Autopilot is on by default (`GOODFELLOW_AUTOPILOT=0` turns it off): no approval gates between
 steps. It still stops for **product calls** (naming, pricing, public positioning, UX choices that
-differ only by taste, scope beyond the request) and for anything on the stop list.
+differ only by taste, scope beyond the request), and the stop list asks before a force-push,
+a default-branch push, a release or a publish.
 
 ## 0. Initialize project state
 

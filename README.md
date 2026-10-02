@@ -91,9 +91,9 @@ Refused: --tier T0 is below the T1 floor. Floor T1: src/auth/session.py matches 
 
 - **Depth that fits the change.** A classify step picks the tier from a four-row rubric, announces
   it, and only ever raises it. Hard floors come from your own path lists.
-- **Autopilot with a stop list.** No approvals between steps. A `PreToolUse` hook stops pushes and
-  PRs to repos you don't own, default-branch pushes and PRs on public repos, releases, package
-  publishes, migrations and force-pushes, and hands them to you.
+- **Autopilot that asks, never blocks.** No approvals between steps. Before a force-push, a push
+  to the default branch, a tag or release, or a package publish, a `PreToolUse` hook asks you
+  through Claude Code's normal confirmation. Your yes goes straight through.
 - **Tests that must fail first.** `red_check.py` replays each new test against the base branch: it
   must fail there on an assertion, then pass. On high-stakes paths, a mutation check shows which
   changed lines no test would catch.
@@ -130,7 +130,8 @@ Invoke any skill as `/goodfellow:<name>`. The chain skills hand off to the next 
 | **snap-compact**, **close** | Save learnings before compaction, and at the end of a session. |
 | **branch**, **prune-stale** | Create a feature worktree; remove merged branches and old logs. |
 
-`spec-review`, `plan-review` and `grill` still work as aliases through 0.4.x and are removed in 0.5.0.
+You rarely need to type these. Say what you want ("review my spec", "grill me on the auth flow",
+"ship this") and Claude picks the skill.
 
 <details>
 <summary><b>Settings</b></summary>
@@ -140,25 +141,25 @@ Everything works without configuration. Invalid values fail loudly rather than f
 | Variable | Default | Purpose |
 |---|---|---|
 | `GOODFELLOW_AUTOPILOT` | on | `0` pauses for your approval at each step (the stop list stays on); `dry-run` logs decisions without changing files. |
-| `GOODFELLOW_STOP_LIST` | on | `0` turns the stop list off, in every mode. Only for a session where you accept those risks yourself. |
+| `GOODFELLOW_STOP_LIST` | on | `0` turns off the stop list's confirmations, in every mode. |
 | `GOODFELLOW_CODEX` | `1` | `0` disables Codex even when it is installed. |
 | `GOODFELLOW_CODEX_MODEL` | Codex default | GPT model for the Codex reviewer. |
 | `GOODFELLOW_REVIEW_MODEL` | `sonnet` / `opus` | Claude reviewer model (`opus` when it is the only reviewer). |
 | `GOODFELLOW_HIGH_STAKES_PATHS` | `.goodfellow/high_stakes_paths.txt` | Globs that set a T1 floor and enable the mutation check. |
 | `GOODFELLOW_LIVE_STATE_PATHS` | `.goodfellow/live_state_paths.txt` | Globs added to the built-in T3 list (migrations, service and timer units, crontabs, Terraform); `!glob` drops one. |
-| `GOODFELLOW_GUARDS` | `1` | `0` turns off the built-in guards and the stop list. |
+| `GOODFELLOW_SANDBOX` | `auto` | Where [bubblewrap](https://github.com/containers/bubblewrap) is installed, the red and mutation checks run your tests sandboxed (private PID namespace, filesystem allowlist). Without it, the red check runs with a one-line warning; the mutation check asks for `--fakes`. `bwrap` requires the sandbox; `off` skips it. |
+| `GOODFELLOW_SANDBOX_RO` | unset | Extra read-only paths for the sandbox, separated by `:` (a toolchain outside `/usr`, say). |
 | `GOODFELLOW_MEMORY` | `flat` | Knowledge backend: `flat` (one file) or `rich` (one file per fact, indexed). |
 | `GOODFELLOW_TAVILY_KEY` | unset | Tavily key for batch research; otherwise Claude's web search. |
 | `GOODFELLOW_PRINCIPLES_WEB` | auto | `1` loads the JS, React, Next.js and Postgres principles; automatic with a `package.json`. |
 
-**Stop list and guards** live in `.goodfellow/guards.json` (see
-[the example](configs/guards.example.json)). `stop_list.owners` lists the owners you push to freely
-(`owner` for GitHub, or `host/owner`; default: the owner of `origin`); `stop_list.migration_commands` replaces the migration list;
-`disable_builtins` turns off a single stop such as `stop-migration`. Whether a repo is public is
-looked up with `gh` and cached for ten minutes; if the lookup fails, the push or PR is stopped.
-The same hook also blocks `git add -A`, force-pushes to `main` and
-`--dangerously-skip-permissions`. `python3 scripts/guard_engine.py --selfcheck` prints what is
-enforced. The full reference, including reviewers, memory backends and loops, is in
+**The stop list asks, it never blocks.** It asks before a force-push, a push to the default
+branch, a tag push or `gh release` write, a package publish, and `--dangerously-skip-permissions`.
+Opening or merging a PR asks nothing. Turn one off with its id in `disable_builtins` in
+`.goodfellow/guards.json` (see [the example](configs/guards.example.json)), where you can also add
+your project's own `block` rules; those deny, and they win over a stop that would ask. The
+confirmation is Claude Code's own: a mode that auto-approves prompts may skip it.
+`python3 scripts/guard_engine.py --selfcheck` prints what is active. The full reference, including reviewers, memory backends and loops, is in
 [docs/configuration.md](docs/configuration.md).
 
 </details>
@@ -172,7 +173,7 @@ lose the cross-family view that makes review most useful.
 and, if installed, your Codex plan. Lower tiers write fewer documents, so they cost less.
 
 **Will it merge on its own?** Into your own private repo, yes, once review converges and CI is
-green. On a public repo, opening the PR is on the stop list, so it hands that step to you.
+green. Pushing a tag or publishing a release asks you first.
 
 **Where is its state?** In `.goodfellow/` at your project root: knowledge, loops, run logs and
 guard rules. Commit what you want to share.

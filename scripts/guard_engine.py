@@ -1,53 +1,31 @@
 #!/usr/bin/env python3
-"""Goodfellow PreToolUse guard engine — tool-layer enforcement of block rules.
+"""Goodfellow PreToolUse guard engine: asks before the few hard-to-reverse actions.
 
-A constraint whose violation is expensive to reverse does NOT belong in prose.
-Compaction is optimized for task accuracy, so nothing measures whether a "never do
-X" instruction survives the rewrite ("Governance Decay", arxiv 2606.22528). The
-enforcement that works is a PreToolUse hook, not a stronger sentence — it fires
-deterministically on every tool call regardless of what the context still holds.
+Models are capable, so goodfellow keeps its tool-layer checks few, and none of its
+own checks blocks: they return `permissionDecision: "ask"` with a one-line reason,
+Claude Code shows its normal confirmation, and the user's yes goes through. This
+engine backs a single PreToolUse hook (see hooks/hooks.json) and evaluates:
 
-This engine backs a single PreToolUse hook (see hooks/hooks.json) and evaluates:
+  1. One built-in: the `--dangerously-skip-permissions` CLI flag, which turns off the
+     permission prompt for every tool call (asks).
+  2. The stop list (stop_list.py): force-push, a push to the default branch, a
+     tag push or release, a package publish (asks).
+  3. Declarative user BLOCK rules from `.goodfellow/guards.json`. These deny,
+     because the project wrote them.
 
-  1. Built-in universal guards (no project knowledge required):
-       - `git add -A` / `git add .` / `git add --all`   (stage specific files),
-         also bundled (`-fA`), whole-tree pathspecs (`./`, `*`, `:/`, `:(top)`)
-         exclusion-only pathspecs (`':!x'` adds everything else) and
-         `--pathspec-from-file` (its pathspecs cannot be inspected)
-       - the `--dangerously-skip-permissions` CLI flag    (keep the permission flow)
-       - force-push to a protected branch                 (main/master by default)
-  2. Declarative user BLOCK rules from `.goodfellow/guards.json`, so a project's
-     own expensive-to-reverse rules get tool-layer enforcement instead of prose.
+## The decision contract (assert JSON, not exit code)
 
-## The deny contract (assert JSON, not exit code)
+A PreToolUse hook decides by printing a permissionDecision JSON object ("ask" or
+"deny") on stdout and exiting 0. A non-zero exit is a *hook error*. Tests assert
+the JSON, never the exit code. See `emit` / `decide`.
 
-A PreToolUse hook DENIES by printing a permissionDecision JSON object on stdout
-and exiting 0. A non-zero exit is a *hook error*, not a deny. Tests must assert
-the JSON, never the exit code. See `emit_deny` / `decision_for_input`.
+## Parsing, not grep
 
-## Bypass-shape coverage (why parsing, not grep)
-
-A guard that only recognizes the canonical spelling of a dangerous command is a
-guard an attacker (or a careless paste) walks around. So the built-ins parse
-shell structure rather than substring-match:
-
-  - Commands are split on unquoted newlines and `;`/`|`/`&`/`()` control
-    operators, so `echo hi\ngit add -A` is seen as two commands, not one.
-  - Leading env assignments and wrappers (`env`, `sudo`, `command`, `FOO=bar …`)
-    are stripped before the subcommand is read, so `env git add -A` is caught.
-  - Nested `sh -c '…'` / `bash -c '…'` programs are recursively expanded
-    (bounded depth), so `bash -c 'git add -A'` is caught.
-  - Force-push detection understands `+refspec` force syntax and normalizes
-    `refs/heads/main` to `main`.
-
-Conversely, matching is shlex-token based, so merely *writing* a blocked flag as
-text (`git commit -m "docs: --dangerously-skip-permissions"`) is one token — the
-message — and never trips a guard, and built-ins inspect only the `Bash` tool's
-command, never Write/Edit content.
-
-Known, deliberate limitation: a bare `git push --force` with no refspec is NOT
-blocked (the target branch cannot be resolved statically, and force-pushing a
-feature branch is routine). Name the protected branch to be protected.
+Commands are split on unquoted newlines and `;`/`|`/`&`/`()` control operators;
+leading env assignments and wrappers (`env`, `sudo`, `command`) are stripped; nested
+`sh -c '...'` programs are expanded (bounded depth). Matching is shlex-token based,
+so merely writing a flag as text inside a quoted message never trips a check, and
+the built-ins inspect only the `Bash` tool's command, never Write/Edit content.
 
 ## Untrusted config (ReDoS bound)
 
@@ -67,7 +45,7 @@ match inline (linear, safe).
 
 A governance gate must not *itself* block legitimate work. If `.goodfellow/guards.json`
 is malformed, the live hook skips the user rules (built-ins still enforce) and
-writes a warning to stderr — it never deny-alls the session into a deadlock where
+writes a warning to stderr: it never deny-alls the session into a deadlock where
 you cannot even edit the file to fix it. For a loud, CI/snap-compact-style check,
 run `guard_engine.py --validate`, which exits non-zero on a bad config;
 `guard_engine.py --selfcheck`, which prints the active guard set (with full
@@ -75,8 +53,8 @@ per-rule digests) so a post-compaction session can assert governance survived th
 boundary; and `guard_engine.py --assert-guard-set <baseline.json>`, which exits
 non-zero if the enforced set drifted from a snapshot.
 
-Escape hatches: `CLAUDE_HOOK_BYPASS=1` (all guards off), `GOODFELLOW_GUARDS=0`
-(built-ins off), or a per-rule `bypass_env` in guards.json.
+Switches: `GOODFELLOW_STOP_LIST=0` (the built-in asks off), `CLAUDE_HOOK_BYPASS=1`
+(everything off), or a per-rule `bypass_env` in guards.json.
 """
 
 from __future__ import annotations
@@ -88,13 +66,15 @@ import re
 import shlex
 import sys
 from pathlib import PurePosixPath, PureWindowsPath
-from typing import Iterable, List, NamedTuple, Optional, Sequence
+from typing import Iterable, List, Optional, Sequence, Tuple
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import stop_list  # noqa: E402
 
 DEFAULT_PROTECTED_BRANCHES = ("main", "master")
-BUILTIN_IDS = ("git-add-all", "dangerous-skip-permissions", "force-push-protected")
+BUILTIN_IDS = ("dangerous-skip-permissions",)
+# Built-ins removed in 0.4.1, accepted in old configs and ignored.
+RETIRED_BUILTIN_IDS = ("git-add-all", "force-push-protected")
 SKIP_PERMS_FLAG = "--dangerously-skip-permissions"
 
 # Leading wrappers/assignments to strip before reading a subcommand.
@@ -323,103 +303,13 @@ def expand_segments(command: str, _depth: int = 0) -> List[List[str]]:
 # --------------------------------------------------------------------------- #
 
 
-class _Pathspec(NamedTuple):
-    top: bool
-    exclude: bool
-    literal: bool
-    pattern: str
-
-
-def _parse_pathspec(arg: str) -> _Pathspec:
-    """Split git pathspec magic from the pattern.
-
-    Short form `:<magic chars>pattern` (`/` top, `!` or `^` exclude, an optional
-    `:` ending the magic) and long form `:(top,exclude,literal,...)pattern`."""
-    if not arg.startswith(":"):
-        return _Pathspec(False, False, False, arg)
-    if arg.startswith(":("):
-        close = arg.find(")")
-        if close < 0:
-            return _Pathspec(False, False, False, arg)
-        words = {w.strip().split(":", 1)[0] for w in arg[2:close].split(",")}
-        return _Pathspec(
-            "top" in words, "exclude" in words, "literal" in words, arg[close + 1 :]
-        )
-    i = 1
-    while i < len(arg) and arg[i] in "/!^":
-        i += 1
-    magic = arg[1:i]
-    if i < len(arg) and arg[i] == ":":
-        i += 1
-    return _Pathspec("/" in magic, "!" in magic or "^" in magic, False, arg[i:])
-
-
-def _names_whole_tree(spec: _Pathspec) -> bool:
-    """`.` and `./` from where git runs, `*` (a git glob matches every path)
-    unless `literal` magic turns wildcards off, and an empty pattern under `top`
-    magic (`:/`, `:(top)`)."""
-    pattern = spec.pattern
-    stripped = pattern.rstrip("/") or ("." if pattern else "")
-    if stripped == ".":
-        return True
-    if stripped == "*" and not spec.literal:
-        return True
-    return spec.top and pattern == ""
-
-
-def _is_blanket_add_arg(arg: str) -> bool:
-    """`-A`, `--all`, or `-A` bundled with other short flags (git accepts `-fA`
-    as `-f -A`)."""
-    if arg in {"-A", "--all"}:
-        return True
-    return arg.startswith("-") and not arg.startswith("--") and "A" in arg[1:]
-
-
-def _is_blanket_add(args: List[str]) -> bool:
-    """Does this `git add` argument list stage the whole tree?
-
-    A blanket flag, a whole-tree pathspec, pathspecs that are ALL exclusions
-    (git then adds everything except them: `git add ':!secrets.env'`), or
-    `--pathspec-from-file`, whose pathspecs this guard cannot see (fail closed)."""
-    pathspecs: List[str] = []
-    options_done = False
-    for arg in args:
-        if not options_done and arg == "--":
-            options_done = True
-            continue
-        if not options_done and arg.startswith("-"):
-            if _is_blanket_add_arg(arg) or arg.startswith("--pathspec-from-file"):
-                return True
-            continue
-        pathspecs.append(arg)
-    parsed = [_parse_pathspec(p) for p in pathspecs]
-    if any(not spec.exclude and _names_whole_tree(spec) for spec in parsed):
-        return True
-    return bool(parsed) and all(spec.exclude for spec in parsed)
-
-
-def check_git_add_all(segments: Sequence[List[str]]) -> Optional[str]:
-    for tokens in segments:
-        start = _git_arg_start(tokens)
-        if start is None or start >= len(tokens) or tokens[start] != "add":
-            continue
-        if _is_blanket_add(tokens[start + 1 :]):
-            return (
-                "Blocked `git add -A` / `git add .` / `git add --all`. Stage "
-                "specific files instead — a blanket add is how secrets and stray "
-                "artifacts leak into a commit."
-            )
-    return None
-
-
 def check_skip_permissions(segments: Sequence[List[str]]) -> Optional[str]:
     for tokens in segments:
         for token in tokens:
             if token == SKIP_PERMS_FLAG or token.startswith(SKIP_PERMS_FLAG + "="):
                 return (
-                    f"Blocked `{SKIP_PERMS_FLAG}`. This flag disables the permission "
-                    "prompt for every tool call — the whole safety surface. Use the "
-                    "normal permission flow."
+                    f"goodfellow (dangerous-skip-permissions): `{SKIP_PERMS_FLAG}` turns "
+                    "off the permission prompt for every tool call. Confirm to go ahead."
                 )
     return None
 
@@ -433,79 +323,6 @@ def _normalize_ref(refspec: str) -> str:
             ref = ref[len(prefix) :]
             break
     return ref
-
-
-def _push_refspecs(args: List[str]) -> List[str]:
-    """The refspec arguments of a `git push`, excluding the remote/repository.
-
-    In `git push [opts] [<repo> [<refspec>...]]` the first positional is the
-    remote, not a refspec — so `git push --force main feature-x` (remote `main`)
-    force-pushes `feature-x`, not `main`. When the repo is supplied via `--repo`
-    every positional is a refspec instead.
-
-    Value-taking options are consumed with their value so the value can never be
-    mistaken for the repository token (which would then shift the real remote into
-    refspec position and spuriously deny a legitimate push)."""
-    positionals: List[str] = []
-    repo_via_option = False
-    skip_next = False
-    for a in args:
-        if skip_next:
-            skip_next = False
-            continue
-        if a in _PUSH_VALUE_OPTS:
-            repo_via_option = repo_via_option or a == "--repo"
-            skip_next = True  # its value is the next token — not a positional
-            continue
-        base = a.split("=", 1)[0]
-        if a.startswith("--") and "=" in a and base in _PUSH_VALUE_OPTS:
-            repo_via_option = repo_via_option or base == "--repo"
-            continue
-        if a.startswith("-o") and a != "-o":  # `-oVALUE` combined short form
-            continue
-        if a.startswith("-"):
-            continue
-        positionals.append(a)
-    if repo_via_option:
-        return positionals
-    return positionals[1:]  # drop the remote/repository
-
-
-def check_force_push_protected(
-    segments: Sequence[List[str]], protected: Sequence[str]
-) -> Optional[str]:
-    """Deny a force-push whose refspec resolves to a protected branch.
-
-    Understands both a global force flag (`--force`/`-f`/`--force-with-lease`) and
-    per-refspec `+` force syntax, and normalizes `refs/heads/<b>` to `<b>`. A bare
-    `git push --force` with no refspec is deliberately NOT blocked (unresolvable
-    target; feature-branch force-push is routine)."""
-    protected_set = {_normalize_ref(b) for b in protected if b}
-    for tokens in segments:
-        start = _git_arg_start(tokens)
-        if start is None or start >= len(tokens) or tokens[start] != "push":
-            continue
-        args = tokens[start + 1 :]
-        global_force = any(
-            a in {"-f", "--force"}
-            or a == "--force-with-lease"
-            or a.startswith("--force-with-lease=")
-            or a.startswith("--force-if-includes")
-            for a in args
-        )
-        refspecs = _push_refspecs(args)
-        for a in refspecs:
-            if not (global_force or a.startswith("+")):
-                continue
-            if _normalize_ref(a) in protected_set:
-                return (
-                    f"Blocked force-push to protected branch "
-                    f"'{_normalize_ref(a)}'. Force-pushing "
-                    f"{'/'.join(sorted(protected_set))} rewrites shared history and "
-                    "can destroy other people's commits. Push a feature branch and "
-                    "open a PR, or drop the force."
-                )
-    return None
 
 
 # --------------------------------------------------------------------------- #
@@ -546,7 +363,8 @@ def validate_config(data: dict, path: str = "guards.json") -> None:
     if not isinstance(disabled, list) or not all(isinstance(b, str) for b in disabled):
         raise GuardConfigError(f"{path}: 'disable_builtins' must be a list of strings")
     known = BUILTIN_IDS + stop_list.STOP_IDS
-    for bad in [b for b in disabled if b not in known]:
+    retired = RETIRED_BUILTIN_IDS + stop_list.RETIRED_IDS
+    for bad in [b for b in disabled if b not in known + retired]:
         raise GuardConfigError(
             f"{path}: unknown built-in '{bad}' in 'disable_builtins' "
             f"(known: {', '.join(known)})"
@@ -554,7 +372,7 @@ def validate_config(data: dict, path: str = "guards.json") -> None:
     stops = data.get("stop_list", {})
     if not isinstance(stops, dict):
         raise GuardConfigError(f"{path}: 'stop_list' must be an object")
-    for key in ("owners", "migration_commands", "publish_commands"):
+    for key in ("publish_commands",) + stop_list.RETIRED_KEYS:
         value = stops.get(key)
         if value is not None and (
             not isinstance(value, list)
@@ -564,7 +382,7 @@ def validate_config(data: dict, path: str = "guards.json") -> None:
                 f"{path}: 'stop_list.{key}' must be a list of non-empty strings"
             )
     for key in stops:
-        if key not in ("owners", "migration_commands", "publish_commands"):
+        if key not in ("publish_commands",) + stop_list.RETIRED_KEYS:
             raise GuardConfigError(f"{path}: unknown key 'stop_list.{key}'")
     rules = data.get("block", [])
     if not isinstance(rules, list):
@@ -769,36 +587,26 @@ def extract_text(tool_name: str, tool_input: dict) -> str:
 def evaluate_builtins(
     command: str, protected: Sequence[str], disabled: Sequence[str]
 ) -> Optional[str]:
-    """Run the built-in universal guards over a Bash command string."""
-    if os.environ.get("GOODFELLOW_GUARDS") == "0":
+    """The built-in check over a Bash command string: an ask reason, or None.
+    `GOODFELLOW_STOP_LIST=0` turns it off along with the stop list."""
+    if os.environ.get("GOODFELLOW_STOP_LIST") == "0":
+        return None
+    if "dangerous-skip-permissions" in disabled:
         return None
     try:
         segments = expand_segments(command)
     except ValueError:
-        # Unparseable shell (unbalanced quotes): don't guess, don't block.
+        # Unparseable shell (unbalanced quotes): don't guess.
         return None
-    checks = []
-    if "git-add-all" not in disabled:
-        checks.append(lambda: check_git_add_all(segments))
-    if "dangerous-skip-permissions" not in disabled:
-        checks.append(lambda: check_skip_permissions(segments))
-    if "force-push-protected" not in disabled:
-        checks.append(lambda: check_force_push_protected(segments, protected))
-    for check in checks:
-        reason = check()
-        if reason:
-            return reason
-    return None
+    return check_skip_permissions(segments)
 
 
 def evaluate_stop_list(
     command: str, cwd: str, config: dict, project_dir: str
 ) -> Optional[str]:
-    """The stop list (see stop_list.py): on in every mode. `GOODFELLOW_AUTOPILOT=0`
-    only restores step approvals; `GOODFELLOW_STOP_LIST=0` is the dedicated opt-out."""
+    """The stop list (see stop_list.py): an ask reason, or None. On in every
+    mode; `GOODFELLOW_STOP_LIST=0` turns it off."""
     if os.environ.get("GOODFELLOW_STOP_LIST") == "0":
-        return None
-    if os.environ.get("GOODFELLOW_GUARDS") == "0":
         return None
     try:
         segments = expand_segments(command)
@@ -809,52 +617,69 @@ def evaluate_stop_list(
     )
 
 
-def decision_for_input(hook_input: dict, project_dir: str) -> Optional[str]:
-    """Return a deny reason for a PreToolUse payload, or None to allow.
+def decide(
+    hook_input: dict, project_dir: str, config: Optional[dict] = None
+) -> Optional[Tuple[str, str]]:
+    """(decision, reason) for a PreToolUse payload, or None to allow.
 
-    Pure (no stdout/exit): the unit under test. Fail-safe-open on a malformed
-    user config — built-ins still run, user rules are skipped, warning to stderr.
+    Built-ins and the stop list never block: they return "ask", so Claude Code
+    shows its normal confirmation and the user's yes goes through. Only the
+    project's own `block` rules in .goodfellow/guards.json deny, because the user
+    wrote them. Pure (no stdout/exit): the unit under test. Fail-safe-open on a
+    malformed user config: built-ins still run, user rules are skipped.
     """
     if os.environ.get("CLAUDE_HOOK_BYPASS") == "1":
         return None
     tool_name = hook_input.get("tool_name", "")
     tool_input = hook_input.get("tool_input", {}) or {}
 
-    try:
-        config = load_config(project_dir)
-    except GuardConfigError as exc:
-        print(f"goodfellow guard_engine: {exc} (user rules skipped)", file=sys.stderr)
-        config = {}
+    if config is None:
+        try:
+            config = load_config(project_dir)
+        except GuardConfigError as exc:
+            print(
+                f"goodfellow guard_engine: {exc} (user rules skipped)", file=sys.stderr
+            )
+            config = {}
 
     protected = config.get("protected_branches", list(DEFAULT_PROTECTED_BRANCHES))
     disabled = config.get("disable_builtins", [])
 
-    # Built-in universal guards only ever inspect a Bash command.
+    # The project's own rules come first: a stop that would ask must never turn
+    # an action the project forbids into a confirmation.
+    text = extract_text(tool_name, tool_input)
+    reason = check_user_rules(text, tool_name, config.get("block", []))
+    if reason:
+        return "deny", reason
+
     if tool_name == "Bash":
         command = tool_input.get("command", "") or ""
         reason = evaluate_builtins(command, protected, disabled)
         if reason:
-            return reason
+            return "ask", reason
         reason = evaluate_stop_list(
             command, hook_input.get("cwd") or project_dir, config, project_dir
         )
         if reason:
-            return reason
-
-    # Declarative user rules — evaluated against the tool-appropriate text.
-    text = extract_text(tool_name, tool_input)
-    return check_user_rules(text, tool_name, config.get("block", []))
+            return "ask", reason
+    return None
 
 
-def emit_deny(reason: str) -> None:
-    """Print the PreToolUse deny object. Deny = JSON on stdout + exit 0."""
+def decision_for_input(hook_input: dict, project_dir: str) -> Optional[str]:
+    """The reason of `decide` (ask or deny), or None."""
+    d = decide(hook_input, project_dir)
+    return d[1] if d else None
+
+
+def emit(decision: str, reason: str) -> None:
+    """Print the PreToolUse decision object ("ask" or "deny"): JSON on stdout, exit 0."""
     print(
         json.dumps(
             {
                 "hookSpecificOutput": {
                     "hookEventName": "PreToolUse",
-                    "permissionDecision": "deny",
-                    "permissionDecisionReason": reason,
+                    "permissionDecision": decision,
+                    "permissionDecisionReason": " ".join(reason.split()),
                 }
             }
         )
@@ -910,14 +735,14 @@ def active_guard_set(project_dir: str) -> dict:
     except GuardConfigError as exc:
         config, config_error = {}, str(exc)
     disabled = set(config.get("disable_builtins", []))
-    builtins_off = os.environ.get("GOODFELLOW_GUARDS") == "0"
+    builtins_off = os.environ.get("GOODFELLOW_STOP_LIST") == "0"
     rules = [r for r in config.get("block", []) if isinstance(r, dict)]
     return {
         "builtins_enabled": []
         if builtins_off
         else [b for b in BUILTIN_IDS if b not in disabled],
         "stop_list_enabled": []
-        if builtins_off or os.environ.get("GOODFELLOW_STOP_LIST") == "0"
+        if builtins_off
         else [b for b in stop_list.STOP_IDS if b not in disabled],
         "protected_branches": config.get(
             "protected_branches", list(DEFAULT_PROTECTED_BRANCHES)
@@ -1062,9 +887,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         hook_input = json.loads(raw)
     except ValueError:
         return 0  # not our payload; never block on a parse hiccup
-    reason = decision_for_input(hook_input, project_dir)
-    if reason:
-        emit_deny(reason)
+    d = decide(hook_input, project_dir)
+    if d:
+        emit(*d)
     return 0
 
 
