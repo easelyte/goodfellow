@@ -31,11 +31,12 @@ throwaway copy of your working tree, and in a temporary `git worktree` of the
 base with the branch's changed test files (plus any --support files) copied
 over it; the two JUnit XML reports are compared. Both are removed afterwards.
 
-Every test command runs in a sandbox (see sandbox.py): bubblewrap with a
-private PID namespace and a filesystem allowlist, where the only writable host
-directory is this check's temporary directory. If the sandbox is unavailable
-the check refuses (exit 2) and runs nothing; GOODFELLOW_SANDBOX=off runs the
-tests unisolated, knowingly, with a warning.
+Where bubblewrap is installed, every test command runs in a sandbox (see
+sandbox.py): a private PID namespace and a filesystem allowlist, where the only
+writable host directory is this check's temporary directory. Without
+bubblewrap the check runs unsandboxed, says so in one warning line, and
+records "unsandboxed" in its report. An installed bubblewrap that does not
+isolate refuses (exit 2) and runs nothing.
 
 OK means the base failure came from an assertion. It does not prove it was the
 assertion you meant: the base message is printed next to each verdict, so
@@ -455,13 +456,15 @@ def main(argv: Optional[List[str]] = None) -> int:
     workdir = Path(a.workdir).resolve()
     proc_group.install_handlers()
     try:
-        # Before anything runs: no sandbox, no test run (never a fallback).
-        sb = sandbox.create([workdir])
+        # Without bwrap the red check still runs (one warning line); an
+        # installed bwrap that does not isolate refuses before anything runs.
+        sb = sandbox.create([workdir], allow_missing=True)
     except sandbox.SandboxError as exc:
         print(f"red-check BLOCK: {exc}", file=sys.stderr)
         return 2
-    if not sb.isolated:
-        print(sandbox.unisolated_warning("red-check"), file=sys.stderr)
+    warn = sandbox.warning("red-check", sb)
+    if warn:
+        print(warn, file=sys.stderr)
     try:
         results, unreplayed = check(
             workdir,

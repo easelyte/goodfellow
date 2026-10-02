@@ -63,10 +63,13 @@ If verification fails: surface errors, do not proceed to review.
 
 `BASE` is the branch from §0.5.
 
-Both checks below run your tests inside a sandbox (bubblewrap: a private PID namespace and a
-filesystem allowlist; see `docs/configuration.md`). If it is unavailable they exit 2 and run
-nothing: report the check as not run, quote its message, and never rerun it with
-`GOODFELLOW_SANDBOX=off` on your own. Only the user sets that, for a machine without bwrap.
+Both checks below run your tests inside a sandbox where bubblewrap is installed (a private PID
+namespace and a filesystem allowlist; see `docs/configuration.md`). Without it, the red check runs
+unsandboxed and says so: note "unsandboxed" in the PR's Test evidence. The mutation check refuses
+without it unless `--fakes` applies. When either check exits 2 over the sandbox (bubblewrap missing
+for the mutation check, or installed but not isolating), report the check as not run, quote its
+message, and never rerun it with `GOODFELLOW_SANDBOX=off` or `--fakes` on your own: only the user
+decides that.
 
 **Red evidence (P-094).** Every new test must fail on the base with an assertion, then pass:
 

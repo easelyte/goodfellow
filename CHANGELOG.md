@@ -15,7 +15,7 @@ afterwards at the commits that declared them, without Releases. See [RELEASING.m
 
 The red and mutation checks now run your tests in a sandbox, the mutation check stops counting a
 slow machine as a kill, and the final review survives a rebase. **Heads up:** the old skill
-aliases are gone, and the checks need bubblewrap (or an explicit opt-out). Both are below.
+aliases are gone (see Removed).
 
 ### Removed
 
@@ -27,14 +27,16 @@ aliases are gone, and the checks need bubblewrap (or an explicit opt-out). Both 
 
 ### Changed
 
-- **The red and mutation checks run tests in a sandbox (behaviour change).** Every test command
-  goes through [bubblewrap](https://github.com/containers/bubblewrap) with a private PID namespace
-  and a filesystem allowlist; the only writable host directory is the check's own throwaway copy,
-  your home directory, checkout and credentials are not mounted, and tokens in your environment
-  are dropped (`GOODFELLOW_SANDBOX_ENV` keeps named variables). If `bwrap` is missing or a
-  probe shows it does not isolate, the check exits 2 and runs nothing; it never falls back to
-  running unisolated. On Linux, install `bubblewrap`. On macOS or in a container without user
-  namespaces, set `GOODFELLOW_SANDBOX=off` to run the tests unisolated, knowingly; every run warns.
+- **Test sandbox: convenient by default, strict where it matters.** Where
+  [bubblewrap](https://github.com/containers/bubblewrap) is installed, the red and mutation checks
+  run your tests with a private PID namespace and a filesystem allowlist: the only writable host
+  directory is the check's own throwaway copy, your home directory, checkout and credentials are
+  not mounted, and tokens in your environment are dropped (`GOODFELLOW_SANDBOX_ENV` keeps named
+  variables). Without bubblewrap (macOS, say), the red check still runs, with one warning line and
+  an install hint, and its report says `unsandboxed`. The mutation check runs deliberately broken
+  code, so without bubblewrap it asks for `--fakes` or `GOODFELLOW_SANDBOX=off` (behaviour change).
+  Once bubblewrap is installed, a sandbox that does not fully isolate makes either check refuse:
+  it never degrades silently. `GOODFELLOW_SANDBOX=bwrap` requires the sandbox everywhere;
   `GOODFELLOW_SANDBOX_RO` adds read-only paths. See `docs/configuration.md` ([#35](https://github.com/easelyte/goodfellow/pull/35)).
 - **Mutation timeouts are calibrated to the load (behaviour change).** Each mutant gets at least
   three times the suite's runtime measured in every parallel sandbox at once (never under 30 s;

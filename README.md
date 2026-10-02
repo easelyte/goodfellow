@@ -148,7 +148,7 @@ Everything works without configuration. Invalid values fail loudly rather than f
 | `GOODFELLOW_HIGH_STAKES_PATHS` | `.goodfellow/high_stakes_paths.txt` | Globs that set a T1 floor and enable the mutation check. |
 | `GOODFELLOW_LIVE_STATE_PATHS` | `.goodfellow/live_state_paths.txt` | Globs added to the built-in T3 list (migrations, service and timer units, crontabs, Terraform); `!glob` drops one. |
 | `GOODFELLOW_GUARDS` | `1` | `0` turns off the built-in guards and the stop list. |
-| `GOODFELLOW_SANDBOX` | `bwrap` | The red and mutation checks run your tests in [bubblewrap](https://github.com/containers/bubblewrap) (private PID namespace, filesystem allowlist) and refuse to run without it. `off` runs them unisolated, for systems without bwrap such as macOS. |
+| `GOODFELLOW_SANDBOX` | `auto` | Where [bubblewrap](https://github.com/containers/bubblewrap) is installed, the red and mutation checks run your tests sandboxed (private PID namespace, filesystem allowlist). Without it, the red check runs with a one-line warning; the mutation check asks for `--fakes`. `bwrap` requires the sandbox; `off` skips it. |
 | `GOODFELLOW_SANDBOX_RO` | unset | Extra read-only paths for the sandbox, separated by `:` (a toolchain outside `/usr`, say). |
 | `GOODFELLOW_MEMORY` | `flat` | Knowledge backend: `flat` (one file) or `rich` (one file per fact, indexed). |
 | `GOODFELLOW_TAVILY_KEY` | unset | Tavily key for batch research; otherwise Claude's web search. |

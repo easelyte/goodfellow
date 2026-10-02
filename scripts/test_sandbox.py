@@ -40,8 +40,9 @@ needs_live = pytest.mark.skipif(LIVE is None, reason="bwrap cannot isolate here"
 # --- configuration ----------------------------------------------------------
 
 
-def test_sandbox_is_required_by_default():
-    assert sandbox.mode_from_env({}) == "bwrap"
+def test_sandbox_modes():
+    assert sandbox.mode_from_env({}) == "auto"
+    assert sandbox.mode_from_env({"GOODFELLOW_SANDBOX": "bwrap"}) == "bwrap"
     assert sandbox.mode_from_env({"GOODFELLOW_SANDBOX": "off"}) == "off"
 
 
@@ -55,6 +56,38 @@ def test_missing_bwrap_refuses_with_a_way_out():
         sandbox.create([], environ={"PATH": "/usr/bin"}, which=lambda _n: None)
     msg = str(exc.value)
     assert "bubblewrap" in msg and "GOODFELLOW_SANDBOX=off" in msg
+
+
+def test_missing_bwrap_may_run_unsandboxed_only_when_the_caller_allows_it():
+    sb = sandbox.create(
+        [], environ={"PATH": "/usr/bin"}, which=lambda _n: None, allow_missing=True
+    )
+    assert sb.mode == "unsandboxed" and not sb.isolated
+    # an explicit demand for the sandbox is never downgraded
+    with pytest.raises(sandbox.SandboxError, match="bubblewrap"):
+        sandbox.create(
+            [],
+            environ={"PATH": "/usr/bin", "GOODFELLOW_SANDBOX": "bwrap"},
+            which=lambda _n: None,
+            allow_missing=True,
+        )
+
+
+def test_present_but_broken_bwrap_is_never_downgraded(tmp_path):
+    class Failed:
+        returncode = 1
+        stdout = ""
+        stderr = "bwrap: setting up uid map: Permission denied"
+
+    fake = tmp_path / "bwrap"
+    fake.write_text("")
+    with pytest.raises(sandbox.SandboxError, match="does not isolate"):
+        sandbox.create(
+            [],
+            environ={"PATH": "/usr/bin", "GOODFELLOW_BWRAP": str(fake)},
+            run=lambda *a, **k: Failed(),
+            allow_missing=True,
+        )
 
 
 def test_a_probe_that_does_not_isolate_refuses(tmp_path):

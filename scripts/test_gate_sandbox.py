@@ -114,19 +114,77 @@ def _mut(repo: Path, base: str, env: dict, *args: str) -> subprocess.CompletedPr
 # --- fail closed --------------------------------------------------------------
 
 
-@pytest.mark.parametrize("gate", ["red", "mutation"])
-def test_missing_sandbox_refuses_and_runs_nothing(tmp_path, gate):
+def test_red_check_without_bwrap_runs_unsandboxed_and_says_so_once(tmp_path):
+    """Convenience by default: no bubblewrap (macOS) still gets a red check,
+    with one warning line and an install hint, and the report says so."""
+    repo, base = _repo(tmp_path, "    assert f() == 2\n")
+    proc = _red(repo, base, _env(GOODFELLOW_BWRAP=str(tmp_path / "no-bwrap-here")))
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    data = json.loads(proc.stdout)
+    assert data["sandbox"] == "unsandboxed"
+    assert [r["verdict"] for r in data["results"]] == ["OK"]
+    warn = [ln for ln in proc.stderr.splitlines() if "unsandboxed" in ln.lower()]
+    assert len(warn) == 1 and "bubblewrap" in warn[0], proc.stderr
+
+
+@pytest.mark.parametrize("extra", [[], ["--fakes"]])
+def test_red_check_refuses_when_the_sandbox_is_demanded_or_broken(tmp_path, extra):
     repo, base = _repo(tmp_path, "    assert f() == 2\n")
     ran = tmp_path / "test-command-ran"
     cmd = f"touch {ran}; exit 0"
-    env = _env(GOODFELLOW_BWRAP=str(tmp_path / "no-bwrap-here"))
-    if gate == "red":
+    broken = tmp_path / "broken-bwrap"
+    broken.write_text(
+        "#!/bin/sh\necho 'bwrap: setting up uid map: Permission denied' >&2\nexit 1\n"
+    )
+    broken.chmod(0o755)
+    for env in (
+        _env(GOODFELLOW_BWRAP=str(tmp_path / "none"), GOODFELLOW_SANDBOX="bwrap"),
+        _env(GOODFELLOW_BWRAP=str(broken)),
+    ):
         proc = _red(repo, base, env, "--test-cmd", cmd)
-    else:
-        proc = _mut(repo, base, env, "--test-cmd", cmd)
+        assert proc.returncode == 2, proc.stdout + proc.stderr
+        assert not ran.exists(), "the test command ran without a working sandbox"
+
+
+def test_mutation_check_without_bwrap_refuses_and_runs_nothing(tmp_path):
+    """Strict where it matters: the mutation check runs deliberately broken
+    code, so without the sandbox it needs --fakes or GOODFELLOW_SANDBOX=off."""
+    repo, base = _repo(tmp_path, "    assert f() == 2\n")
+    ran = tmp_path / "test-command-ran"
+    cmd = f"touch {ran}; exit 0"
+    proc = _mut(
+        repo, base, _env(GOODFELLOW_BWRAP=str(tmp_path / "none")), "--test-cmd", cmd
+    )
     assert proc.returncode == 2, proc.stdout + proc.stderr
-    assert "bubblewrap" in proc.stderr and "GOODFELLOW_SANDBOX=off" in proc.stderr
+    assert "bubblewrap" in proc.stderr
+    assert "--fakes" in proc.stderr and "GOODFELLOW_SANDBOX=off" in proc.stderr
     assert not ran.exists(), "the test command ran without a sandbox"
+
+
+def test_mutation_check_without_bwrap_runs_with_fakes(tmp_path):
+    repo, base = _repo(tmp_path, "    assert f() == 2\n")
+    proc = _mut(repo, base, _env(GOODFELLOW_BWRAP=str(tmp_path / "none")), "--fakes")
+    assert proc.returncode in (0, 1), proc.stdout + proc.stderr
+    data = json.loads(proc.stdout)
+    assert data["sandbox"] == "unsandboxed" and data["ran"] > 0
+
+
+def test_mutation_check_with_a_broken_bwrap_refuses_even_with_fakes(tmp_path):
+    repo, base = _repo(tmp_path, "    assert f() == 2\n")
+    ran = tmp_path / "test-command-ran"
+    broken = tmp_path / "broken-bwrap"
+    broken.write_text("#!/bin/sh\nexit 1\n")
+    broken.chmod(0o755)
+    proc = _mut(
+        repo,
+        base,
+        _env(GOODFELLOW_BWRAP=str(broken)),
+        "--fakes",
+        "--test-cmd",
+        f"touch {ran}",
+    )
+    assert proc.returncode == 2, proc.stdout + proc.stderr
+    assert not ran.exists()
 
 
 @pytest.mark.parametrize("gate", ["red", "mutation"])

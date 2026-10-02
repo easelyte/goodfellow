@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the gates' test commands in a sandbox, or not at all.
+"""Run the gates' test commands in a sandbox: convenient by default, strict where it matters.
 
 red_check and mutation_check run your tests, and mutation_check runs them
 against deliberately broken code. A mutant of a cleanup routine can delete the
@@ -20,17 +20,22 @@ process. So every test command these gates run goes through bubblewrap
 
 Before the first test runs, a probe runs through the same wrapper and must
 show a private PID namespace, no write reaching your home directory or your
-checkout, and none of the usual credential locations visible. If bwrap is
-missing or the probe fails, the gate refuses to run (exit 2). It never falls
-back to running tests unisolated.
+checkout, and none of the usual credential locations visible.
+
+When bwrap is not installed (macOS, say), a gate may run its tests
+unsandboxed if its caller allows it (`allow_missing`): red_check does, with one
+warning line and an install hint, and records "unsandboxed" in its report.
+mutation_check does not, unless --fakes is given, because it runs deliberately
+broken code. Once bwrap IS present, a probe that fails, or any partial
+isolation, refuses (exit 2) in every gate: it never silently degrades.
 
 Configuration:
 
-  GOODFELLOW_SANDBOX      unset or "bwrap": required (the default).
+  GOODFELLOW_SANDBOX      unset ("auto", the default): sandbox when bwrap is
+                          installed; without it, as described above.
+                          "bwrap": require the sandbox in every gate.
                           "off": run the tests unisolated, knowingly. Every
-                          run prints a warning and the report says so. For
-                          systems without bwrap (macOS, containers without
-                          user namespaces).
+                          run prints a warning and the report says so.
   GOODFELLOW_SANDBOX_RO   extra read-only paths, separated by ":" (a toolchain
                           outside /usr, a shared fixture directory).
   GOODFELLOW_SANDBOX_ENV  extra environment variable names the tests keep,
@@ -94,16 +99,29 @@ class SandboxError(RuntimeError):
     """No trustworthy sandbox: the gate must refuse to run tests (exit 2)."""
 
 
+class SandboxMissing(SandboxError):
+    """bwrap is not installed (as opposed to installed but not isolating)."""
+
+
 def mode_from_env(environ=os.environ) -> str:
     raw = environ.get(MODE_ENV, "").strip().lower()
-    if raw in ("", "bwrap", "on", "1"):
+    if raw in ("", "auto"):
+        return "auto"
+    if raw in ("bwrap", "on", "1"):
         return "bwrap"
     if raw in ("off", "0", "none"):
         return "off"
     raise SandboxError(
-        f"{MODE_ENV}={environ.get(MODE_ENV)!r} is not a valid value; use 'bwrap' "
-        "(the default) or 'off'"
+        f"{MODE_ENV}={environ.get(MODE_ENV)!r} is not a valid value; use 'auto' "
+        "(the default), 'bwrap' or 'off'"
     )
+
+
+def find_bwrap(
+    environ=os.environ, which: Callable[[str], Optional[str]] = shutil.which
+) -> Optional[str]:
+    bwrap = environ.get(BWRAP_ENV) or which("bwrap")
+    return bwrap if bwrap and os.path.exists(bwrap) else None
 
 
 def _home() -> Optional[Path]:
@@ -345,18 +363,23 @@ def create(
     environ=os.environ,
     which: Callable[[str], Optional[str]] = shutil.which,
     run=subprocess.run,
+    allow_missing: bool = False,
 ) -> Sandbox:
     """The sandbox for this gate run, after a probe proves it isolates.
 
     `canaries` are host directories no test may write (the user's checkout).
-    Raises SandboxError when bwrap is required but missing or not isolating:
-    there is no unisolated fallback."""
+    With `allow_missing`, a machine WITHOUT bwrap gets mode "unsandboxed"
+    (unless GOODFELLOW_SANDBOX=bwrap demands it). Otherwise a missing bwrap
+    raises SandboxMissing, and an installed bwrap that does not isolate always
+    raises SandboxError: there is no silent downgrade."""
     mode = mode_from_env(environ)
     if mode == "off":
         return Sandbox(mode="off")
-    bwrap = environ.get(BWRAP_ENV) or which("bwrap")
-    if not bwrap or not os.path.exists(bwrap):
-        raise SandboxError(
+    bwrap = find_bwrap(environ, which)
+    if bwrap is None:
+        if allow_missing and mode == "auto":
+            return Sandbox(mode="unsandboxed")
+        raise SandboxMissing(
             "no test sandbox: bwrap (bubblewrap) not found. " + _install_hint()
         )
     home = _home()
@@ -418,6 +441,24 @@ def create(
             + _install_hint()
         )
     return sb
+
+
+def unsandboxed_warning(tool: str) -> str:
+    """One line: why the tests run without isolation, and how to get it."""
+    return (
+        f"{tool}: WARNING running tests unsandboxed: bubblewrap (bwrap) is not "
+        "installed. For isolation: apt install bubblewrap / dnf install "
+        "bubblewrap / pacman -S bubblewrap."
+    )
+
+
+def warning(tool: str, sb: "Sandbox") -> Optional[str]:
+    """The one warning line for a sandbox that does not isolate, or None."""
+    if sb.mode == "unsandboxed":
+        return unsandboxed_warning(tool)
+    if sb.mode == "off":
+        return unisolated_warning(tool)
+    return None
 
 
 def unisolated_warning(tool: str) -> str:

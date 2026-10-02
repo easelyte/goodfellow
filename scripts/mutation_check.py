@@ -15,8 +15,9 @@ and reports every mutant the tests fail to notice (a SURVIVOR).
     copy). Your working tree is never written. Every test run happens in a
     sandbox (see sandbox.py): bubblewrap with a private PID namespace and a
     filesystem allowlist, where the only writable host directory is that run's
-    copy. No sandbox means no run (exit 2); GOODFELLOW_SANDBOX=off runs the
-    tests unisolated, knowingly, with a warning.
+    copy. Without bubblewrap the check refuses (exit 2) unless --fakes is
+    given (it then runs unsandboxed, with a warning) or GOODFELLOW_SANDBOX=off;
+    an installed bubblewrap that does not isolate always refuses.
   - Operators: comparison swap and boundary (`>=` to `>`), and/or swap, dropped
     `not`, negated `if`, flipped bool, int +1, arithmetic swap, `return X` to
     `return None`, `raise` to `pass` (fail-open), dropped call statement,
@@ -804,12 +805,26 @@ def check(a: argparse.Namespace, workdir: Path) -> dict:
                 )
         except SyntaxError as exc:
             raise CheckError(f"{path}: cannot parse ({exc})") from exc
-    # Before any test runs: no sandbox, no run (never a fallback). A check
-    # with nothing to mutate needs none.
-    sb = sandbox.create([workdir]) if summary["targets"] else sandbox.Sandbox("off")
-    summary["sandbox"] = sb.mode if summary["targets"] else "unused"
-    if summary["targets"] and not sb.isolated:
-        print(sandbox.unisolated_warning("mutation-check"), file=sys.stderr)
+    # Before any test runs. This check runs deliberately broken code, so
+    # without bwrap it runs only with --fakes (or GOODFELLOW_SANDBOX=off); an
+    # installed bwrap that does not isolate always refuses. A check with
+    # nothing to mutate needs no sandbox.
+    if summary["targets"]:
+        try:
+            sb = sandbox.create([workdir], allow_missing=a.fakes)
+        except sandbox.SandboxMissing as exc:
+            raise CheckError(
+                f"{exc} The mutation check runs deliberately broken code, so "
+                "without the sandbox it needs --fakes (your tests replace real "
+                "side effects with fakes or temp directories) or "
+                "GOODFELLOW_SANDBOX=off."
+            ) from exc
+        summary["sandbox"] = sb.mode
+        warn = sandbox.warning("mutation-check", sb)
+        if warn:
+            print(warn, file=sys.stderr)
+    else:
+        sb = sandbox.Sandbox("off")
     problems = []
     # The sandbox contains PIDs and files but not the network, so a mutant of
     # code that spawns (say) curl can still reach a live service: process and
@@ -1098,7 +1113,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--json", action="store_true")
     a = ap.parse_args(argv)
     try:
-        unsandboxed = sandbox.mode_from_env() == "off"
+        unsandboxed = sandbox.mode_from_env() == "off" or sandbox.find_bwrap() is None
     except sandbox.SandboxError as exc:
         print(f"mutation-check BLOCK: {exc}", file=sys.stderr)
         return 2

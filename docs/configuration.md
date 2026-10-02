@@ -24,7 +24,7 @@ values fail loudly rather than falling back.
 | `GOODFELLOW_HIGH_STAKES_PATHS` | `.goodfellow/high_stakes_paths.txt` | Glob list that sets a T1 floor and enables the mutation check. |
 | `GOODFELLOW_LIVE_STATE_PATHS` | `.goodfellow/live_state_paths.txt` | Globs added to the built-in T3 list; a `!glob` line drops a built-in one. |
 | `GOODFELLOW_GUARDS` | `1` | `0` turns off the built-in guards and the stop list. Project rules still apply. |
-| `GOODFELLOW_SANDBOX` | `bwrap` | The test sandbox for the red and mutation checks (see below). `off` runs their tests unisolated, knowingly. |
+| `GOODFELLOW_SANDBOX` | `auto` | The test sandbox for the red and mutation checks (see below). `auto` uses bubblewrap when installed; `bwrap` requires it; `off` runs the tests unisolated, knowingly. |
 | `GOODFELLOW_SANDBOX_RO` | unset | Extra read-only paths inside the sandbox, separated by `:`. |
 | `GOODFELLOW_SANDBOX_ENV` | unset | Extra environment variable names the sandboxed tests keep, comma-separated. |
 | `GOODFELLOW_BWRAP` | `bwrap` on `PATH` | Path to the bubblewrap binary. |
@@ -109,15 +109,23 @@ through [bubblewrap](https://github.com/containers/bubblewrap) (`bwrap`):
 Before the first test runs, a probe goes through the same wrapper. It must show a private PID
 namespace, no write reaching your home directory or your checkout, and nothing readable from
 either: neither the usual credential paths (`~/.ssh`, `~/.aws`, `~/.config/gh`, ...) nor files
-in your checkout. If `bwrap` is missing or the probe
-fails, the check exits 2 and runs nothing. There is no silent fallback.
+in your checkout.
+
+**Convenient by default, strict where it matters:**
+
+- **bubblewrap installed:** both checks run sandboxed. If the probe fails, or isolation is only
+  partial, the check exits 2 and runs nothing. It never degrades silently.
+- **No bubblewrap (macOS, say):** the red check still runs, unsandboxed, with one warning line and
+  an install hint; its JSON report records `"sandbox": "unsandboxed"`. The mutation check, which
+  runs deliberately broken code, refuses (exit 2) unless you pass `--fakes` (your tests replace real
+  side effects) or set `GOODFELLOW_SANDBOX=off`.
+- **`GOODFELLOW_SANDBOX=bwrap`** requires the sandbox in both checks; **`off`** runs both
+  unisolated, knowingly, with a warning on every run.
 
 - **Linux:** install bubblewrap (`apt install bubblewrap`, `dnf install bubblewrap`,
   `pacman -S bubblewrap`). On Ubuntu 24.04 and later, unprivileged user namespaces may be
   restricted by AppArmor; use the distribution's `bwrap` package, which ships a profile, or allow
-  them for your user.
-- **macOS, or a container without user namespaces:** `GOODFELLOW_SANDBOX=off` runs the tests
-  unisolated, knowingly. Every run warns, and the JSON report records `"sandbox": "off"`.
+  them for your user. Until then the check refuses rather than run half-isolated.
 - **Tests that need files outside the allowlist** (a toolchain under `/opt`, fixtures elsewhere):
   add the paths to `GOODFELLOW_SANDBOX_RO`. The network is not isolated.
 
