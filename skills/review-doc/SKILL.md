@@ -78,7 +78,7 @@ Extract the load-bearing factual claims (library and API behaviour, versions, to
 from the plan itself. Run it in one dedicated subagent so raw search output stays out of your
 context:
 
-> "Run `bash \"${CLAUDE_PLUGIN_ROOT}/scripts/research.sh\" --claims '<json array of claims>' --max 5` to prepare the claim list, then verify each claim via WebSearch. For each claim, open the cited source and confirm whether it supports the claim. Return ONLY this appendix, or exactly `RESEARCH_SKIPPED: <reason>`:
+> "Write the load-bearing claims as a JSON array of strings to a temp file with the Write tool (never put claim text on the command line), then run `bash \"${CLAUDE_PLUGIN_ROOT}/scripts/research.sh\" --claims-file <that file> --max 5` to prepare the claim list, then verify each claim via WebSearch. For each claim, open the cited source and confirm whether it supports the claim. Return ONLY this appendix, or exactly `RESEARCH_SKIPPED: <reason>`:
 >
 > ```
 > ## Appendix: Researched Claims (research pass YYYY-MM-DD)
