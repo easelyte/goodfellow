@@ -17,7 +17,6 @@ values fail loudly rather than falling back.
 | `GOODFELLOW_REVIEW_MODEL` | see below | Claude reviewer model: `opus`, `sonnet` or `haiku`. |
 | `GOODFELLOW_CODEX_STAGE_TIMEOUT` | `300` | Seconds per Codex stage. Generator and judge are two stages. |
 | `GOODFELLOW_TRUST_ANALYZERS` | unset | `1` also runs `eslint`, `tsc` and `mypy` in the review pre-pass. These execute project config, so only for repositories you trust. |
-| `GOODFELLOW_TAVILY_KEY` | unset | Tavily API key for batch research. Without it, research uses Claude's web search. |
 | `GOODFELLOW_MEMORY` | `flat` | Knowledge backend: `flat` or `rich` (see below). |
 | `GOODFELLOW_MEMORY_WARN_KB` | `16` | Rich mode: warn when the index exceeds this size. |
 | `GOODFELLOW_PRINCIPLES_WEB` | auto | `1` loads the web principles (JS, React, Next.js, Postgres). Auto-enabled when a `package.json` is present. |

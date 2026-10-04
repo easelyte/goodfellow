@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Goodfellow research adapter — batch-verify factual claims via Tavily or WebSearch fallback.
+# Goodfellow research adapter — prepare factual claims for WebSearch verification.
 # Usage: research.sh --claims '<json array of claim strings>' [--max <N>]
-# Requires: GOODFELLOW_TAVILY_KEY for Tavily (optional — falls back to printing claims for WebSearch)
+# Emits a temp-file path holding the capped claim list; the skill dispatches one
+# WebSearch per claim. Reads no credentials and makes no network calls itself.
 set -euo pipefail
 
 CLAIMS=""
@@ -29,26 +30,17 @@ fi
 
 OUTFILE=$(mktemp /tmp/goodfellow-research-XXXXXX)
 
-if [[ -n "${GOODFELLOW_TAVILY_KEY:-}" ]]; then
-  python3 "${CLAUDE_PLUGIN_ROOT}/scripts/research_tavily.py" \
-    --claims "$CLAIMS" \
-    --max "$MAX_SEARCHES" \
-    --api-key "$GOODFELLOW_TAVILY_KEY" \
-    > "$OUTFILE"
-else
-  {
-    echo "## Research: Tavily not configured (set GOODFELLOW_TAVILY_KEY)"
-    echo ""
-    echo "Claims to verify via WebSearch:"
-    echo "$CLAIMS" | python3 -c "
+{
+  echo "## Research: claims to verify via WebSearch"
+  echo ""
+  echo "$CLAIMS" | python3 -c "
 import json, sys
 claims = json.load(sys.stdin)
 for i, c in enumerate(claims[:${MAX_SEARCHES}], 1):
     print(f'{i}. {c}')
 "
-    echo ""
-    echo "Falling back to WebSearch — dispatch searches manually from the skill."
-  } > "$OUTFILE"
-fi
+  echo ""
+  echo "Dispatch one WebSearch per claim from the skill."
+} > "$OUTFILE"
 
 echo "$OUTFILE"

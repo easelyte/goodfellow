@@ -150,7 +150,6 @@ Everything works without configuration. Invalid values fail loudly rather than f
 | `GOODFELLOW_SANDBOX` | `auto` | Where [bubblewrap](https://github.com/containers/bubblewrap) is installed, the red and mutation checks run your tests sandboxed (private PID namespace, filesystem allowlist). Without it, the red check runs with a one-line warning; the mutation check asks for `--fakes`. `bwrap` requires the sandbox; `off` skips it. |
 | `GOODFELLOW_SANDBOX_RO` | unset | Extra read-only paths for the sandbox, separated by `:` (a toolchain outside `/usr`, say). |
 | `GOODFELLOW_MEMORY` | `flat` | Knowledge backend: `flat` (one file) or `rich` (one file per fact, indexed). |
-| `GOODFELLOW_TAVILY_KEY` | unset | Tavily key for batch research; otherwise Claude's web search. |
 | `GOODFELLOW_PRINCIPLES_WEB` | auto | `1` loads the JS, React, Next.js and Postgres principles; automatic with a `package.json`. |
 
 **The stop list asks, it never blocks.** It asks before a force-push, a push to the default
