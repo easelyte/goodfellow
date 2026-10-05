@@ -11,6 +11,30 @@ afterwards at the commits that declared them, without Releases. See [RELEASING.m
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-05
+
+Research drops its optional Tavily backend and runs through Claude's own web search only, which
+clears the plugin directory's credential review hold. The listing also gets the light-background
+mark and a fuller description.
+
+### Removed
+
+- **The Tavily research adapter and its `GOODFELLOW_TAVILY_KEY` variable (breaking).** Research now
+  runs through Claude's web search only, the path Tavily users already fell back to. If you set
+  `GOODFELLOW_TAVILY_KEY`, you can drop it; research still runs, now via web search. Removing the only
+  code that read an installer-supplied credential clears the directory's "uses a credential from the
+  user's machine" review hold. `scripts/research_tavily.py` and its test are gone; `scripts/research.sh`
+  now takes `--claims-file` and reads the claim list from a file (no credentials, no environment keys,
+  and no claim text interpolated into a shell command).
+
+### Changed
+
+- **Listing icon switched to the light-background mark** (`assets/logo/mark-light.svg`). It keeps a
+  visible rounded-tile edge on every background; the previous dark-tile mark blended into dark-mode
+  surfaces and lost its shape.
+- **Fuller listing description**, naming what the plugin does: a tiered process, tests that must fail
+  first, cross-model adversarial review looped to convergence, and knowledge that compounds across runs.
+
 ## [0.4.1] - 2026-10-02
 
 The red and mutation checks now run your tests in a sandbox, the mutation check stops counting a
@@ -294,7 +318,8 @@ Initial release.
 - Autopilot mode with dry-run.
 - Triage with two-reviewer reconciliation.
 
-[Unreleased]: https://github.com/easelyte/goodfellow/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/easelyte/goodfellow/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/easelyte/goodfellow/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/easelyte/goodfellow/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/easelyte/goodfellow/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/easelyte/goodfellow/compare/v0.2.0...v0.3.0

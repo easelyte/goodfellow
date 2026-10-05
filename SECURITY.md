@@ -34,8 +34,7 @@ and we credit you by the name or handle you prefer, unless you ask us not to.
 Goodfellow is a Claude Code plugin. It runs with the same permissions as your Claude Code session,
 executes your project's test suite and analyzers, and sends diffs and file contents to the model
 providers you have configured (Anthropic, and OpenAI when the Codex CLI is installed). Research
-queries go to Tavily only when `GOODFELLOW_TAVILY_KEY` is set. It has no server and collects no
-telemetry.
+runs through Claude's own web search. It has no server and collects no telemetry.
 
 Running Goodfellow on a repository you do not trust means running that repository's tests and, when
 enabled, its analyzers. That is by design and not a vulnerability. Executing analyzers (`eslint`,

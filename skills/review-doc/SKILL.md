@@ -78,18 +78,18 @@ Extract the load-bearing factual claims (library and API behaviour, versions, to
 from the plan itself. Run it in one dedicated subagent so raw search output stays out of your
 context:
 
-> "Run `bash \"${CLAUDE_PLUGIN_ROOT}/scripts/research.sh\" --claims '<json array of claims>' --max 5` (Tavily batch if `GOODFELLOW_TAVILY_KEY` is set, else WebSearch). For each ✓ claim, open the cited source and confirm whether it supports the claim. Return ONLY this appendix, or exactly `RESEARCH_SKIPPED: <reason>`:
+> "Write the load-bearing claims as a JSON array of strings to a temp file with the Write tool (never put claim text on the command line), then run `bash \"${CLAUDE_PLUGIN_ROOT}/scripts/research.sh\" --claims-file <that file> --max 5` to prepare the claim list, then verify each claim via WebSearch. For each claim, open the cited source and confirm whether it supports the claim. Return ONLY this appendix, or exactly `RESEARCH_SKIPPED: <reason>`:
 >
 > ```
 > ## Appendix: Researched Claims (research pass YYYY-MM-DD)
-> ✓ Claim: <text>. Supporting source: <URL> (relevance match — not adjudicated).
+> ✓ Claim: <text>. Supporting source read: <URL>.
 > ✗ Claim: <text>. Cited source read and it contradicts the claim: <URL>.
 > ? Claim: <text>. No clear source — flagged for reviewers.
 > ```"
 
-Append the appendix to the document. ✓ means a relevant source was found, not that the claim is
-confirmed: the adapter scores relevance only and has no refutation signal. On `RESEARCH_SKIPPED`,
-log the reason and continue; findings keep their severity.
+Append the appendix to the document. ✓ means a cited source was read and supports the claim, ✗ that
+it contradicts, ? that no clear source was found. On `RESEARCH_SKIPPED`, log the reason and continue;
+findings keep their severity.
 
 **Dry-run:** do not append; log `{"event": "would_append_verified_claims", "would_act": true, "claims": <n>, "source_matched": <n>, "no_source": <n>}`.
 

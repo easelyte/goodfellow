@@ -6,7 +6,7 @@
     {
       "name": "goodfellow",
       "source": "./",
-      "description": "A Claude Code plugin that takes a change from idea to merged PR on autopilot, scaling the rigor to the risk."
+      "description": "A Claude Code plugin that takes a change from idea to merged PR on autopilot, scaling rigor to risk: a tiered process, tests that must fail first, cross-model adversarial review (Claude plus Codex) looped to convergence, and knowledge that compounds across runs."
     }
   ]
 }

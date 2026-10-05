@@ -1,6 +1,6 @@
 [project]
 name = "goodfellow"
-version = "0.4.1"
+version = "0.5.0"
 description = "A Claude Code plugin that takes a change from idea to merged PR on autopilot, scaling the rigor to the risk."
 requires-python = ">=3.10"
 license = {text = "MIT"}
