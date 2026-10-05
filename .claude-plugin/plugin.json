@@ -1,7 +1,7 @@
 {
   "name": "goodfellow",
   "description": "A Claude Code plugin that takes a change from idea to merged PR on autopilot, scaling rigor to risk: a tiered process, tests that must fail first, cross-model adversarial review (Claude plus Codex) looped to convergence, and knowledge that compounds across runs.",
-  "version": "0.4.2",
+  "version": "0.5.0",
   "author": {
     "name": "easelyte",
     "email": "fantin@easelyte.ai"

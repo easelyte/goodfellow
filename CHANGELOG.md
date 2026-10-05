@@ -11,7 +11,7 @@ afterwards at the commits that declared them, without Releases. See [RELEASING.m
 
 ## [Unreleased]
 
-## [0.4.2] - 2026-10-04
+## [0.5.0] - 2026-10-05
 
 Research drops its optional Tavily backend and runs through Claude's own web search only, which
 clears the plugin directory's credential review hold. The listing also gets the light-background
@@ -19,11 +19,13 @@ mark and a fuller description.
 
 ### Removed
 
-- **The Tavily research adapter and its `GOODFELLOW_TAVILY_KEY` credential.** Research now runs
-  through Claude's web search only, the path Tavily users already fell back to. Removing the only
+- **The Tavily research adapter and its `GOODFELLOW_TAVILY_KEY` variable (breaking).** Research now
+  runs through Claude's web search only, the path Tavily users already fell back to. If you set
+  `GOODFELLOW_TAVILY_KEY`, you can drop it; research still runs, now via web search. Removing the only
   code that read an installer-supplied credential clears the directory's "uses a credential from the
   user's machine" review hold. `scripts/research_tavily.py` and its test are gone; `scripts/research.sh`
-  now just prepares the claim list for web search and reads no credentials or environment keys.
+  now takes `--claims-file` and reads the claim list from a file (no credentials, no environment keys,
+  and no claim text interpolated into a shell command).
 
 ### Changed
 
@@ -316,8 +318,8 @@ Initial release.
 - Autopilot mode with dry-run.
 - Triage with two-reviewer reconciliation.
 
-[Unreleased]: https://github.com/easelyte/goodfellow/compare/v0.4.2...HEAD
-[0.4.2]: https://github.com/easelyte/goodfellow/compare/v0.4.1...v0.4.2
+[Unreleased]: https://github.com/easelyte/goodfellow/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/easelyte/goodfellow/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/easelyte/goodfellow/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/easelyte/goodfellow/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/easelyte/goodfellow/compare/v0.2.0...v0.3.0
