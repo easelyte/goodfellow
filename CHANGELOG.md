@@ -11,6 +11,10 @@ afterwards at the commits that declared them, without Releases. See [RELEASING.m
 
 ## [Unreleased]
 
+### Added
+
+- Four seed principles: P-097 safety nets cover partial failure, P-098 exercise destructive code only against fakes or isolated namespaces, P-099 untrusted text never rides inline in an agent-run command string, P-100 gate actions on who bears the cost, not on reversibility.
+
 ## [0.5.0] - 2026-10-05
 
 Research drops its optional Tavily backend and runs through Claude's own web search only, which
