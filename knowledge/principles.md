@@ -1396,3 +1396,70 @@ misordered, or bypassed. Mocks that replace the unit under test fail the same wa
 **Anti-patterns:**
 - Asserting a guard is wired by finding its name in a config or source file
 - Mocking the function under test and asserting the mock was called
+
+### P-097. Safety Nets Cover Partial Failure, Not Just Total
+> A safety net scoped to total failure never fires for partial failure, and partial is the more common mode.
+<!-- cat: reliability -->
+
+A recovery mechanism that triggers only when the protected state is entirely gone (empty, below a
+count, missing) does nothing for the realistic case where a few items are lost while most remain.
+Compare live state against the backup item by item, and heal or alert on any difference.
+
+**Rules:**
+- Reconcile against the backup per item; do not threshold on emptiness or a minimum count.
+- Test the recovery path with a partial loss (most items present, a few missing), not only a total wipe.
+- Drill restores against non-empty archives, since an empty archive passes trivially.
+
+**Anti-patterns:**
+- A "restore if empty" guard on a corpus where the real loss was a handful of recent files
+- A restore drill that passes because both sides are empty
+
+### P-098. Exercise Destructive Code Only Against Fakes or Isolated Namespaces
+> Code that signals, deletes or writes real resources is tested, mutation runs included, only against fakes or an isolated namespace.
+<!-- cat: testing -->
+
+A test or mutation run of destructive code executes the destructive path for real the moment a
+guard flips. Use a fake for the resource, a pid namespace for process signaling, a throwaway tree
+for file writes. A pid namespace does not protect files, so file-deleting code needs a fake or a
+temp tree specifically.
+
+**Rules:**
+- Signal code: fake the process table or run inside a pid namespace. File-deleting or writing code: fake the filesystem or use a throwaway tmp tree.
+- Before sending a signal, classify targets by evidence of ownership (owned, cwd-only, unknown) and halt on ambiguity.
+- Never point a test teardown at a path derived from the real home or data directory.
+
+**Anti-patterns:**
+- A mutation run that flips a prefix check in a live process sweep and signals every process it can see
+- A test teardown that deletes a real data directory
+
+### P-099. Untrusted Text Never Rides Inline in an Agent-Run Command String
+> When an agent runs a shell command with interpolated content, pass that content through a file or stdin, never inline in the command string.
+<!-- cat: security -->
+
+A command template that an LLM fills in and runs is a shell-injection boundary: text interpolated
+into a quoted argument (for example `--claims '<json>'`) can close the quote and execute.
+
+**Rules:**
+- Have the agent write document-derived or otherwise untrusted content to a file and pass the path, or feed it on stdin.
+- In slash-command or skill templates, treat early shell directives as running before any in-skill validation.
+
+**Anti-patterns:**
+- A skill that inlines extracted document text into a quoted CLI argument
+- Validating input in a later step of a skill whose first directive already expanded it into a shell
+
+### P-100. Gate Actions on Who Bears the Cost, Not on Reversibility
+> Whether to act unasked depends on who bears the cost of a mistake and whether they can undo it, not on whether you can.
+<!-- cat: agent-runtime -->
+
+"It is reversible" is the wrong test for autonomy. An action can be trivially reversible by the
+actor and still unacceptable because the cost lands on someone else (a person mid-session, other
+sessions on a shared channel, a third party) who cannot undo it.
+
+**Rules:**
+- Act without asking when the work is authorized and a mistake costs only you or your own project.
+- Ask, or stop, when the cost falls on another party, however cheap the undo is for you.
+- Sort autonomy rules by cost-bearer, not by reversibility; a shared-service restart is not "safe" because it can be repeated.
+
+**Anti-patterns:**
+- Listing a shared-service restart as reversible work to do unasked
+- Treating "I can undo it" as consent from the person who absorbs the interruption
