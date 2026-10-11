@@ -101,7 +101,8 @@ Multi-round adversarial review on the diff. Same convergence algorithm as review
 - Research injection between rounds 1 and 2 if factual claims in findings
 - Convergence when severity drops to polish-tier
 - Hard cap: 3 rounds at T0 and T1, 6 at T2 and T3 (a cost bound; convergence, not the cap, ends a
-  healthy loop)
+  healthy loop). A diff that changes only docs or skill text (no code, config or tests) is capped at
+  one round plus one delta review at any tier: each prose fix tends to invite a new edge case.
 
 ```bash
 # Review exactly what the PR will contain: commit the work first (stage files by name,
