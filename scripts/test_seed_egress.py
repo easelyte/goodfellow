@@ -17,7 +17,14 @@ principle prose ("review", "store", "view") untouched.
 
 import pathlib
 
-from egress_scan import load_denylist, phrase_hits as _phrase_hits
+import pytest
+
+from egress_scan import (
+    load_allowlist,
+    load_denylist,
+    phrase_hits as _phrase_hits,
+    scan_text_allowed,
+)
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
@@ -82,6 +89,8 @@ def test_root_path_prefix_is_caught(tmp_path):
 # ---------------------------------------------------------------------------
 
 CODE_DENY = load_denylist(ROOT / "scripts" / "egress_denylist_code.txt")
+# Path-scoped exemptions: exact repo-relative file -> denylist phrases it may contain.
+CODE_ALLOW = load_allowlist(ROOT / "scripts" / "egress_allowlist_code.txt")
 
 
 def _code_files():
@@ -94,19 +103,23 @@ def _code_files():
     files.extend(sorted((ROOT / "scripts").glob("*.sh")))
     files.extend(sorted((ROOT / "skills").rglob("*.md")))
     files.extend(sorted((ROOT / "configs").rglob("*")))
+    files.extend(sorted((ROOT / "docs").rglob("*.md")))
     readme = ROOT / "README.md"
     if readme.exists():
         files.append(readme)
-    return [p for p in files if p.is_file()]
+    # Allowlisted files are always scanned (tests included): an exemption removes one
+    # phrase, never the scan.
+    files.extend(ROOT / rel for rel in sorted(CODE_ALLOW))
+    return sorted({p for p in files if p.is_file()})
 
 
 def test_no_internal_refs_in_shipped_code():
     leaks = []
     for path in _code_files():
+        rel = path.relative_to(ROOT).as_posix()
         text = path.read_text(encoding="utf-8", errors="ignore")
-        for phrase in CODE_DENY:
-            if _phrase_hits(phrase, text):
-                leaks.append(f"{path.relative_to(ROOT)}: {phrase}")
+        for phrase in scan_text_allowed(text, CODE_DENY, CODE_ALLOW.get(rel, frozenset())):
+            leaks.append(f"{rel}: {phrase}")
     assert not leaks, f"internal-ref leak in shipped code: {leaks}"
 
 
@@ -120,3 +133,96 @@ def test_code_denylist_excludes_goodfellow_own_vocab():
 
 def test_code_scan_catches_a_known_internal_string():
     assert any(_phrase_hits(p, "wired into the matron bridge sink") for p in CODE_DENY)
+
+
+# ---------------------------------------------------------------------------
+# Path-scoped allowlist (the optional remote loop backend).
+# ---------------------------------------------------------------------------
+
+# Pinned: widening this list is a reviewed change to this test, never a quiet edit.
+PINNED_ALLOW = {
+    "scripts/backend_matron.py": frozenset({"matron"}),
+    "scripts/test_backend_matron.py": frozenset({"matron"}),
+    "docs/using-goodfellow-with-matron.md": frozenset({"matron"}),
+}
+
+
+def test_allowlist_contents_are_pinned():
+    assert CODE_ALLOW == PINNED_ALLOW
+
+
+def test_allowlist_entries_are_existing_exact_files_and_denylisted_phrases():
+    deny_lower = {d.lower() for d in CODE_DENY}
+    for rel, phrases in CODE_ALLOW.items():
+        assert (ROOT / rel).is_file(), f"allowlisted file missing (moved?): {rel}"
+        assert phrases <= deny_lower, f"{rel} exempts a phrase that is not denylisted"
+
+
+def test_only_the_bare_word_is_ever_exempt():
+    # The dangerous companions are never exemptable, whatever the file says.
+    exempt_anywhere = set().union(*CODE_ALLOW.values())
+    for blocked in ("/opt/matron", "matron-bridge", "MATRON_"):
+        assert blocked.lower() not in exempt_anywhere
+        assert blocked in CODE_DENY
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "scripts/*.py :: matron",
+        "scripts/ :: matron",
+        "scripts :: ",
+        "/abs/scripts/x.py :: matron",
+        "../x.py :: matron",
+        "scripts/../x.py :: matron",
+        "scripts/x?.py :: matron",
+        "scripts/{a,b}.py :: matron",
+        "no separator",
+    ],
+)
+def test_allowlist_parser_rejects_globs_and_non_exact_paths(tmp_path, line):
+    f = tmp_path / "allow.txt"
+    f.write_text(line + "\n")
+    with pytest.raises(ValueError):
+        load_allowlist(f)
+
+
+# Blocked tokens are built by concatenation so this test file stays scannable.
+_OPT = "/opt/" + "matron"
+_BRIDGE = "matron" + "-bridge"
+_ENV = "MATRON" + "_TOKEN"
+
+
+def test_allowed_word_in_an_allowed_path_passes():
+    text = "Using Matron: matron://item/1 and GOODFELLOW_MATRON_URL"
+    exempt = CODE_ALLOW["scripts/backend_matron.py"]
+    assert scan_text_allowed(text, CODE_DENY, exempt) == []
+
+
+def test_same_word_outside_an_allowed_path_is_caught():
+    text = "Using Matron: matron://item/1"
+    assert "matron" in scan_text_allowed(text, CODE_DENY, CODE_ALLOW.get("scripts/other.py", frozenset()))
+
+
+def test_allowed_word_beside_a_blocked_one_is_caught_in_an_allowed_path():
+    exempt = CODE_ALLOW["scripts/backend_matron.py"]
+    for blocked, phrase in ((_OPT, "/opt/matron"), (_BRIDGE, "matron-bridge"), (_ENV, "MATRON_")):
+        hits = scan_text_allowed(f"matron next to {blocked}", CODE_DENY, exempt)
+        assert phrase in hits, (blocked, hits)
+
+
+def test_hosts_and_ips_stay_blocked_in_allowed_paths():
+    exempt = CODE_ALLOW["scripts/backend_matron.py"]
+    assert "217.216" in scan_text_allowed("matron at 217.216.1.1", CODE_DENY, exempt)
+    assert "100.127" in scan_text_allowed("matron at 100.127.0.1", CODE_DENY, exempt)
+
+
+def test_allowed_files_are_scanned_not_skipped():
+    scanned = {p.relative_to(ROOT).as_posix() for p in _code_files()}
+    assert set(CODE_ALLOW) <= scanned
+
+
+def test_prefix_phrases_catch_longer_unprefixed_names_but_not_prefixed_ones():
+    prefix = "MATRON" + "_"
+    assert _phrase_hits(prefix, "MATRON" + "_TOKEN=x")
+    assert not _phrase_hits(prefix, "GOODFELLOW_" + "MATRON_URL")

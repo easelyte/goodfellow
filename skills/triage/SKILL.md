@@ -86,10 +86,10 @@ For each confirmed decision:
 Append each decision to `.goodfellow/triage-log.jsonl` (lock + flush + fsync, truncated-line tolerant):
 
 ```json
-{"loop_id": 1, "loop_uuid": "<loop's uuid from loops.json>", "title": "...", "decision": "real-defect", "confidence": "high", "reviewer_1": "real-defect", "reviewer_2": "real-defect", "date": "2026-06-02", "operator_override": false, "lens": "<loop's lens, or omit if none>"}
+{"loop_id": 1, "loop_uuid": "<uuid from loop_store.py get>", "title": "...", "decision": "real-defect", "confidence": "high", "reviewer_1": "real-defect", "reviewer_2": "real-defect", "date": "2026-06-02", "operator_override": false, "lens": "<loop's lens, or omit if none>"}
 ```
 
-Include `loop_uuid` — copy the `uuid` field of the loop from `loops.json`. It is the durable identity the lens-tuning join keys on: the integer `loop_id` restarts at 1 on any store reset, so a record carrying only `loop_id` can be mis-attributed to a different loop after a reset. `loop_uuid` is collision-proof across resets. (Legacy records without it still load; the join falls back to `loop_id`.)
+Include `loop_uuid` — copy the `uuid` field from `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/loop_store.py" --root . get <id>` (it reads whichever store is configured). It is the durable identity the lens-tuning join keys on: the integer `loop_id` restarts at 1 on any store reset, so a record carrying only `loop_id` can be mis-attributed to a different loop after a reset. `loop_uuid` is collision-proof across resets. (Legacy records without it still load; the join falls back to `loop_id`.)
 
 ## 8. Summary
 

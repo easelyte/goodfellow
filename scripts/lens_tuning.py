@@ -68,7 +68,7 @@ _HERE = str(pathlib.Path(__file__).resolve().parent)
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
-import loop_store  # noqa: E402
+import loop_backend  # noqa: E402
 import triage_helper  # noqa: E402
 from judge_decision_validator import (  # noqa: E402
     LENS_UNATTRIBUTED,
@@ -202,7 +202,7 @@ class Suggestion:
 def load_outcomes(project_root: str = ".") -> tuple[list[dict], list[dict]]:
     """Read the two durable outcome stores. Side-effect-free: reads only, never
     creates ``.goodfellow/`` (both underlying readers return empty on absence)."""
-    loops = loop_store.list_loops(project_root=project_root)
+    loops = loop_backend.get_backend(project_root).list()
     triage = triage_helper.read_triage_log(project_root=project_root)
     return loops, triage
 

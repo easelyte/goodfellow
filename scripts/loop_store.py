@@ -207,6 +207,57 @@ def count_open(project_root="."):
     return len(list_loops(status="open", project_root=project_root))
 
 
+def _run(args, backend, parser):
+    """The CLI, over whichever backend is configured (local file unless a remote
+    backend's environment variables are set; see loop_backend.py)."""
+    if args.cmd == "add":
+        tags = (
+            [t.strip() for t in args.tags.split(",") if t.strip()] if args.tags else []
+        )
+        lid = backend.add(
+            args.title,
+            priority=args.priority,
+            source=args.source,
+            description=args.description,
+            tags=tags,
+            owner=args.owner,
+            next_action=args.next_action,
+            lens=args.lens,
+        )
+        print(f"Added loop #{lid}: {args.title}")
+    elif args.cmd == "close":
+        if backend.close(args.id):
+            print(f"Closed loop #{args.id}")
+        else:
+            print(f"Loop #{args.id} not found", file=sys.stderr)
+            sys.exit(1)
+    elif args.cmd == "update-triage":
+        date = args.date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        if backend.update_triage(args.id, triage_count=args.count, last_triaged=date):
+            print(
+                f"Updated loop #{args.id}: triage_count={args.count}, last_triaged={date}"
+            )
+        else:
+            print(f"Loop #{args.id} not found", file=sys.stderr)
+            sys.exit(1)
+    elif args.cmd == "get":
+        loop = backend.get(args.id)
+        if loop is None:
+            print(f"Loop #{args.id} not found", file=sys.stderr)
+            sys.exit(1)
+        print(json.dumps(loop, indent=2))
+    elif args.cmd == "list":
+        for l in backend.list(status="open"):
+            print(f"#{l['id']} [{l['priority']}] {l['title']}")
+    elif args.cmd == "stale":
+        for l in backend.list(status="open", min_age_days=30):
+            print(f"#{l['id']} [{l['priority']}] {l['title']} (opened {l['opened']})")
+    elif args.cmd == "count":
+        print(len(backend.list(status="open")))
+    else:
+        parser.print_help()
+
+
 if __name__ == "__main__":
     import argparse
 
@@ -232,51 +283,20 @@ if __name__ == "__main__":
     triage_p.add_argument("--count", type=int, required=True)
     triage_p.add_argument("--date", default=None)
 
+    get_p = sub.add_parser("get", help="print one loop as JSON (id, uuid, lens, ...)")
+    get_p.add_argument("id", type=int)
+
     sub.add_parser("list")
     sub.add_parser("stale")
     sub.add_parser("count")
 
     args = parser.parse_args()
-    if args.cmd == "add":
-        tags = (
-            [t.strip() for t in args.tags.split(",") if t.strip()] if args.tags else []
-        )
-        lid = add_loop(
-            args.title,
-            priority=args.priority,
-            source=args.source,
-            description=args.description,
-            tags=tags,
-            owner=args.owner,
-            next_action=args.next_action,
-            lens=args.lens,
-            project_root=args.root,
-        )
-        print(f"Added loop #{lid}: {args.title}")
-    elif args.cmd == "close":
-        if close_loop(args.id, project_root=args.root):
-            print(f"Closed loop #{args.id}")
-        else:
-            print(f"Loop #{args.id} not found", file=sys.stderr)
-            sys.exit(1)
-    elif args.cmd == "update-triage":
-        date = args.date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        if update_triage(
-            args.id, triage_count=args.count, last_triaged=date, project_root=args.root
-        ):
-            print(
-                f"Updated loop #{args.id}: triage_count={args.count}, last_triaged={date}"
-            )
-        else:
-            print(f"Loop #{args.id} not found", file=sys.stderr)
-            sys.exit(1)
-    elif args.cmd == "list":
-        for l in list_loops(status="open", project_root=args.root):
-            print(f"#{l['id']} [{l['priority']}] {l['title']}")
-    elif args.cmd == "stale":
-        for l in list_loops(status="open", min_age_days=30, project_root=args.root):
-            print(f"#{l['id']} [{l['priority']}] {l['title']} (opened {l['opened']})")
-    elif args.cmd == "count":
-        print(count_open(project_root=args.root))
-    else:
-        parser.print_help()
+
+    import loop_backend
+
+    try:
+        backend = loop_backend.get_backend(args.root)
+        _run(args, backend, parser)
+    except loop_backend.BackendError as e:
+        print(f"loop backend error: {e}", file=sys.stderr)
+        sys.exit(2)
