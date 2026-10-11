@@ -1,0 +1,14 @@
+# Path-scoped exemptions from egress_denylist_code.txt.
+#
+# Format, one per line:   <exact repo-relative file path> :: <denylist phrase>
+#
+# Entries are exact file paths, never globs or directories, so a new file does not
+# inherit an exemption. Moving or renaming a listed file means editing this list.
+# An exemption removes ONE denylist phrase for ONE file; every other phrase
+# (`/opt/matron`, `matron-bridge`, `MATRON_`, hosts, IPs) still applies there.
+# test_seed_egress.py pins this file's exact contents, so it cannot widen silently.
+#
+# The optional Matron loop backend: its module, its tests and its docs page.
+scripts/backend_matron.py :: matron
+scripts/test_backend_matron.py :: matron
+docs/using-goodfellow-with-matron.md :: matron

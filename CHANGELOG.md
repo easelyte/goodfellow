@@ -13,6 +13,7 @@ afterwards at the commits that declared them, without Releases. See [RELEASING.m
 
 ### Added
 
+- Optional remote loop backend. A small versioned backend interface (`scripts/loop_backend.py`: `add`, `close`, `list`, `get`, `update_triage`) with the existing `.goodfellow/loops.json` store as the default `local` implementation, and an optional journal-backed implementation selected by `GOODFELLOW_MATRON_URL`, `GOODFELLOW_MATRON_TOKEN_FILE` and `GOODFELLOW_MATRON_CONVO`. Misconfiguration is an error, never a silent fallback; a read-only capability probe fails closed on a journal that lacks what the backend relies on, and an announced API version other than the supported one is refused; the token is read from a file only. `loop_store.py` commands and `lens_tuning.py` go through the interface. The stop list is unchanged. The code egress scan gains a path-scoped, exact-file allowlist and now also scans `docs/`. See `docs/using-goodfellow-with-matron.md`.
 - Four seed principles: P-097 safety nets cover partial failure, P-098 exercise destructive code only against fakes or isolated namespaces, P-099 untrusted text never rides inline in an agent-run command string, P-100 gate actions on who bears the cost, not on reversibility.
 
 ## [0.5.0] - 2026-10-05

@@ -28,6 +28,7 @@ values fail loudly rather than falling back.
 | `GOODFELLOW_BWRAP` | `bwrap` on `PATH` | Path to the bubblewrap binary. |
 | `GOODFELLOW_TRIAGE_RETENTION_DAYS` | `90` | Days to keep closed triage entries. |
 | `GOODFELLOW_RUNS_RETENTION_DAYS` | `90` | Days to keep autopilot run logs. |
+| `GOODFELLOW_MATRON_URL`, `GOODFELLOW_MATRON_TOKEN_FILE`, `GOODFELLOW_MATRON_CONVO`, `GOODFELLOW_MATRON_MISSION` | unset | Optional remote loop backend, an alternative to `.goodfellow/loops.json`. Setting any of them selects it, and a missing or unknown one is an error. See [the backend page](using-goodfellow-with-matron.md). |
 
 ## Reviewers and models
 

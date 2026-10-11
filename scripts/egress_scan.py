@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import List, Sequence, Tuple
+from typing import Dict, FrozenSet, List, Sequence, Tuple
 
 
 def load_denylist(path: Path) -> List[str]:
@@ -41,7 +41,9 @@ def phrase_hits(phrase: str, text: str) -> bool:
     there, so it still matches a longer path that continues with a word char.
     """
     left = r"(?<![\w-])" if re.match(r"[\w-]", phrase) else ""
-    right = r"(?![\w-])" if re.search(r"[\w-]\Z", phrase) else ""
+    # A phrase ending in `_` or `-` is a PREFIX (it must hit a longer name that starts
+    # with it), so only an alphanumeric last character gets a right boundary.
+    right = r"(?![\w-])" if re.search(r"[A-Za-z0-9]\Z", phrase) else ""
     return re.search(left + re.escape(phrase) + right, text, re.IGNORECASE) is not None
 
 
@@ -64,3 +66,39 @@ def scan_paths(
             if phrase_hits(phrase, text):
                 hits.append((Path(path), phrase))
     return hits
+
+
+def load_allowlist(path: Path) -> Dict[str, FrozenSet[str]]:
+    """Parse a path-scoped allowlist: `<repo-relative file> :: <denylist phrase>` per line.
+
+    Entries are EXACT file paths. A glob character, a directory, an absolute path,
+    a `..` segment or a backslash is rejected, so an exemption can never be wider
+    than the one file it names.
+    """
+    out: Dict[str, set] = {}
+    for raw in Path(path).read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        rel, sep, phrase = (part.strip() for part in line.partition("::"))
+        if not sep or not rel or not phrase:
+            raise ValueError(f"bad allowlist line (want '<path> :: <phrase>'): {raw!r}")
+        parts = rel.split("/")
+        if (
+            rel.startswith("/")
+            or rel.endswith("/")
+            or "\\" in rel
+            or any(c in rel for c in "*?[]{}")
+            or any(seg in ("", ".", "..") for seg in parts)
+        ):
+            raise ValueError(f"allowlist path must be an exact repo-relative file: {rel!r}")
+        out.setdefault(rel, set()).add(phrase)
+    return {k: frozenset(v) for k, v in out.items()}
+
+
+def scan_text_allowed(
+    text: str, denylist: Sequence[str], exempt: FrozenSet[str] = frozenset()
+) -> List[str]:
+    """Denylist hits in `text`, skipping phrases exempted for this file (case-insensitive)."""
+    skip = {e.lower() for e in exempt}
+    return [p for p in denylist if p.lower() not in skip and phrase_hits(p, text)]
