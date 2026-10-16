@@ -31,7 +31,7 @@ if [ "${GOODFELLOW_AUTOPILOT:-}" != "dry-run" ]; then
 fi
 
 # Append the pid so two runs starting in the same UTC second get distinct files
-# (the timestamp alone is second-resolution). Still sortable; prune-stale sweeps
+# (the timestamp alone is second-resolution). Still sortable; prune sweeps
 # by mtime so the suffix is irrelevant to retention.
 printf '%s/.goodfellow/runs/%s-%s.jsonl\n' \
   "$PROJECT_ROOT" "$(date -u +%Y%m%dT%H%M%SZ)" "$$"

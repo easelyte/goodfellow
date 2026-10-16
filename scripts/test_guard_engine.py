@@ -604,12 +604,12 @@ def test_hook_registered_selfcheck(tmp_path):
 
 
 # --------------------------------------------------------------------------- #
-# the snap-compact drift gate must not mask its own non-zero exit
+# the snapshot drift gate must not mask its own non-zero exit
 # --------------------------------------------------------------------------- #
 
 
-def test_snap_compact_drift_gate_not_masked():
-    skill = os.path.join(os.path.dirname(HERE), "skills", "snap-compact", "SKILL.md")
+def test_snapshot_drift_gate_not_masked():
+    skill = os.path.join(os.path.dirname(HERE), "skills", "snapshot", "guards.md")
     with open(skill, "r", encoding="utf-8") as fh:
         text = fh.read()
     # The assertion must be gated by `if !`, and must NOT swallow the exit via

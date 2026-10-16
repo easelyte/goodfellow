@@ -5,6 +5,8 @@ invoke the principles_context resolver. The always-injected path is the
 progressive-disclosure INDEX (`--index`), not the full-corpus dump.
 """
 
+from skill_text import read_skill
+
 import os
 import pathlib
 import re
@@ -22,12 +24,12 @@ def _extract_resolver_block(skill_md_text):
     return None
 
 
-CHAIN_SKILLS = ("brainstorm", "review-doc", "plan", "execute")
+CHAIN_SKILLS = ("brainstorm", "review", "plan", "execute")
 
 
 def test_all_chain_skills_invoke_principles_context():
     for s in CHAIN_SKILLS:
-        txt = (SK / s / "SKILL.md").read_text()
+        txt = read_skill(SK / s / "SKILL.md")
         assert "principles_context.py" in txt, f"{s} missing principles read-path"
 
 
@@ -38,7 +40,7 @@ def test_skills_use_index_command_not_inline_bash():
     CB1 swallowed the resolver exit, R6 swallowed a cat). All error handling lives
     in Python, so the skill markdown can't reintroduce the class."""
     for s in CHAIN_SKILLS:
-        txt = (SK / s / "SKILL.md").read_text()
+        txt = read_skill(SK / s / "SKILL.md")
         assert "principles_context.py" in txt and "--index" in txt, (
             f"{s} does not invoke the --index helper"
         )
@@ -85,7 +87,7 @@ def test_index_block_hard_errors_end_to_end(tmp_path):
         )
 
     for s in CHAIN_SKILLS:
-        block = _extract_resolver_block((SK / s / "SKILL.md").read_text())
+        block = _extract_resolver_block(read_skill(SK / s / "SKILL.md"))
         assert block, f"{s} has no runnable principles_context bash block"
         # 1) invalid env -> exit non-zero
         assert run(block, GOODFELLOW_PRINCIPLES_WEB="true").returncode != 0, (

@@ -8,6 +8,8 @@ with CLAUDE_PLUGIN_ROOT and BASE set, against a repo with a planted weak test.
 
 from __future__ import annotations
 
+from skill_text import read_skill
+
 import os
 import pathlib
 import re
@@ -18,7 +20,7 @@ SHIP = ROOT / "skills" / "ship" / "SKILL.md"
 
 
 def _section_blocks():
-    text = SHIP.read_text()
+    text = read_skill(SHIP)
     m = re.search(
         r"^### 1a\. Tests that can fail\s*$(.*?)(?=^##\s|\Z)", text, re.M | re.S
     )

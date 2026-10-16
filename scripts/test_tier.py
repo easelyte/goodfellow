@@ -309,8 +309,9 @@ SKILLS = os.path.join(os.path.dirname(HERE), "skills")
 
 @pytest.mark.parametrize("skill", ["brainstorm", "ship"])
 def test_entry_skills_run_the_resolver_and_handle_refusal(skill):
-    with open(os.path.join(SKILLS, skill, "SKILL.md"), encoding="utf-8") as fh:
-        flat = " ".join(fh.read().split())
+    from skill_text import read_skill
+
+    flat = " ".join(read_skill(os.path.join(SKILLS, skill, "SKILL.md")).split())
     assert 'scripts/tier.py" resolve' in flat
     assert "**Exit 3:**" in flat and "Never honour it silently" in flat
     assert "**Exit 2:**" in flat and "T0" in flat

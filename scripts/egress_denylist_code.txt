@@ -2,7 +2,7 @@
 #
 # SEPARATE from egress_denylist.txt (which guards knowledge/principles*.md). This
 # list is scanned over scripts/ (non-test), skills/, configs/, and README.md — the
-# surface the codex-review port lands on. It lists ONLY upstream-INTERNAL terms.
+# surface the codex port lands on. It lists ONLY upstream-INTERNAL terms.
 #
 # It deliberately EXCLUDES goodfellow's own sanctioned vocabulary that the
 # knowledge denylist blocks — e.g. `loop store` / `loop_store`: goodfellow

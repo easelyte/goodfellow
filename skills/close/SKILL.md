@@ -5,84 +5,42 @@ description: Structured session closing — commit check, persist learnings to k
 
 Close the current session cleanly.
 
-## 0. Ensure state directory
+## Initialize and inspect
 
-```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/init_state.sh"
-```
+At steps 0–1 read `learnings.md` in this skill's directory, initialize state, then run git status.
+Warn about uncommitted changes and offer to commit them.
+Keep unrelated work visible when deciding how to close the session.
 
-## 1. Uncommitted changes check
+## Persist remaining learnings
 
-Run `git status`. If uncommitted changes exist, warn and offer to commit.
+At step 2 read the rest of `learnings.md` in this skill's directory before changing knowledge state.
+Resolve the backend first; invalid `GOODFELLOW_MEMORY` hard-errors.
+Scan for principles, patterns and gotchas not yet captured.
+Flat mode appends dated pending entries to `.goodfellow/knowledge.md`.
+Rich mode deduplicates against shipped principles, citing the matching P-NNN.
+A dedup error stops; never persist a restatement after a failed check.
+Write kept facts through the documented memory CLI with pending status.
+The first rich write migrates the old knowledge file through the CLI.
 
-## 2. Knowledge persistence
+## Promote or remove pending entries
 
-Resolve the backend mode first (invalid `GOODFELLOW_MEMORY` hard-errors here):
+At step 2b follow the separate flat and rich instructions in `learnings.md` in this skill's directory.
+Promote only learnings whose referenced code survived and still works.
+Remove invalidated or reverted learnings.
+Rich facts use locked promote/delete commands; raw deletion can race a writer.
+Do not bypass the CLI's locking and index regeneration.
+At step 2c flag rich pending facts older than 30 days for review.
 
-```bash
-MODE=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/memory_config.py" resolve-mode) || { echo "$MODE"; exit 1; }
-```
+## Check loops
 
-### 2a. Extract remaining session learnings
-Scan the session's recent work for principles, patterns, or gotchas not yet captured.
+At step 3 read `cleanup.md` in this skill's directory and execute its loop listing command.
+Flag stale open loops using the documented 30-day window.
+Apply the soft backlog warning and suggest triage when its threshold is reached.
+Stale work must remain visible rather than silently disappearing at session close.
 
-**flat mode (`MODE=flat`, default — behavior unchanged):** Append each learning to `.goodfellow/knowledge.md` with `[pending]` tag and date.
+## Clean up and report
 
-**rich mode (`MODE=rich`):** Before persisting a learning, skip it if it restates a shipped principle (cite the `P-NNN`):
-
-```bash
-# Fail CLOSED: a dedup error (drift / unparseable principles) must STOP, not silently
-# persist a restatement. principles.md is required; the web supplement is optional.
-DEDUP_FILES=( "${CLAUDE_PLUGIN_ROOT}/knowledge/principles.md" )
-[ -f "${CLAUDE_PLUGIN_ROOT}/knowledge/principles-web.md" ] && DEDUP_FILES+=( "${CLAUDE_PLUGIN_ROOT}/knowledge/principles-web.md" )
-PID=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/dedup_principles.py" --description "<learning text>" \
-        --principles "${DEDUP_FILES[@]}") || exit 1
-# if $PID is non-empty: skip persisting, log "skipped (restates $PID)"
-```
-
-For each kept learning, write a per-fact file with `status: pending` (the CLI auto-migrates `knowledge.md` on first rich write):
-
-```bash
-# Valid as written — substitute your own values. --name is a kebab-slug matching
-# [a-z0-9-]; --type is one of principle|pattern|gotcha; --domain is optional (omit if none):
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/memory_index.py" --root .goodfellow write-fact \
-  --name validate-at-boundary --description "Always validate at the boundary" \
-  --type principle --status pending --opened "$(date +%F)" --body "Detail of the learning."
-```
-
-### 2b. Promote pending entries
-
-**flat mode:** Read `.goodfellow/knowledge.md`. For each `[pending]` entry:
-- If the learning survived the chain (the code it references is still present and working), promote: remove `[pending]` tag
-- If the learning was reverted or invalidated, remove the entry
-
-**rich mode:** for each `status: pending` per-fact file in `.goodfellow/memory/` (substitute the real fact name for `<name>`; both commands take the lock + regenerate the index themselves, so no separate rebuild step):
-- If the learning survived the chain, promote it: `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/memory_index.py" --root .goodfellow promote --name <name>`
-- If invalidated, delete it via the locked CLI (NOT a raw `rm` — that bypasses the lock and can race a concurrent write): `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/memory_index.py" --root .goodfellow delete-fact --name <name>`
-
-### 2c. Pending-fact staleness (rich mode)
-Flag `status: pending` per-fact files whose `opened:` date is older than the 30-day loop-staleness window for review, so orphaned pending facts (sessions ended without `/close`) don't accumulate unbounded.
-
-## 3. Loop staleness check
-
-```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/loop_store.py" --root . stale
-```
-
-Flag open loops older than 30 days. Present the list.
-
-### Soft cap warning
-```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/loop_store.py" --root . count
-```
-
-If >15 active loops: "Loop backlog at N — consider running /goodfellow:triage before filing more."
-
-## 4. Branch cleanup
-
-If on a feature branch that's been merged, offer to delete it.
-Offer to run `/goodfellow:prune-stale` for a broader sweep.
-
-## 5. Summary
-
-"Session closed. Knowledge: N entries promoted, M new pending. Loops: X open (Y stale). Branch: <status>."
+At steps 4–5 continue with `cleanup.md` in this skill's directory for branch cleanup and the final summary.
+If the current feature branch has been merged, offer to delete it.
+Offer `/goodfellow:prune` for a broader sweep.
+Report knowledge promotions, removals, loop staleness and cleanup outcomes honestly.

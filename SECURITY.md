@@ -40,6 +40,19 @@ Running Goodfellow on a repository you do not trust means running that repositor
 enabled, its analyzers. That is by design and not a vulnerability. Executing analyzers (`eslint`,
 `tsc`, `mypy`) stay off unless you set `GOODFELLOW_TRUST_ANALYZERS=1` for this reason.
 
+The red check reads `.goodfellow/config.json` only from the trusted merge-base revision
+using `git show <merge_base>:.goodfellow/config.json` (absent means no config), never
+from head's working tree. A branch cannot enable a custom runner for itself; config
+added by the branch takes effect after it merges. CLI `--command` and trusted base
+`red_check.command` bypass bubblewrap and retain environment credentials, so the runner
+must supply isolation. `--command` overrides config `red_check.command`.
+`--test-cmd` keeps the sandbox and fails with exit 2 if combined with either custom
+runner command; reset alone keeps the sandbox too.
+
+Running `docker compose run` in the workdir loads the branch's own `compose.yaml`,
+so the branch controls the container's isolation. Use a trusted Compose file outside
+the workdir, selected explicitly with `docker compose -f /abs/path/compose.yml run ...`.
+
 ## Areas worth a closer look
 
 These parts handle untrusted input or enforce a safety boundary, so findings there are especially

@@ -11,9 +11,37 @@ afterwards at the commits that declared them, without Releases. See [RELEASING.m
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-16
+
 ### Added
 
 - Four seed principles: P-097 safety nets cover partial failure, P-098 exercise destructive code only against fakes or isolated namespaces, P-099 untrusted text never rides inline in an agent-run command string, P-100 gate actions on who bears the cost, not on reversibility.
+
+- **Custom fail-first test runners.** Configure `red_check.command` and optional per-run
+  `red_check.reset` in `.goodfellow/config.json`, or use `--command` / `--reset` (CLI wins;
+  `--test-cmd` still works). `{workdir}` supports container mounts with writable, temporary JUnit
+  reports inside each run directory. Custom runners skip bubblewrap, explicitly reported in text
+  and JSON; reset or configuration errors fail closed.
+- **Standalone `/goodfellow:grill` interview.** “Grill me on X” and “interview me about X” run a
+  bounded scout, then one question at a time with a decision ledger before writing a reviewed spec.
+
+### Changed
+
+- **Short skill cores.** Ten skills now keep step order, hard gates and conditional reading
+  pointers in short `SKILL.md` files; detailed commands and rules live alongside them and load
+  only when their step or situation is reached.
+- **BREAKING: one-word skill names, with no aliases.** Update saved invocations, prompts and
+  integrations to the new names below. Replace `brainstorm --grill` with `/goodfellow:grill`;
+  brainstorm no longer accepts the interview flag. Other skill names and risk tiers are unchanged.
+
+  | Old invocation | New invocation |
+  |---|---|
+  | `/goodfellow:review-doc` | `/goodfellow:review` |
+  | `/goodfellow:codex-review` | `/goodfellow:codex` |
+  | `/goodfellow:public-pr` | `/goodfellow:publish` |
+  | `/goodfellow:prune-stale` | `/goodfellow:prune` |
+  | `/goodfellow:snap-compact` | `/goodfellow:snapshot` |
+  | `/goodfellow:brainstorm --grill` | `/goodfellow:grill` |
 
 ## [0.5.0] - 2026-10-05
 
@@ -322,7 +350,8 @@ Initial release.
 - Autopilot mode with dry-run.
 - Triage with two-reviewer reconciliation.
 
-[Unreleased]: https://github.com/easelyte/goodfellow/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/easelyte/goodfellow/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/easelyte/goodfellow/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/easelyte/goodfellow/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/easelyte/goodfellow/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/easelyte/goodfellow/compare/v0.3.0...v0.4.0

@@ -119,16 +119,17 @@ Invoke any skill as `/goodfellow:<name>`. The chain skills hand off to the next 
 
 | Skill | What it does |
 |---|---|
-| **brainstorm** `[--grill] [--tier Tn] [--from-loop N]` | Classifies the change and does the design work its tier needs. `--grill` interviews you one question at a time. |
-| **review-doc** `--spec \| --plan <path>` | Research, then rounds of two-reviewer adversarial review of a spec or plan. |
+| **brainstorm** `[--tier Tn] [--from-loop N]` | Classifies the change and does the design work its tier needs. Use **grill** for a one-question-at-a-time interview. |
+| **grill** | Interviews a fuzzy idea one question at a time, then writes a spec and sends it to review. |
+| **review** `--spec \| --plan <path>` | Research, then rounds of two-reviewer adversarial review of a spec or plan. |
 | **plan** `<spec>` | Task-by-task plan with dependencies and each test's expected red. |
 | **execute** `<plan>` | Implements the plan test-first, verifying after each task. |
 | **ship** `[--tier Tn \| --quick]` | Tier check, verification, red check, review to convergence, PR, merge. |
-| **codex-review** | Direct review of the current diff, a file or a commit. |
+| **codex** | Direct review of the current diff, a file or a commit. |
 | **triage** | Two independent reviewers per open loop, confirmed by you in one batch. |
-| **public-pr** | Pre-open gate for PRs to public or upstream repos: internal-reference scrub and cross-fork mechanics. |
-| **snap-compact**, **close** | Save learnings before compaction, and at the end of a session. |
-| **branch**, **prune-stale** | Create a feature worktree; remove merged branches and old logs. |
+| **publish** | Pre-open gate for PRs to public or upstream repos: internal-reference scrub and cross-fork mechanics. |
+| **snapshot**, **close** | Save learnings before compaction, and at the end of a session. |
+| **branch**, **prune** | Create a feature worktree; remove merged branches and old logs. |
 
 You rarely need to type these. Say what you want ("review my spec", "grill me on the auth flow",
 "ship this") and Claude picks the skill.
@@ -162,6 +163,12 @@ confirmation is Claude Code's own: a mode that auto-approves prompts may skip it
 [docs/configuration.md](docs/configuration.md).
 
 </details>
+
+For container-based fail-first tests, configure `.goodfellow/config.json` with
+`"red_check": {"command": "docker compose run --rm -v {workdir}:/app -w /app test pytest {tests} --junitxml={junit}"}`.
+An optional `reset` runs before every head/base test run; `--command` / `--reset` override config.
+Custom runners skip bubblewrap and report that choice. Mount only the disposable workdir.
+See [Custom test runner](docs/configuration.md#custom-test-runner) for reset, isolation and report details.
 
 ## FAQ
 

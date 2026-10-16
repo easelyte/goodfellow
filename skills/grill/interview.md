@@ -1,8 +1,8 @@
-# brainstorm --grill: the interview
+# Grill: the interview
 
 A relentless, one-question-at-a-time interview that drives a fuzzy or high-stakes idea to a
-resolved design before any spec is written. It replaces §5a of `SKILL.md`; §6 and §7 (approaches,
-spec, review) follow it as usual.
+resolved design before any spec is written. Read `../brainstorm/design.md` at the approach and spec steps; its §6 and §7
+(approaches, spec, review) follow the interview as usual.
 
 Attribution: the interview philosophy ("interview relentlessly, one question at a time, look up
 facts rather than ask, reserve questions for human judgment") adapts Matt Pocock's `grilling` skill.
@@ -34,20 +34,20 @@ leaves more to ask.
   is no question cap. On "enough / write it", stop at once and carry the open decisions into
   `unresolved_questions`.
 
-Announce the outcome, then continue with `SKILL.md` §6.
+Announce the outcome, then read `../brainstorm/design.md` and continue with §6.
 
 ## 3. Extra spec frontmatter
 
-A spec written after a grill carries, in addition to §7's keys:
+A spec written after a grill carries, in addition to `../brainstorm/design.md` §7's keys:
 
 ```yaml
 confidence_basis: grill
 interview_rounds: <int>             # question -> answer exchanges; the scout pass is not counted
 unresolved_questions: []            # non-empty only after an early "enough / write it"
-# pending-review recovery: written with the spec, cleared by review-doc on a resolved review
+# pending-review recovery: written with the spec, cleared by review on a resolved review
 review_status: pending
 failed_reviewers: []
-resume: "/goodfellow:review-doc --spec docs/specs/<slug>-design.md"
+resume: "/goodfellow:review --spec docs/specs/<slug>-design.md"
 ```
 
 `confidence`: `high` when the ledger emptied and the approach has precedent; `medium` when it
@@ -60,11 +60,6 @@ recovery keys make a crash between writing the spec and reviewing it resumable.
 
 ## 4. Dry-run
 
-Under `GOODFELLOW_AUTOPILOT=dry-run` there is no interview and nothing is written. Log what would
-happen to the run log, one JSONL event each:
-
-```bash
-RUN_LOG=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/run_log.sh")
-printf '%s\n' '{"event":"would_write_spec","would_act":true,"path":"docs/specs/<slug>-design.md","confidence":"low"}' >> "$RUN_LOG"
-printf '%s\n' '{"event":"would_dispatch","would_act":true,"skill":"review-doc"}' >> "$RUN_LOG"
-```
+Under `GOODFELLOW_AUTOPILOT=dry-run`, the grill entrypoint logs `would_route` and
+stops before this interview. There are no questions, spec writes, or review dispatches,
+and no `would_write_spec` or `would_dispatch` events are emitted.

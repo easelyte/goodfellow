@@ -36,7 +36,7 @@
 # Sonnet, or who must conserve Opus quota, sets GOODFELLOW_REVIEW_MODEL=sonnet to
 # restore a correctly same-tiered review. In THIS bridge's Codex-present path
 # MODEL is unused (only the fallback reads it). Note GOODFELLOW_REVIEW_MODEL is
-# ALSO referenced (prose-directed, not a script read) by the review-doc
+# ALSO referenced (prose-directed, not a script read) by the review
 # skill for its parallel Claude reviewer, so setting it can change
 # that reviewer too; only the no-Codex fallback DEFAULT flips to opus here — those
 # skills keep their own sonnet default for the parallel reviewer when unset.
