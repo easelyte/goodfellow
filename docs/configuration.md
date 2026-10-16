@@ -32,7 +32,7 @@ values fail loudly rather than falling back.
 ## Reviewers and models
 
 With the Codex CLI installed, the bridge reviewer is Codex (generator plus judge), and
-`review-doc` adds a parallel Claude reviewer (default `sonnet`). Without Codex, the
+`review` adds a parallel Claude reviewer (default `sonnet`). Without Codex, the
 bridge falls back to a single Claude reviewer (default `opus`, so the only reviewer is not weaker than
 the model that wrote the code). Setting `GOODFELLOW_REVIEW_MODEL` overrides both Claude reviewers; it
 never reaches the Codex path.
@@ -89,7 +89,7 @@ turns everything off, project rules included.
 
 `red_check.py` and `mutation_check.py` run your test suite, and the mutation check runs it against
 deliberately broken code: a mutant of a cleanup routine can delete the wrong directory, and a
-mutant of process-selection code can signal the wrong process. So every test command they run goes
+mutant of process-selection code can signal the wrong process. By default their test commands go
 through [bubblewrap](https://github.com/containers/bubblewrap) (`bwrap`):
 
 - **A private PID namespace.** The tests see and can signal only their own processes.
@@ -130,6 +130,59 @@ The sandbox does not isolate the network. So the mutation check still asks for `
 already has its own PID namespace, but a mutant of code that spawns `curl` could still reach a
 local service. Targets that delete or write files need `--fakes`.
 
+## Custom test runner
+
+The fail-first check defaults to host pytest in throwaway head and base directories. For a
+container or another runner, set `.goodfellow/config.json` in the trusted base revision.
+The check reads config with `git show <merge_base>:.goodfellow/config.json`, never from
+head's working tree. An absent base config means no config. A branch cannot enable a
+custom runner for itself; config added by the branch takes effect after it merges.
+
+```json
+{
+  "red_check": {
+    "command": "docker compose -f /abs/path/compose.yml run --rm -v {workdir}:/app -w /app test pytest {tests} --junitxml={junit}",
+    "reset": "docker compose -f /abs/path/compose.yml run --rm -v {workdir}:/app -w /app test sh -c 'rm -rf .test-state'"
+  }
+}
+```
+
+Running `docker compose run` in the workdir loads the branch's own `compose.yaml`,
+so the branch controls the container's isolation. Use a trusted Compose file outside
+the workdir with `-f /abs/path/compose.yml`, as in the example above.
+
+Use a Compose `test` service with its test dependencies installed. Set the service's
+`user:` to your host UID:GID, or add `--user $(id -u):$(id -g)` to both Compose run
+commands, to avoid root-owned files preventing cleanup. Cleanup failures warn on stderr
+with the leftover path. A timeout kills only the client process; containers and remote
+services may keep running and need their own bounded lifecycle. The container should mount
+**only the workdir**, the disposable head copy or base worktree, rather than the original checkout,
+home directory or credentials. Keep the service's working directory at the mounted tree (`/app`
+in this example). Keep any test services and reset effects isolated to disposable test resources.
+
+`{tests}` expands to shell-quoted test paths. `{workdir}` expands to the shell-quoted absolute
+run directory. When the command contains `{workdir}`, `{junit}` is a temporary **relative filename**
+inside that directory, so a container working in the mount can write it even at a different mount
+path. The report is read and removed after the run, including a timeout. Without `{workdir}` the
+report uses the existing absolute scratch path. Reset supports `{workdir}` and runs in the same
+directory before **every** test command: head, base's own tests (when present), and base replay.
+A failed or timed-out reset stops the check with exit 2 before that test command.
+
+`--command` and `--reset` override the corresponding config values
+independently. `reset` is optional; both `command` and `reset`
+must be nonempty strings when supplied, including CLI overrides. Invalid JSON, non-object configuration, wrong value types,
+and unknown keys inside `red_check` fail loudly with exit 2, even with CLI overrides. Other top-level
+configuration sections are allowed.
+
+Only `--command` or config `red_check.command` skips bubblewrap entirely, regardless of `GOODFELLOW_SANDBOX`.
+The runner supplies its own isolation; credentials stay in its environment.
+One stderr note announces the sandbox bypass; text output includes the note and JSON records `"sandbox": "custom-runner"` plus a `note` field.
+`--command` overrides config `red_check.command`. `--test-cmd` changes the test command
+while keeping the sandbox; combining it with either `--command` or config
+`red_check.command` fails with exit 2 (`--test-cmd cannot be combined with a custom runner command`).
+A reset alone keeps the default runner's sandbox behavior. This configuration applies only to `red_check.py`;
+`mutation_check.py` retains its existing sandbox requirements and behavior.
+
 ## Knowledge and memory backends
 
 **`flat` (default).** One append-only file, `.goodfellow/knowledge.md`, with three sections:
@@ -145,7 +198,7 @@ local service. Targets that delete or write files need `--fakes`.
 - [pending] 2026-06-02: The Codex CLI has no --file flag; use --commit/--base/--uncommitted
 ```
 
-`ship` and `snap-compact` add entries tagged `[pending]`; `close` confirms them.
+`ship` and `snapshot` add entries tagged `[pending]`; `close` confirms them.
 
 **`rich` (`GOODFELLOW_MEMORY=rich`).** One file per fact under `.goodfellow/memory/`, a regenerated
 index at `.goodfellow/MEMORY.md`, and per-domain registries. Writes are atomic, locked and journaled

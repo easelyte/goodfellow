@@ -617,3 +617,10 @@ def test_render_report_backward_compatible_without_lens():
     stats = lens_tuning.attribute_by_source(loops, [_triage(1, "real-defect")])
     out = lens_tuning.render_report([], stats)
     assert "Per-lens attribution" not in out
+
+
+def test_legacy_source_names_still_map_to_current_details():
+    for source in ("review-doc-r2", "spec-review-r1", "plan-review-r3", "review-r2"):
+        assert "skills/review/rounds.md" in lens_tuning._lens_location(source)
+    for source in ("codex-review-r2", "codex-review code", "codex-r1"):
+        assert "skills/codex/background.md" in lens_tuning._lens_location(source)

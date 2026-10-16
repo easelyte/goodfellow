@@ -184,7 +184,7 @@ def test_cli_fails_closed_on_a_bad_base(repo: Path):
 def test_ship_final_head_check_uses_the_mapper():
     """The final-HEAD check lives in skill prose; pin the wiring."""
     ship = (
-        Path(__file__).resolve().parents[1] / "skills" / "ship" / "SKILL.md"
+        Path(__file__).resolve().parents[1] / "skills" / "ship" / "review.md"
     ).read_text()
     section = ship.split("### Final-HEAD check", 1)[1].split("\n## ", 1)[0]
     assert "scripts/review_delta.py" in section
@@ -196,7 +196,7 @@ def test_ship_final_head_check_uses_the_mapper():
 
 def _final_head_block() -> str:
     ship = (
-        Path(__file__).resolve().parents[1] / "skills" / "ship" / "SKILL.md"
+        Path(__file__).resolve().parents[1] / "skills" / "ship" / "review.md"
     ).read_text()
     section = ship.split("### Final-HEAD check", 1)[1].split("\n## ", 1)[0]
     return section.split("```bash\n", 1)[1].split("```", 1)[0]

@@ -32,16 +32,17 @@ body:
     attributes:
       label: Area
       options:
-        - brainstorm (incl. --grill)
-        - review-doc (spec / plan review)
+        - brainstorm
+        - grill
+        - review (spec / plan review)
         - plan
         - execute
         - ship
-        - codex-review
+        - codex
         - triage
-        - snap-compact / close
-        - branch / prune-stale
-        - public-pr
+        - snapshot / close
+        - branch / prune
+        - publish
         - guards (PreToolUse hook)
         - red_check / mutation_check
         - memory backend / knowledge

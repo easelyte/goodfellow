@@ -49,7 +49,7 @@ jobs:
           fi
       - name: Validate plugin structure
         run: |
-          for skill in brainstorm review-doc plan execute ship codex-review triage snap-compact close branch prune-stale public-pr; do
+          for skill in brainstorm grill review plan execute ship codex triage snapshot close branch prune publish; do
             if [ ! -f "skills/$skill/SKILL.md" ]; then
               echo "ERROR: Missing skills/$skill/SKILL.md"
               exit 1

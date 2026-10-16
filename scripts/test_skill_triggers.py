@@ -1,18 +1,19 @@
-"""Skills are found from what people say, not from command names.
-
-0.4.1 removed the `spec-review`, `plan-review` and `grill` aliases. Their
-natural-language triggers moved into the canonical skills' descriptions, which
-is what the model matches when it picks a skill on its own. These tests pin both
-halves: the aliases are gone everywhere, and the phrases they answered to still
-reach a skill.
-"""
+"""Natural-language triggers route to canonical skills."""
 
 import pathlib
 import re
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SK = ROOT / "skills"
-REMOVED = ("spec-review", "plan-review", "grill")
+REMOVED = (
+    "spec-review",
+    "plan-review",
+    "review-doc",
+    "codex-review",
+    "public-pr",
+    "prune-stale",
+    "snap-compact",
+)
 
 
 def _description(skill: str) -> str:
@@ -27,8 +28,8 @@ def test_removed_alias_skills_are_gone():
         assert not (SK / name).exists(), f"alias skill {name} still ships"
 
 
-def test_review_doc_carries_the_aliases_triggers():
-    desc = _description("review-doc")
+def test_review_carries_the_document_triggers():
+    desc = _description("review")
     for phrase in (
         "review my spec",
         "is the spec ready",
@@ -38,13 +39,19 @@ def test_review_doc_carries_the_aliases_triggers():
         "stress test this plan",
         "what could go wrong with this plan",
     ):
-        assert phrase in desc, f"review-doc description lacks the trigger {phrase!r}"
+        assert phrase in desc, f"review description lacks the trigger {phrase!r}"
 
 
-def test_brainstorm_carries_the_grill_triggers():
+def test_brainstorm_keeps_its_design_triggers():
     desc = _description("brainstorm")
-    for phrase in ("grill me on", "interview me about", "brainstorm", "design"):
+    for phrase in ("brainstorm", "design"):
         assert phrase in desc, f"brainstorm description lacks the trigger {phrase!r}"
+
+
+def test_grill_carries_the_interview_triggers():
+    desc = _description("grill")
+    for phrase in ("grill me on", "interview me about"):
+        assert phrase in desc, f"grill description lacks the trigger {phrase!r}"
 
 
 def test_no_live_reference_to_a_removed_alias():
@@ -52,8 +59,8 @@ def test_no_live_reference_to_a_removed_alias():
     The CHANGELOG keeps its history, and lens_tuning still maps old run-log
     breadcrumbs (`spec-review ...`) recorded before 0.4.1."""
     pattern = re.compile(
-        r"goodfellow:(spec-review|plan-review|grill)\b|`(spec-review|plan-review|grill)`"
-        r"|skills/(spec-review|plan-review|grill)\b"
+        r"goodfellow:(spec-review|plan-review)\b|`(spec-review|plan-review)`"
+        r"|skills/(spec-review|plan-review)\b"
     )
     files = [
         *SK.rglob("*.md"),
@@ -77,3 +84,20 @@ def test_ci_does_not_require_the_removed_skills():
     line = next(ln for ln in ci.splitlines() if "for skill in" in ln)
     listed = set(line.split("for skill in", 1)[1].split(";", 1)[0].split())
     assert not listed & set(REMOVED), f"CI still requires {listed & set(REMOVED)}"
+
+
+def test_core_detail_pointers_exist():
+    for core in SK.glob("*/SKILL.md"):
+        for target in re.findall(r"`([^`]+\.md)`", core.read_text()):
+            if "/" not in target or target.startswith("../"):
+                assert (core.parent / target).is_file(), (
+                    f"{core}: missing detail {target}"
+                )
+
+
+def test_grill_routes_before_interview():
+    core = (SK / "grill/SKILL.md").read_text()
+    assert "../brainstorm/routing.md" in core
+    for required in ("--tier", "--from-loop", "T0/T1", "would_route"):
+        assert required in core
+    assert core.index("../brainstorm/routing.md") < core.index("## Scout first")

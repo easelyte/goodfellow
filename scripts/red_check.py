@@ -36,15 +36,18 @@ sandbox.py): a private PID namespace and a filesystem allowlist, where the only
 writable host directory is this check's temporary directory. Without
 bubblewrap the check runs unsandboxed, says so in one warning line, and
 records "unsandboxed" in its report. An installed bubblewrap that does not
-isolate refuses (exit 2) and runs nothing.
+isolate refuses (exit 2) and runs nothing. A custom runner bypasses bubblewrap
+entirely and records that choice; its optional reset runs before every test run.
 
 OK means the base failure came from an assertion. It does not prove it was the
 assertion you meant: the base message is printed next to each verdict, so
 compare it with the expected red the plan named.
 
 Runner-agnostic via JUnit XML. The default command is pytest; for other runners
-pass --test-cmd with `{tests}` and `{junit}` placeholders, e.g.
+set red_check.command in .goodfellow/config.json or pass --command (custom isolation) or
+--test-cmd (keeps the sandbox) with `{tests}`, `{junit}` and optionally `{workdir}` placeholders, e.g.
   --test-cmd "npx vitest run {tests} --reporter=junit --outputFile={junit}"
+--command overrides red_check.command. --test-cmd cannot be combined with either.
 
 "New" means a test id (classname::name) present on the branch but absent from
 the base's own version of the same files. A test whose body changed but whose
@@ -119,6 +122,32 @@ def is_missing_symbol(text: str) -> bool:
 
 class RedCheckError(RuntimeError):
     """Something prevented a trustworthy verdict: fail closed (exit 2)."""
+
+
+def runner_config(workdir: Path, merge_base: str) -> dict:
+    """Read only trusted base settings, even when the CLI overrides them."""
+    path = f"{merge_base}:.goodfellow/config.json"
+    if not _git(
+        workdir, ["ls-tree", "--full-tree", merge_base, "--", ".goodfellow/config.json"]
+    ).strip():
+        return {}
+    try:
+        raw = json.loads(_git(workdir, ["show", path]))
+    except ValueError as exc:
+        raise RedCheckError(f"{path}: {exc}") from exc
+    if not isinstance(raw, dict):
+        raise RedCheckError(f"{path}: expected an object")
+    settings = raw.get("red_check", {})
+    if not isinstance(settings, dict):
+        raise RedCheckError(f"{path}: red_check must be an object")
+    if settings.keys() - {"command", "reset"}:
+        raise RedCheckError(
+            f"{path}: unknown red_check keys: {sorted(settings.keys() - {'command', 'reset'})}"
+        )
+    for key, value in settings.items():
+        if not isinstance(value, str) or not value.strip():
+            raise RedCheckError(f"{path}: red_check.{key} must be a nonempty string")
+    return settings
 
 
 def verdict_for(head_kind: str, base_kind: str, base_message: str) -> str:
@@ -252,37 +281,57 @@ def run_tests(
     returncodes: Optional[List[int]] = None,
     sb: Optional[sandbox.Sandbox] = None,
     scratch: Optional[Path] = None,
+    reset: Optional[str] = None,
 ) -> Optional[Dict[str, Tuple[str, Optional[str], str]]]:
     """Run the test command in cwd; return parsed JUnit, or None if no report.
     The runner's exit code is appended to `returncodes` when given. With a
     sandbox, the command runs inside it and may write only `scratch` (which
     holds cwd and the JUnit report)."""
-    fd, junit = tempfile.mkstemp(
-        prefix="red-check-", suffix=".xml", dir=str(scratch) if scratch else None
-    )
-    os.close(fd)
-    os.unlink(junit)
-    cmd = cmd_template.replace(
-        "{tests}", " ".join(shlex.quote(t) for t in tests)
-    ).replace("{junit}", shlex.quote(junit))
-    if sb is not None:
-        cmd = sb.wrap(cmd, [scratch or cwd], cwd)
     env = dict(os.environ)
     env.pop("PYTHONPATH", None)
     if sb is not None:
         env = sb.env(env)  # credentials in the environment stay outside
-    rc, _out, err = proc_group.run(cmd, cwd, env, timeout, sweep=True)
-    if rc is None:
-        return None
-    if sb is not None and not sb.completed(err):
-        # bwrap's own failure exits like a failing test; never read it as one
-        raise RedCheckError(
-            f"the test sandbox failed to run the tests in {cwd.name}: "
-            f"{(err or '').strip()[-300:]}"
-        )
-    if returncodes is not None:
-        returncodes.append(rc)
+    if reset:
+        reset_cmd = reset.replace("{workdir}", shlex.quote(str(cwd)))
+        if sb is not None:
+            reset_cmd = sb.wrap(reset_cmd, [scratch or cwd], cwd)
+        rc, _out, err = proc_group.run(reset_cmd, cwd, env, timeout, sweep=True)
+        if rc is None:
+            raise RedCheckError(f"reset timed out in {cwd.name} after {timeout}s")
+        if rc != 0 or (sb is not None and not sb.completed(err)):
+            raise RedCheckError(
+                f"reset failed in {cwd.name} (exit {rc}): {(err or '').strip()[-300:]}"
+            )
+    # Keep reports inside the mount when the runner uses a workdir placeholder.
+    report_dir = cwd if "{workdir}" in cmd_template else scratch
+    fd, junit = tempfile.mkstemp(
+        prefix="red-check-", suffix=".xml", dir=str(report_dir) if report_dir else None
+    )
+    os.close(fd)
+    os.unlink(junit)
+    substitutions = {
+        "tests": " ".join(shlex.quote(t) for t in tests),
+        "junit": shlex.quote(
+            Path(junit).name if "{workdir}" in cmd_template else junit
+        ),
+        "workdir": shlex.quote(str(cwd)),
+    }
+    cmd = re.sub(
+        r"\{(tests|junit|workdir)\}", lambda m: substitutions[m[1]], cmd_template
+    )
+    if sb is not None:
+        cmd = sb.wrap(cmd, [scratch or cwd], cwd)
     try:
+        rc, _out, err = proc_group.run(cmd, cwd, env, timeout, sweep=True)
+        if rc is None:
+            return None
+        if sb is not None and not sb.completed(err):
+            raise RedCheckError(
+                f"the test sandbox failed to run the tests in {cwd.name}: "
+                f"{(err or '').strip()[-300:]}"
+            )
+        if returncodes is not None:
+            returncodes.append(rc)
         if not os.path.exists(junit) or os.path.getsize(junit) == 0:
             return None
         return parse_junit(Path(junit))
@@ -310,9 +359,11 @@ def check(
     all_tests: bool,
     assertion_patterns: Sequence[str] = (),
     sb: Optional[sandbox.Sandbox] = None,
+    reset: Optional[str] = None,
+    merge_base: Optional[str] = None,
 ) -> Tuple[List[dict], List[str]]:
     _git(workdir, ["rev-parse", "--verify", "--quiet", f"{base}^{{commit}}"])
-    merge_base = _git(workdir, ["merge-base", base, "HEAD"]).strip()
+    merge_base = merge_base or _git(workdir, ["merge-base", base, "HEAD"]).strip()
     files = tests if tests else changed_test_files(workdir, merge_base, globs)
     if not files:
         return [], []
@@ -325,7 +376,9 @@ def check(
         head_copy = tmp / "head"
         _copy_worktree(workdir, head_copy)
         head_rc: List[int] = []
-        head = run_tests(head_copy, files, cmd_template, timeout, head_rc, sb, tmp)
+        head = run_tests(
+            head_copy, files, cmd_template, timeout, head_rc, sb, tmp, reset
+        )
         if head and head_rc and head_rc[0] != 0:
             if all(tag in ("pass", "skipped") for tag, _t, _m in head.values()):
                 raise RedCheckError(
@@ -337,13 +390,15 @@ def check(
             raise RedCheckError(
                 "the test command produced no JUnit report (or one with no test "
                 "cases) on the current checkout; cannot judge anything "
-                "(check --test-cmd)"
+                "(check --command / --test-cmd and the runner configuration)"
             )
         _git(workdir, ["worktree", "add", "--detach", "--quiet", str(wt), merge_base])
         # The base's OWN tests identify which head tests are new.
         own = [f for f in files if (wt / f).is_file()]
         base_own = (
-            run_tests(wt, own, cmd_template, timeout, None, sb, tmp) if own else {}
+            run_tests(wt, own, cmd_template, timeout, None, sb, tmp, reset)
+            if own
+            else {}
         )
         base_own = base_own or {}
         for rel in list(files) + list(support):
@@ -352,11 +407,26 @@ def check(
                 dst = wt / rel
                 dst.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(src, dst)
-        base_run = run_tests(wt, files, cmd_template, timeout, None, sb, tmp) or {}
+        base_run = (
+            run_tests(wt, files, cmd_template, timeout, None, sb, tmp, reset) or {}
+        )
     finally:
-        _git(workdir, ["worktree", "remove", "--force", str(wt)], check=False)
+        try:
+            _git(workdir, ["worktree", "remove", "--force", str(wt)])
+        except RedCheckError as exc:
+            if wt.exists():
+                print(
+                    f"red-check: WARNING: cleanup failed; leftover path {wt}: {exc}",
+                    file=sys.stderr,
+                )
         proc_group.sweep_cwd(tmp)
-        shutil.rmtree(tmp, ignore_errors=True)
+        try:
+            shutil.rmtree(tmp)
+        except OSError as exc:
+            print(
+                f"red-check: WARNING: cleanup failed; leftover path {tmp}: {exc}",
+                file=sys.stderr,
+            )
         _git(workdir, ["worktree", "prune"], check=False)
 
     collection_note = _collection_errors(base_run)
@@ -419,7 +489,16 @@ def main(argv: Optional[List[str]] = None) -> int:
         default=[],
         help="extra changed files the tests need on the base (fixtures, conftest)",
     )
-    ap.add_argument("--test-cmd", default=DEFAULT_TEST_CMD)
+    ap.add_argument(
+        "--command",
+        dest="command",
+        default=None,
+        help="custom test command (overrides red_check.command)",
+    )
+    ap.add_argument(
+        "--test-cmd", default=None, help="test command that keeps the sandbox"
+    )
+    ap.add_argument("--reset", default=None, help="command run before each test run")
     ap.add_argument("--timeout", type=int, default=600)
     ap.add_argument("--test-glob", action="append", default=None)
     ap.add_argument(
@@ -455,29 +534,51 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     workdir = Path(a.workdir).resolve()
     proc_group.install_handlers()
+    note = None
     try:
-        # Without bwrap the red check still runs (one warning line); an
-        # installed bwrap that does not isolate refuses before anything runs.
-        sb = sandbox.create([workdir], allow_missing=True)
-    except sandbox.SandboxError as exc:
+        for flag, value in (("--command", a.command), ("--reset", a.reset)):
+            if value is not None and not value.strip():
+                raise RedCheckError(f"{flag} must be a nonempty string")
+        merge_base = _git(workdir, ["merge-base", a.base, "HEAD"]).strip()
+        config = runner_config(workdir, merge_base)
+        command = a.command if a.command is not None else config.get("command")
+        if a.test_cmd is not None and command is not None:
+            raise RedCheckError(
+                "--test-cmd cannot be combined with a custom runner command"
+            )
+        test_command = (
+            a.test_cmd
+            if a.test_cmd is not None
+            else (command if command is not None else DEFAULT_TEST_CMD)
+        )
+        reset = a.reset if a.reset is not None else config.get("reset")
+        if command is not None:
+            sb = None
+            note = "sandbox skipped because a custom runner is set"
+            print(f"red-check: {note}", file=sys.stderr)
+        else:
+            sb = sandbox.create([workdir], allow_missing=True)
+            warn = sandbox.warning("red-check", sb)
+            if warn:
+                print(warn, file=sys.stderr)
+    except (RedCheckError, sandbox.SandboxError, OSError) as exc:
         print(f"red-check BLOCK: {exc}", file=sys.stderr)
         return 2
-    warn = sandbox.warning("red-check", sb)
-    if warn:
-        print(warn, file=sys.stderr)
     try:
         results, unreplayed = check(
             workdir,
             a.base,
             a.tests,
             a.support,
-            a.test_cmd,
+            test_command,
             a.timeout,
             tuple(a.test_glob or DEFAULT_TEST_GLOBS),
             tuple(a.assertion_type),
             a.all_tests,
             tuple(a.assertion_pattern),
             sb,
+            reset,
+            merge_base,
         )
     except (RedCheckError, OSError) as exc:
         print(f"red-check BLOCK: {exc}", file=sys.stderr)
@@ -489,7 +590,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             json.dumps(
                 {
                     "base": a.base,
-                    "sandbox": sb.mode,
+                    "sandbox": sb.mode if sb is not None else "custom-runner",
+                    **({"note": note} if note else {}),
                     "results": results,
                     "not_replayed": unreplayed,
                 },
@@ -497,6 +599,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             )
         )
     else:
+        if note:
+            print(f"red-check: {note}")
         if not results:
             print("red-check: no new tests found")
         for r in results:

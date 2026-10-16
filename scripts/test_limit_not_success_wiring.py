@@ -7,6 +7,8 @@ assertions pin the load-bearing prose so a future edit cannot silently drop the
 terminal-halt behavior or reintroduce the honesty gap.
 """
 
+from skill_text import read_skill
+
 import pathlib
 import re
 
@@ -16,7 +18,7 @@ PRINCIPLES = ROOT / "knowledge" / "principles.md"
 
 
 def _read(*parts):
-    return (ROOT.joinpath(*parts)).read_text()
+    return read_skill(ROOT.joinpath(*parts))
 
 
 def test_principle_p079_defined_with_canonical_title():
@@ -47,8 +49,8 @@ def test_execute_ships_only_on_success_path():
     assert "Dispatch ship ONLY on the success path" in txt
 
 
-def test_review_doc_spec_mode_has_terminal_safety_gate():
-    txt = _read("skills", "review-doc", "SKILL.md")
+def test_review_spec_mode_has_terminal_safety_gate():
+    txt = _read("skills", "review", "SKILL.md")
     assert "P-079" in txt
     assert "Terminal safety gate" in txt
     assert "spec_review_halt" in txt
@@ -57,18 +59,18 @@ def test_review_doc_spec_mode_has_terminal_safety_gate():
     assert "do NOT discard the findings and do NOT auto-dispatch plan" in flat
 
 
-def test_review_doc_cap_is_limit_not_convergence():
+def test_review_cap_is_limit_not_convergence():
     """§5 must classify a non-blocking hard-cap halt as a limit, never as
     convergence — otherwise the model can emit an unverified convergence claim
     (the exact P-079 anti-pattern). Negative assertion pins the fix."""
-    txt = _read("skills", "review-doc", "SKILL.md")
+    txt = _read("skills", "review", "SKILL.md")
     flat = " ".join(txt.split())
     assert "Only non-blocking findings → declare convergence" not in flat
     assert "resolved | limit_reached" in flat
 
 
-def test_review_doc_plan_mode_has_terminal_safety_gate():
-    txt = _read("skills", "review-doc", "SKILL.md")
+def test_review_plan_mode_has_terminal_safety_gate():
+    txt = _read("skills", "review", "SKILL.md")
     assert "P-079" in txt
     assert "Terminal safety gate" in txt
     assert "plan_review_halt" in txt
@@ -77,17 +79,17 @@ def test_review_doc_plan_mode_has_terminal_safety_gate():
     assert "do NOT discard the findings and do NOT auto-dispatch execute" in flat
 
 
-def test_review_doc_discard_is_conditional():
+def test_review_discard_is_conditional():
     """The discard instruction must be scoped to the non-blocking path so it does
     not contradict the terminal safety gate (which preserves findings)."""
-    txt = _read("skills", "review-doc", "SKILL.md")
+    txt = _read("skills", "review", "SKILL.md")
     assert "On a safety-critical cap-halt, do NOT discard" in txt
 
 
-def test_review_doc_plan_cap_is_limit_not_convergence():
+def test_review_plan_cap_is_limit_not_convergence():
     """§5 must classify a non-blocking hard-cap halt as a limit, never as
     convergence (P-079). Mirror of the spec-mode assertion (P-057 parity)."""
-    txt = _read("skills", "review-doc", "SKILL.md")
+    txt = _read("skills", "review", "SKILL.md")
     flat = " ".join(txt.split())
     assert "Only non-blocking findings → declare convergence" not in flat
     assert "resolved | limit_reached" in flat
@@ -97,4 +99,3 @@ def test_ship_reports_cap_halt_honestly():
     txt = _read("skills", "ship", "SKILL.md")
     assert "P-079" in txt
     assert "Halted at hard cap" in txt
-

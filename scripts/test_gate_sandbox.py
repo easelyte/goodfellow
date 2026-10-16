@@ -1,4 +1,6 @@
-"""red_check and mutation_check run every test command in the sandbox, or refuse.
+"""Default red-check and mutation-check commands use the sandbox, or refuse.
+
+Custom red-check runners explicitly supply their own isolation (tested separately).
 
 Fail-closed: when the sandbox is required (the default) and unavailable, the
 gate exits 2 and the test command never runs. Opt-out: GOODFELLOW_SANDBOX=off
@@ -145,9 +147,10 @@ def test_red_check_without_bwrap_runs_unsandboxed_and_says_so_once(tmp_path):
 
 @pytest.mark.parametrize("extra", [[], ["--fakes"]])
 def test_red_check_refuses_when_the_sandbox_is_demanded_or_broken(tmp_path, extra):
-    repo, base = _repo(tmp_path, "    assert f() == 2\n")
     ran = tmp_path / "test-command-ran"
-    cmd = f"touch {ran}; exit 0"
+    repo, base = _repo(
+        tmp_path, f"    open({str(ran)!r}, 'w').close()\n    assert f() == 2\n"
+    )
     broken = tmp_path / "broken-bwrap"
     broken.write_text(
         "#!/bin/sh\necho 'bwrap: setting up uid map: Permission denied' >&2\nexit 1\n"
@@ -157,7 +160,7 @@ def test_red_check_refuses_when_the_sandbox_is_demanded_or_broken(tmp_path, extr
         {**_without_bwrap(tmp_path), "GOODFELLOW_SANDBOX": "bwrap"},
         _env(GOODFELLOW_BWRAP=str(broken)),
     ):
-        proc = _red(repo, base, env, "--test-cmd", cmd)
+        proc = _red(repo, base, env)
         assert proc.returncode == 2, proc.stdout + proc.stderr
         assert not ran.exists(), "the test command ran without a working sandbox"
 
@@ -373,12 +376,14 @@ def test_a_sandbox_that_stalls_before_the_tests_start_is_never_a_kill(tmp_path):
 def test_a_bwrap_override_that_does_not_exist_fails_loudly(tmp_path, gate):
     """GOODFELLOW_BWRAP pointing nowhere is a typo, not "bubblewrap is not
     installed": it must refuse, never run unsandboxed."""
-    repo, base = _repo(tmp_path, "    assert f() == 2\n")
     ran = tmp_path / "test-command-ran"
+    repo, base = _repo(
+        tmp_path, f"    open({str(ran)!r}, 'w').close()\n    assert f() == 2\n"
+    )
     env = _env(GOODFELLOW_BWRAP=str(tmp_path / "typo-bwrap"))
     cmd = f"touch {ran}; exit 0"
     if gate == "red":
-        proc = _red(repo, base, env, "--test-cmd", cmd)
+        proc = _red(repo, base, env)
     else:
         proc = _mut(repo, base, env, "--fakes", "--test-cmd", cmd)
     assert proc.returncode == 2, proc.stdout + proc.stderr

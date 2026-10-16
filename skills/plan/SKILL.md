@@ -1,105 +1,46 @@
 ---
 name: plan
-description: Write an implementation plan from a spec — exhaustive task decomposition with dependency graph, acceptance criteria, and spec-coverage verification. Auto-dispatches review-doc --plan.
+description: Write an implementation plan from a spec — exhaustive task decomposition with dependency graph, acceptance criteria, and spec-coverage verification. Auto-dispatches review --plan.
 ---
 
 Write a plan for: $ARGUMENTS
 
-## 1. Read the spec
+## Read inputs
 
-Read the spec file fully, then read the project's accumulated knowledge, backend-aware (invalid `GOODFELLOW_MEMORY` hard-errors here):
+At step 1 read `inputs.md` in this skill's directory before writing anything.
+Read the spec fully, then backend-aware accumulated knowledge and the principles index.
+Invalid memory mode or principle configuration stops execution.
+Rich mode reads the full index, discounts pending facts, and pulls matching domains.
+Expand relevant categories and full principles before applying or citing them.
 
-```bash
-MODE=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/memory_config.py" resolve-mode) || { echo "$MODE"; exit 1; }
-if [ "$MODE" = "rich" ]; then
-  # Full MEMORY.md index (incl. ## Pending (unconfirmed) — discount those). Internally
-  # falls back: .migrating -> knowledge.md (no regen), absent -> knowledge.md, dirty/stale -> regenerate.
-  python3 "${CLAUDE_PLUGIN_ROOT}/scripts/memory_index.py" --root .goodfellow read-index
-else
-  cat .goodfellow/knowledge.md 2>/dev/null || true   # flat: Principles section
-fi
-```
+## Clarify execution choices
 
-In rich mode, auto-pull bodies of exact-`domain` matches; open other relevant fact bodies by name from the index.
+At step 2 read `writing.md` in this skill's directory for clarification and complete plan requirements.
+Ask at most three questions, once, only when they change order or decomposition.
+Skip questions answerable from the spec or codebase.
+Autopilot asks only product calls; decide the rest and record them in the plan.
 
-Also read the plugin-shipped universal design principles, so the per-task principles pass (step 4) can cite violations by `P-NNN` (the web supplement is read only when web context is opted in — `GOODFELLOW_PRINCIPLES_WEB=1` or a `package.json` at the project root; an invalid value hard-errors here):
+## Write the whole plan
 
-```bash
-# Progressive disclosure (docs/instruction-density-budget.md): inject only the
-# principle INDEX (P-NNN id + title + one-line rule), NOT the full bodies. The full
-# corpus is ~17k tokens / ~300 directives — well past the accuracy-erosion ceiling.
-# All error handling stays in Python (bad config / missing core / unreadable file ->
-# non-zero exit + stderr); a non-zero exit means a config/packaging problem — stop.
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/principles_context.py" --index --project-root .
-```
+At step 3 continue with `writing.md` in this skill's directory; write `docs/plans/<slug>-plan.md` in one pass.
+Use its exact frontmatter, sequential phase headers and task header format.
+Include dependencies, acceptance criteria, spec coverage and phase effort estimates.
+Enumerate every implied task; do not truncate scope to look simpler.
+Every behavior task names tests and expected assertion reds, with wrong-answer stubs if needed.
+High-stakes tasks name error boundaries, deliberate breaks, fakes and the real entry point.
+Never test destructive breaks against live resources.
+Check every proposed implementation against knowledge principles; fix or explain exceptions.
 
-Scan the category routing table. For any category relevant to this work, expand its one-liners with
-`python3 "${CLAUDE_PLUGIN_ROOT}/scripts/principles_context.py" --category NAME --project-root .`, then pull the
-full body of a relevant principle with `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/principles_context.py" --show P-NNN [P-NNN ...] --project-root .`
-before applying or citing it — requesting a parent id (e.g. `P-017`) includes its
-sub-principles. Cite violations by P-NNN.
+## Separate rehearsal from live work
 
-## 2. Clarifying questions (max 3, asked once)
+When the spec is T3, apply the rehearsal and Live step requirements in `writing.md` in this skill's directory.
+Rehearse the real mutations against a sandbox the user supplies and record evidence.
+The live change is not an execute task: give exact commands, timing, verification and rollback.
+Ship hands live work to the operator only after converged review and green CI.
 
-Only questions whose answers change execution order or task decomposition. Skip questions answerable from the spec + codebase.
+## Self-review and hand off
 
-**Autopilot (default):** ask only product calls; decide the rest and note them in the plan.
-
-## 3. Write the plan
-
-Write the complete plan in one pass at `docs/plans/<slug>-plan.md`.
-
-**Required frontmatter:**
-```yaml
----
-title: "<Plan Title>"
-spec: <path to spec file>
-tier: <T2|T3, copied from the spec>
-date: YYYY-MM-DD
----
-```
-
-**Required header format:**
-- Phase headers: `## Phase N — <title>` (N is a positive integer, sequential)
-- Task headers: `### T-N.X: <title>` (N = phase number, X = task index)
-
-**Include:**
-- Dependency graph (what blocks what, what parallelizes)
-- Acceptance criteria per task
-- Spec-coverage map (every spec section → plan task)
-- Effort estimates per phase
-
-**Test design per task** (P-094, P-095, P-096). Every task that adds or changes behaviour names its tests and the **expected red**: the assertion message each new test fails with before the change. "Fails with function not defined" is not a red; when the symbol is new, the first step is a stub that returns a wrong answer, so the red comes from the assertion. For tasks on **high-stakes paths** (the globs in `.goodfellow/high_stakes_paths.txt` if you keep one; otherwise allow/deny, gates, deletion and retention, money, alert or verdict logic), also name:
-- the fail-closed error branches and exact boundaries the tests pin, with a case on each side of each edge;
-- one deliberate break per rule that the tests must catch (flip the comparison, return the allow verdict from the error branch, drop the raise);
-- for code that signals processes, deletes or writes real resources: the fake or isolated namespace (for example `unshare --pid`) its tests and breaks run in. Such code is never tested or mutated against the live machine;
-- the real entry point the tests drive. A source-text check may accompany a behaviour test, never replace one.
-
-**T3: a rehearsal task, and a live step that is not a task.** A T3 plan includes a task that
-performs the real mutations (the migration, the deploy step, the deletion, the send) against a
-sandbox the user supplies (a database copy, a temporary tree, a namespace) and records the evidence
-for the PR. The live change itself is **not** a task `execute` runs. The plan ends with a
-`## Live step` section: the exact commands, whether they run before or after the merge, how to
-verify the result, and how to roll back. `ship` hands it to the operator only after the code review
-has converged and CI is green, so a defect the review finds can never reach production first.
-
-**Scope bias: exhaustive.** Enumerate every task the spec implies. Don't truncate to look simpler.
-
-**Principles pass:** for each task, check: does the proposed implementation introduce a principle violation per `.goodfellow/knowledge.md`? Fix in-spec or note as deliberate exception.
-
-## 4. Self-review
-
-- Grep clean: no placeholders, every code step has concrete content
-- Spec-coverage: every spec section has at least one plan task
-- Internal consistency: dependency graph matches task bodies
-
-## 5. Auto-dispatch review-doc
-
-After writing + self-review, in the same turn:
-1. Emit summary (file path, task count, integration risks)
-2. Dispatch `/goodfellow:review-doc --plan <plan-path>`
-
-No gate. The operator reviews through review-doc, not by approving the plan directly.
-
-**Execution footer:**
-> Use `/goodfellow:execute <plan-path>` to implement this plan.
+At steps 4–5 read `handoff.md` in this skill's directory for completeness checks and dispatch syntax.
+Remove placeholders, prove every spec section has a task, and check dependency consistency.
+Report path, task count and integration risks, then dispatch `/goodfellow:review --plan`.
+No direct approval gate; include the documented execute footer in the plan.

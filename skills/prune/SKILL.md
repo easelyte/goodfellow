@@ -1,5 +1,5 @@
 ---
-name: prune-stale
+name: prune
 description: Sweep merged/stale branches, orphan worktrees, and old JSONL logs. Configurable retention via GOODFELLOW_TRIAGE_RETENTION_DAYS and GOODFELLOW_RUNS_RETENTION_DAYS.
 ---
 

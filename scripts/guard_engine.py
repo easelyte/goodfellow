@@ -46,7 +46,7 @@ match inline (linear, safe).
 A governance gate must not *itself* block legitimate work. If `.goodfellow/guards.json`
 is malformed, the live hook skips the user rules (built-ins still enforce) and
 writes a warning to stderr: it never deny-alls the session into a deadlock where
-you cannot even edit the file to fix it. For a loud, CI/snap-compact-style check,
+you cannot even edit the file to fix it. For a loud, CI/snapshot-style check,
 run `guard_engine.py --validate`, which exits non-zero on a bad config;
 `guard_engine.py --selfcheck`, which prints the active guard set (with full
 per-rule digests) so a post-compaction session can assert governance survived the
@@ -774,7 +774,7 @@ def _redos_prone(pattern: str) -> bool:
 
 
 def cmd_validate(project_dir: str) -> int:
-    """Fail-loud config check for CI / snap-compact. Non-zero on a bad config.
+    """Fail-loud config check for CI / snapshot. Non-zero on a bad config.
 
     Also a genuine ReDoS diagnostic: names each regex rule whose pattern looks
     catastrophic-backtracking-prone, so the runtime timeout message ("run

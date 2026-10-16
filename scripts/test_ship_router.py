@@ -14,6 +14,8 @@ blocker + major -> loop store; minor -> knowledge gotchas; no tier left unrouted
 A dedicated mutation-fixture set proves the parser rejects a re-introduced major drop.
 """
 
+from skill_text import read_skill
+
 import pathlib
 import re
 
@@ -86,7 +88,7 @@ def validate_routing(section_text):
 
 
 def test_router_declares_canonical_routing_map():
-    section = _follow_up_section(SHIP_SKILL.read_text())
+    section = _follow_up_section(read_skill(SHIP_SKILL))
     routing = parse_routing_map(section)
     assert routing == EXPECTED_ROUTING, (
         f"ship router routing map is {routing}, expected {EXPECTED_ROUTING}"
@@ -95,7 +97,7 @@ def test_router_declares_canonical_routing_map():
 
 def test_major_findings_route_to_the_loop_store():
     """Core drop-bug guard: MAJOR must map to the loop store, never gotchas, never absent."""
-    section = _follow_up_section(SHIP_SKILL.read_text())
+    section = _follow_up_section(read_skill(SHIP_SKILL))
     routing = parse_routing_map(section)
     assert routing.get("major") == "loop_store", (
         "MAJOR findings must be durably filed to the loop store — not dropped, "
@@ -104,7 +106,7 @@ def test_major_findings_route_to_the_loop_store():
 
 
 def test_no_substantive_tier_left_unrouted():
-    section = _follow_up_section(SHIP_SKILL.read_text())
+    section = _follow_up_section(read_skill(SHIP_SKILL))
     assert validate_routing(section) == [], (
         "a substantive severity tier is unrouted or mis-routed: "
         f"{validate_routing(section)}"
@@ -113,7 +115,7 @@ def test_no_substantive_tier_left_unrouted():
 
 def test_prose_names_all_three_tiers():
     """Prose must still name all three tiers so the map is human-legible, not just parseable."""
-    section = _follow_up_section(SHIP_SKILL.read_text()).lower()
+    section = _follow_up_section(read_skill(SHIP_SKILL)).lower()
     assert "blocker" in section or "safety-critical" in section
     assert "major" in section, "router prose does not mention the MAJOR tier"
     assert "minor" in section or "polish" in section

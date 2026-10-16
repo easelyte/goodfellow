@@ -107,12 +107,12 @@ SOURCE_LENS_MAP: list[tuple[re.Pattern[str], str]] = [
         "+ the ship operator lens passed to the review",
     ),
     (
-        re.compile(r"^/?codex-review"),
-        "skills/codex-review/SKILL.md + scripts/codex-bridge.sh per-KIND base stance",
+        re.compile(r"^/?(?:codex-review|codex(?:$|\s|[-/]r?\d))"),
+        "skills/codex/background.md + scripts/codex-bridge.sh per-KIND base stance",
     ),
     (
-        re.compile(r"^(review-doc|spec-review|plan-review)"),
-        "skills/review-doc/SKILL.md reviewer lens prompts (section 3)",
+        re.compile(r"^(review-doc|review(?:$|\s|[-/]r?\d)|spec-review|plan-review)"),
+        "skills/review/rounds.md reviewer lens prompts (section 3)",
     ),
 ]
 
