@@ -20,6 +20,7 @@ Announce tier and floor; exit 3 continues at the floor, exit 2 stops.
 Tiers only rise. Caps remain 3 at T0/T1 and 6 at T2/T3; all checks still run.
 T3 must have user-supplied sandbox rehearsal evidence before review or HALT.
 Verification failures stop. Red-check exit 2 is not run, never passed.
+A check that could not run (infra error, timeout, reviewer crash) is reported `unverified` and retried once; never count it as a pass or as a code failure.
 Do not opt out of a failed sandbox yourself; report its message to the user.
 Mutation breaks must use fakes or isolated resources, never live destructive targets.
 
@@ -29,6 +30,8 @@ At steps 2–3, read `review.md` in this skill's directory for the review loop a
 Review the actual committed PR diff; an empty artifact for a nonempty diff fails.
 Reject nonzero bridge exits and `REVIEW_FAILED` before reading any artifact.
 Verify findings from round 2, fix substantive findings, and apply the existing caps.
+Feed a failing check's structured output verbatim into the next fix round.
+Plateau stop: two consecutive review/fix rounds with no improvement end the loop early; decide under the merge rules, never ship at a partial score.
 A moved HEAD needs the final delta gate; unmapped rebases need a full branch review.
 Unresolved safety-critical findings HALT PR and merge unless explicitly waived.
 Filing a loop is never a substitute for this halt.
