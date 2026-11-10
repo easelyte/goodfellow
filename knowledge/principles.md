@@ -27,6 +27,9 @@ Every piece of data has exactly ONE authoritative location; everything else is d
 When adding a normalized structure to replace a denormalized field, either drop the old
 field in the same release or document which is canonical.
 
+**Rules:**
+- When staged configuration becomes canonical, move its definitions, retire the staging artifact, and update verification readers in the same change.
+
 **Anti-pattern:** a denormalized text field AND a join table holding the same relationship;
 two pages computing the same number with different algorithms.
 **Fix:** one computation, one implementation. Divergent calculations of the same value
@@ -78,6 +81,8 @@ file contents) needs validation. Data flowing between internal modules does not.
 - Use a null-preserving coalesce (e.g. nullish coalescing) rather than a truthy OR when the value could legitimately be `0`, `""`, or `false`.
 - Use the "zero-or-one row" query variant when a lookup might return nothing, rather than the "exactly one" variant that throws on no rows.
 - A multi-step handshake (e.g. an auth exchange) uses the same client/transport on both legs.
+- Validate every supplied target field; a harmless first path must not exempt a later protected path.
+- Preserve raw invocation names in audit records, then derive reporting keys explicitly using the producer's exact normalization semantics.
 
 **Anti-patterns:**
 - Passing an empty list to a query helper that doesn't handle the empty case
@@ -169,6 +174,9 @@ anchor exemptions to parsed syntax context and exact spans (not path/marker/subs
 matches) so they can't smuggle new instances; and include fixtures for known bypass shapes
 (a multiline or aliased composition of the forbidden pattern), not just a repository scan.
 
+**Rules:**
+- Validation wrappers must forward scoped deletion acknowledgments with an explicit target and reason, while retaining normal validation and rejecting blanket exemptions.
+
 #### P-017b. Filesystem-Scanning Ratchets Scope to Tracked Files
 <!-- cat: data-integrity -->
 A ratchet that greps the tree for a forbidden string or path must scope its scan to
@@ -205,6 +213,9 @@ request is valid pollutes the audit trail and corrupts counters with phantom att
 - If the check-and-act pair can race concurrent mutations, make it atomic (transaction, row lock, or a single guarded statement).
 - Atomic means the check, the act, and any rollback all run under the SAME guard scope. A lock that protects three files does not protect a fourth; a transaction wrapping one row does not protect another. Scope mismatch makes the safety check vacuous.
 - For UI state init: apply canonical/factory defaults first, THEN user overrides, THEN render — reversing this makes the UI lie about its mode.
+- Commit imported content and its deduplication ledger in one crash-atomic transaction, and lock the entire read-merge-write sequence.
+- Charge item-level failure attempts only when the evidence store was available to evaluate the item; record infrastructure outages as run-level errors.
+- Publish an artifact set with an explicit commit marker written last, after all data artifacts are ready. Retries must preserve already committed artifacts; individually atomic replacements do not make the set atomic.
 
 **Anti-patterns:**
 - Inserting into an attempts table before checking the credential is still valid
@@ -375,6 +386,7 @@ silently diverge and downstream breaks look mysterious.
 - Tests run in CI; contract drift blocks the PR.
 - Scope to STABLE shapes consumed by 2+ modules — purely internal, week-by-week shapes don't earn the maintenance cost.
 - The expected shape lives next to the producer — producers own their contracts.
+- Pin shared processing boundaries, such as a messaging adapter, with golden outputs and exact correspondence between model input and citation sources, including after truncation.
 
 **Anti-patterns:**
 - "We'll know if it breaks because something will log an error" — they don't, and you won't
@@ -455,6 +467,8 @@ agent retries, signup flows — any mutation where the caller might not learn th
 - Queue consumers make the work itself idempotent: "set state to X" not "increment by 1"; check-then-skip before acting.
 - Agent actions with side effects check for prior execution by a stable signal (content hash, correlation ID) before re-running.
 - The retention window for idempotency keys is written down and enforced.
+- Bind provider idempotency keys to the business operation across released and replacement claims, and document the provider's deduplication window.
+- Synthetic identities must preserve multiplicity and survive display-label or redaction changes. Deriving identity before redaction does not authorize persisting raw text.
 
 **Anti-patterns:**
 - A handler that crashes midway and gets retried, double-charging or double-sending
@@ -494,6 +508,7 @@ did it actually do the thing?
 - Decision traces include WHY: which rule fired, which threshold crossed, which input was absent. "Skipped" without a reason is a dead log.
 - Idempotency keys (P-032) are part of the event — the same `action_id` twice means "retry," not "happened twice."
 - Rate-limit and dedup policies are observable.
+- Activate monitoring before the first scheduled attempt, independently of successful publication, so initial credential and setup failures remain observable.
 
 **Anti-patterns:**
 - An agent that only logs when it acts — silent ticks are invisible
@@ -624,6 +639,7 @@ Designs that try to use them selectively are unimplementable at that layer.
 - Let modifier-free default behavior do the work.
 - Bare `except:` and `|| true` are code smells unless paired with an immediate re-raise on classified cases.
 - Retry decorators need a predicate; predicate-less retry hides real bugs.
+- Represent an intentionally closed gate as normal success with an informational status; alert separately when its permitted closure deadline expires.
 
 **Anti-patterns:**
 - `restart || true` — masks restart failures
@@ -662,6 +678,8 @@ partial offset advance loses messages on restart.
 - Durably persist incoming messages on receipt, advance the offset on persist-success, drive work off the store.
 - On restart, replay from the store, not by re-fetching from the bus.
 - A reviewer reading a multi-conversation-bus spec must trace cross-topic concurrency through the bus's actual offset semantics, not assume per-conversation isolation.
+- Match durable apply and advancement to a stream cursor's full scope, covering every account it consumes without waiting for later business processing.
+- Treat notification-throttle advancement as acknowledgment: persist a durable notification first, and schedule renewal of an expiring recovery link before expiry.
 
 **Anti-patterns:**
 - "Advance offset when this conversation is done" — couples bus throughput to single-conversation latency
@@ -703,6 +721,8 @@ unless cache-invalidation semantics are explicit.
 - Local-mirror reads are acceptable only when the mirror is explicitly refreshed before the read, OR the data is immutable.
 - Non-blocking CI checks need a periodic green-vs-red audit, or they atrophy into noise everyone routes around.
 - A check failing on main for more than a few days has regressed to noise — fix it or remove it.
+- A parser fix must invalidate every downstream quarantine category the defect can produce, including categories not named as parse failures.
+- Scope approval and evaluation-corpus invalidation to independent source kinds; shared prompt or logic changes invalidate every affected approval.
 
 **Anti-patterns:**
 - Reading a sibling repo's config from the local working tree on a host where it might be stale
@@ -890,6 +910,7 @@ BEHAVIORAL safety parity across paths that need not be byte-identical but must e
 - Inventory every implementation of a destructive op before fixing one; apply the full guard set to all in the same change.
 - Prefer collapsing duplicate destructive paths to a single canonical entrypoint.
 - A safety-fix PR touching one implementation must state where the others are and that they were updated or delegated.
+- Inventory every authorization-file reader when hardening integrity checks; inspect the named object and its parent without following symlinks to borrow target metadata.
 
 **Anti-patterns:**
 - Patching the code path's guard and leaving the shell/markdown reimplementation behind
@@ -947,6 +968,7 @@ permit large labeled blocks and bound autodetect. Related to algorithmic-complex
 - When a feature has two work paths with very different cost curves (explicit vs auto-detected, cached vs computed), give each its own cap or drop the expensive path.
 - A size/DoS bound gates only the expensive work it protects (decode/parse/highlight/render), never a legitimate capability's output path — bounding the wrong seam withholds valid output.
 - A reviewer suggestion to "bound earlier" can move the bound onto a capability gate; check what else that seam controls.
+- Run cheap eligibility checks before expensive artifact validation, then stop at the newest valid eligible artifact so damaged retained history does not inflate routine work.
 
 **Anti-patterns:**
 - One character cap as the only defense against render-tree explosion
@@ -1028,6 +1050,7 @@ Re-creating the row resets it to defaults, so the deletion is lossy and silent.
 - Delete only a row provably at all-defaults (an untouched auto-created stub); anything else is keep-and-flag for human review.
 - Prefer soft-delete / flag over hard-delete when the row can carry intentional state you might not have enumerated.
 - Enumerate the intentional-state fields explicitly — an allowlist of "must be default," not a single-column check.
+- Separate snapshot coverage used for scheduling from deletion authority; a late stale snapshot may advance coverage without permission to remove newer data.
 
 **Anti-patterns:**
 - `if (row.paid === 0) delete(row)` on a row that can carry a custom amount + notes
@@ -1050,6 +1073,7 @@ prompt-injection defenses like the dual-LLM pattern.
 - The agent reaches external systems only through a trusted broker (gateway + egress fence), not direct network access.
 - Actor identity, confirmations, and audit stamps are applied out-of-band by the broker; anything in a model-produced tool-arg is untrusted for auth/audit/egress.
 - A permission allowlist on a shell-capable agent is a UX affordance, not containment — don't represent it as a security boundary.
+- Assign evaluation-case provenance through trusted construction; inline origin claims cannot satisfy an approval requirement for a minimum amount of real data.
 
 **Anti-patterns:**
 - Handing an agent env-var credentials and relying on a prompt/allowlist to keep it in bounds
@@ -1166,6 +1190,7 @@ inbound third-party responses as credential-bearing.
 **Rules:**
 - Redact known secret-bearing fields (or allowlist only the fields you need) at the ingest boundary, before the data reaches a table, cache, or log.
 - Assume URLs in a response may carry embedded tokens; do not log or persist them raw.
+- Redact inbound message text at the first persistence boundary and verify coverage with representative real samples; egress-only redaction leaves secrets at rest.
 
 **Anti-patterns:**
 - Storing a verbatim API response whose `paging.next` URL contains the access token
@@ -1269,6 +1294,8 @@ side cannot distinguish "the gate works" from "I am reading the wrong channel".
 **Rules:**
 - Verify a gate with a case you expect to PASS and one you expect to FAIL, and confirm the verdicts differ.
 - If both cases return the same verdict, fix how you read the gate's signal before trusting it.
+- When extending authorization, compare denial sets and preserve all baseline denials; retain an independently checked baseline usable without version history.
+- Require adversarial and negative coverage within every independently approved partition; aggregate coverage cannot prevent a partition from passing vacuously.
 
 **Anti-patterns:**
 - Verifying a guard by exit code when it signals via a structured decision and exits 0 either way
@@ -1286,6 +1313,7 @@ survives unnoticed.
 **Rules:**
 - Trigger the guarded event and confirm the protection actually fired.
 - Treat config inspection as evidence the rule exists, never as evidence it works.
+- Before declaring runtime readiness, verify the installed target, matcher coverage, and exact command alongside a real denial probe through the active installation.
 
 **Anti-patterns:**
 - Concluding an audit or guard is active because it is listed in the config file
@@ -1409,6 +1437,7 @@ Compare live state against the backup item by item, and heal or alert on any dif
 - Reconcile against the backup per item; do not threshold on emptiness or a minimum count.
 - Test the recovery path with a partial loss (most items present, a few missing), not only a total wipe.
 - Drill restores against non-empty archives, since an empty archive passes trivially.
+- Compare expected and discovered inventories in both directions; reject unexpected items and missing registered items rather than accepting a nonempty partial set.
 
 **Anti-patterns:**
 - A "restore if empty" guard on a corpus where the real loss was a handful of recent files
@@ -1427,6 +1456,7 @@ temp tree specifically.
 - Signal code: fake the process table or run inside a pid namespace. File-deleting or writing code: fake the filesystem or use a throwaway tmp tree.
 - Before sending a signal, classify targets by evidence of ownership (owned, cwd-only, unknown) and halt on ambiguity.
 - Never point a test teardown at a path derived from the real home or data directory.
+- Restore verification must own the temporary database server lifecycle and use a private connection namespace so restored data cannot reach another session's database.
 
 **Anti-patterns:**
 - A mutation run that flips a prefix check in a live process sweep and signals every process it can see
@@ -1463,3 +1493,102 @@ sessions on a shared channel, a third party) who cannot undo it.
 **Anti-patterns:**
 - Listing a shared-service restart as reversible work to do unasked
 - Treating "I can undo it" as consent from the person who absorbs the interruption
+
+### P-101. Sanitize Inherited Execution Controls at Production Entry
+> Strip inherited test overrides and interpreter startup controls before production code can act.
+<!-- cat: security -->
+
+Inherited settings can change authorization before payload validation runs. A production entry
+must sanitize ambient execution controls before launching its core or another interpreter.
+This extends P-008 to inherited execution authority, including startup code in a second shell.
+
+**Rules:**
+- Remove test-only environment overrides by namespace so newly added overrides are covered.
+- Sanitize interpreter startup variables before launching another interpreter.
+- Keep intentional test overrides available through separate test entries.
+
+**Anti-patterns:**
+- A production entry that accepts an inherited test override disabling authorization
+- Clearing payload fields while a second shell still loads inherited startup code
+
+### P-102. Test Independent Protections Independently
+> Assert each independent safety signal as well as the final verdict when checks overlap.
+<!-- cat: testing -->
+
+Overlapping protections can hide a broken check when tests observe only the aggregate verdict.
+A denial proves at least one check worked, not that every protection recognized the hazard.
+P-089 verifies the gate's decision channel; signal assertions verify the protections behind it.
+
+**Rules:**
+- Assert each protection's own signal, then separately assert the combined decision.
+- Retain signal assertions even when another check currently rejects the same input class.
+
+**Anti-patterns:**
+- Testing only the final denial when two independent checks reject the same input
+- Removing a detector assertion because another rule still blocks every example
+
+### P-103. Fail-Closed Includes the Host's Failure Semantics
+> A guard is fail-closed only when its host also refuses the operation after timeout or error.
+<!-- cat: reliability -->
+
+A guard's host runner decides what happens when no usable decision arrives. Conservative local
+logic cannot protect an operation if the host stops waiting and proceeds. Verify the entire
+invocation contract, including output interpretation, exit status, and timeout behavior.
+
+**Rules:**
+- Exercise timeout and error paths through the actual host runner and verify refusal.
+- Define the host's behavior when a decision is missing or unusable.
+- Revisit the configured execution budget whenever added validation increases guard work.
+
+**Anti-patterns:**
+- Calling a guard fail-closed because its local error handler denies, while its host proceeds
+- Adding expensive checks without reviewing the runner's timeout and failure behavior
+
+### P-104. Render Durable Documents from Frozen Inputs
+> Freeze content, configuration, and issuance time, then persist the values used to render.
+<!-- cat: data-integrity -->
+
+A durable document must remain reproducible after configuration changes or processing delays.
+Freeze every rendering input and pass those values explicitly through rendering and persistence.
+The historical record must describe the same document that its recipient received.
+
+**Rules:**
+- Freeze document content, shared rendering configuration, and issuance time before rendering.
+- Persist exactly the values used in the delivered artifact; avoid later clock or live-config reads.
+
+**Anti-patterns:**
+- Rendering frozen business rows with live shared configuration
+- Recording a later issuance timestamp than the one shown in the delivered document
+
+### P-105. Preserve an Artifact's Completeness Contract
+> Validate a historical artifact against the inventory it was proven complete against at creation.
+<!-- cat: data-integrity -->
+
+An evolving registry must not retroactively invalidate a complete historical artifact. Record
+the versioned inventory used to prove completeness alongside counts and integrity evidence.
+P-097 requires an expected set; historical checks must use the set belonging to that artifact.
+
+**Rules:**
+- Persist the artifact's validated inventory and compare it with the stored contents and counts.
+- Use the current registry for new artifacts and the recorded inventory for historical validation.
+
+**Anti-patterns:**
+- Rejecting an old complete snapshot because the current registry gained new items
+- Checking counts without preserving which items those counts were expected to cover
+
+### P-106. Reserve Time for the Entire Remaining Operation
+> Admit work only when the remaining budget covers every step, then recheck after preparation.
+<!-- cat: agent-runtime -->
+
+Starting an item commits time beyond the expensive request itself. Reserve enough time for
+preparation, inference, result submission, and closure to leave a coherent result. Include
+legitimate client waiting, such as queueing, rather than relying on average request duration.
+
+**Rules:**
+- Calculate admission reserves from configured deadlines for every remaining step.
+- Account for preparation before admitting work and recheck the reserve after preparation.
+- Include client queueing and required submission and closure in the reserved budget.
+
+**Anti-patterns:**
+- Starting inference because it fits while leaving no time to submit the result or close the run
+- Trusting an admission check made before preparation consumed the remaining margin

@@ -11,6 +11,14 @@ afterwards at the commits that declared them, without Releases. See [RELEASING.m
 
 ## [Unreleased]
 
+### Added
+
+- Six seed principles: P-101 sanitize inherited execution controls at production entry, P-102 test independent protections independently, P-103 fail-closed includes the host's failure semantics, P-104 render durable documents from frozen inputs, P-105 preserve an artifact's completeness contract, P-106 reserve time for the entire remaining operation.
+
+### Changed
+
+- Refined the rules of P-002, P-006, P-008, P-017a, P-019, P-026, P-032, P-034, P-044, P-046, P-048, P-057, P-061, P-066, P-067, P-082, P-089, P-090, P-097 and P-098.
+
 ## [0.6.0] - 2026-10-16
 
 ### Added
