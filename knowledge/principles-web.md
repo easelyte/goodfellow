@@ -61,6 +61,7 @@ timestamp math with date-only strings produces off-by-one errors near timezone b
 - For date-only comparisons against `date` columns, format in the business timezone explicitly (e.g. an `Intl.DateTimeFormat` with an explicit `timeZone`).
 - Never mix timestamp math with date-only strings — parse both sides in the same timezone.
 - In server components, capture the current time once at the top and derive all dates from it.
+- Check elapsed-time requirements against timezone-aware calendar cadence across daylight-saving transitions; consecutive daily runs need not be equally far apart.
 
 **Anti-patterns:**
 - `new Date().toISOString().split("T")[0]` for "today" — uses UTC, items move between buckets on the wrong day

@@ -92,7 +92,7 @@ def _without_bwrap(tmp_path: Path) -> dict:
         if not os.path.isdir(d):
             continue
         for name in os.listdir(d):
-            if name != "bwrap" and not (farm / name).exists():
+            if name != "bwrap" and not os.path.lexists(farm / name):
                 (farm / name).symlink_to(Path(d) / name)
     env = _env(PATH=str(farm))
     env.pop("GOODFELLOW_BWRAP", None)

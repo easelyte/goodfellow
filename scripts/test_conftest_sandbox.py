@@ -66,7 +66,7 @@ def test_genuine_absence_runs_the_suite_unisolated(tmp_path):
     for d in os.environ.get("PATH", "").split(os.pathsep):
         if os.path.isdir(d):
             for name in os.listdir(d):
-                if name != "bwrap" and not (farm / name).exists():
+                if name != "bwrap" and not os.path.lexists(farm / name):
                     (farm / name).symlink_to(Path(d) / name)
     p = _session(tmp_path, {**_base_env(), "PATH": str(farm)})
     assert p.returncode == 0, p.stdout + p.stderr
