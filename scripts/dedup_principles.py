@@ -35,6 +35,15 @@ def match_shipped_principle(description, shipped):
     return None
 
 
+def _is_stub(lines, j):
+    """True for a retired/merged id stub (`Retired ...` / `Merged into ...`)."""
+    while j < len(lines) and (
+        lines[j].strip() == "" or lines[j].strip().startswith("<!--")
+    ):
+        j += 1
+    return j < len(lines) and re.match(r"(Retired|Merged into)\b", lines[j].strip())
+
+
 def parse_shipped(principles_text):
     """Extract (p_id, rule_line) from `### P-NNN. <title>` + the following
     blockquote rule line in knowledge/principles*.md."""
@@ -45,6 +54,9 @@ def parse_shipped(principles_text):
         m = re.match(r"^### (P-\d{3})\.\s*(.*)$", lines[i])
         if m:
             p_id = m.group(1)
+            if _is_stub(lines, i + 1):
+                i += 1
+                continue
             rule = None
             # the rule is the next non-empty blockquote line
             j = i + 1

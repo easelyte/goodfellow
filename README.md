@@ -101,7 +101,10 @@ Refused: --tier T0 is below the T1 floor. Floor T1: src/auth/session.py matches 
   wrote, and a judge drops findings the code does not support. Reviews stop when findings drop to
   polish, not at a fixed count.
 - **Knowledge that compounds.** Each run adds what it learned to `.goodfellow/knowledge.md`, and
-  about 80 seeded design principles ship with the plugin. Deferred findings become tracked loops.
+  about 40 seeded design principles ship with the plugin. Current models follow general engineering
+  practice unprompted, so the seed set keeps only facts a model cannot assume: platform limits,
+  house conventions and incident-derived specifics. Add your own stack facts and incident lessons
+  to the knowledge file rather than general rules. Deferred findings become tracked loops.
 
 ## When not to use it
 

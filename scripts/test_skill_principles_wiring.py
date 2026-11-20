@@ -95,7 +95,8 @@ def test_index_block_hard_errors_end_to_end(tmp_path):
         )
         # 2) happy path -> exit 0 and emits the principle in index form
         ok = run(block)
-        assert ok.returncode == 0 and "P-001. Example Rule" in ok.stdout, (
+        # P-001 is no longer a vital-few id, so it shows in its category row (ids only).
+        assert ok.returncode == 0 and "general (1)" in ok.stdout and "P-001" in ok.stdout, (
             f"{s} happy path broken"
         )
         # 3) missing core seed -> exit non-zero (no silent core loss, R6 class)
