@@ -26,7 +26,7 @@ Understand what RLS can and cannot do before relying on it as your access layer.
 - Adding an access-affecting column without updating the policy that should check it
 - Paired `FOR SELECT` + `FOR ALL` policies with identical conditions (the SELECT is dead weight)
 
-### P-005. Don't Mirror External State in React
+### P-005. Don't Mirror External State in React, and Bridge Controlled-Input Gaps
 > If the DOM element has its own state machine, don't duplicate it in React.
 <!-- cat: ui -->
 
@@ -39,6 +39,8 @@ event-ordering bugs.
 - If a callback touches a DOM element, use a ref, not a `useCallback` with state deps.
 - An effect that reads a ref should include any condition that controls when that ref becomes non-null in its dependency array.
 - When a panel/dialog shows different items but stays mounted, add a `key` prop tied to the item ID to force remount.
+- `<input type="number">` with numeric state strips leading zeros and breaks partial entry: store a STRING in state and parse at submit or blur.
+- Prop-dependent defaults use `useState(() => compute())` lazy init, not `useMemo`, which can recompute or return stale on first paint.
 
 **Anti-patterns:**
 - `useState` mirroring a DOM element's loaded flag, then checking it in a hover handler — stale closure
@@ -127,23 +129,9 @@ filter on the same table is an architecture problem, not a discipline problem.
 - Soft-deleting into the same table when archiving to a separate table would be simpler
 
 ### P-031. Controlled Inputs Need Escape Hatches for HTML Behavior
-> React's controlled-component model does not match HTML input semantics. Bridge the gap explicitly.
-<!-- cat: ui -->
+<!-- cat: retired -->
 
-Extends P-005. HTML form controls maintain their own value semantics; `useState` forces a
-typed value. The two disagree in specific, common cases — and the fix is more care at the
-boundary, not more state.
-
-**Rules:**
-- `<input type="number">` with numeric state strips leading zeros and breaks partial entry. Store as a STRING in state; parse to number at submit/blur boundaries.
-- Defaults that depend on props go through `useState(() => compute())` lazy init, not `useMemo` — lazy init runs exactly once; `useMemo` can recompute or return stale on first paint.
-- Panels/dialogs that stay mounted across items need a `key` prop tied to the item ID.
-- Effects reading refs must include every condition controlling when the ref becomes non-null.
-
-**Anti-patterns:**
-- `useState(0)` for a number input — typing "05" is impossible
-- `useMemo(() => default, [])` for "value on first render" — the wrong tool
-- A dialog showing item A's state after opening with item B's data
+Merged into P-005 (2026-11).
 
 ### P-062. Design Tokens Carry Semantic Role and Shape
 > A token is a semantic role, not just a value. One literal serving two opposite roles needs two tokens; a token whose value is a CSS shorthand can only be consumed through that shorthand property.

@@ -11,6 +11,10 @@ afterwards at the commits that declared them, without Releases. See [RELEASING.m
 
 ## [Unreleased]
 
+### Removed
+
+- Slimmed the seed principles to the facts a model cannot assume. General engineering practice that current models follow unprompted was retired (28 core entries), and 29 near-duplicate entries were merged into 16 surviving ones. Every retired or merged id stays as a one-line stub, so citations still resolve with `--show`. Stubs are tagged `<!-- cat: retired -->` and left out of the index and the dedup check. A with/without test on two model families showed no gain from the retired text; the one measured difference was the honest-completion rule, which stays as P-079.
+
 ### Added
 
 - Six seed principles: P-101 sanitize inherited execution controls at production entry, P-102 test independent protections independently, P-103 fail-closed includes the host's failure semantics, P-104 render durable documents from frozen inputs, P-105 preserve an artifact's completeness contract, P-106 reserve time for the entire remaining operation.

@@ -65,3 +65,11 @@ def test_dedup_fails_closed_on_empty_principles(tmp_path):
         cwd=pathlib.Path(__file__).parent, capture_output=True, text=True,
     )
     assert r.returncode == 1 and "fail closed" in r.stderr
+
+
+def test_parse_shipped_skips_retired_stubs():
+    text = (
+        "### P-001. Old Rule\n<!-- cat: retired -->\n\nRetired 2026-11 (x).\n\n"
+        "### P-002. Live Rule\n> the live rule.\n"
+    )
+    assert parse_shipped(text) == [("P-002", "the live rule.")]

@@ -65,8 +65,8 @@ every run:
   task, the model expands it with `principles_context.py --category testing` to get
   the `P-NNN` + title + one-liner for every principle in it.
 - **Tier 3 — on demand: the body.** It then pulls the full bodies that bear on the
-  work with `principles_context.py --show P-003 P-020`. Requesting a parent id
-  (`P-017`) includes its sub-principles (`P-017a`, `P-017b`).
+  work with `principles_context.py --show P-019 P-040`. Retired and merged ids stay
+  as one-line stubs so citations resolve; they are never indexed.
 - **Legacy full dump** (`--emit`) is retained for any caller that genuinely wants
   the whole corpus, but the chain skills no longer use it.
 

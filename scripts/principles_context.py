@@ -16,7 +16,7 @@ skills (name + description always; full SKILL.md only when the skill fires):
   --index            Always-injected. Emits each principle's P-NNN id + title +
                      one-line rule (the blockquote). ~2.6k tokens for the whole
                      corpus. This is the menu.
-  --show P-003 P-020 On demand. Emits the FULL body of specific principles once
+  --show P-019 P-040 On demand. Emits the FULL body of specific principles once
                      the model (having scanned the index) decides they are
                      relevant to the current task/diff. Requesting a parent
                      (P-017) includes its sub-principles (P-017a, P-017b).
@@ -52,12 +52,9 @@ class ConfigError(ValueError):
 # (primacy + recency) so they survive the mid-context adherence dip. IDs absent
 # from the resolved set (e.g. a web-only id when web is off) are skipped silently.
 VITAL_FEW = [
-    "P-001",  # UI Hiding Is Never Authorization (authz)
     "P-002",  # Canonical Source of Truth (data integrity)
-    "P-003",  # Fail Visible (silent-failure / debuggability)
     "P-015",  # Data Egress Needs Explicit Permission (security)
-    "P-019",  # Check-Act Ordering (+ P-019a Irreversibility Boundaries)
-    "P-032",  # Idempotency for Mutations (data safety)
+    "P-019",  # Check-Act Ordering and Irreversibility Boundaries
     "P-069",  # Never Squash-Merge Across a Diverged Base (data loss)
     "P-079",  # Reaching a Limit Is Not Success (correctness under limits)
 ]
@@ -241,7 +238,16 @@ CATEGORY_LABELS = {
     "agent-runtime": "model-driven runtimes, harness vs prose, disclosure",
     "ui": "UI/UX surface, design tokens",
     "general": "uncategorized",
+    "retired": "retired or merged ids, kept as stubs so citations resolve",
 }
+
+# Stub entries (`<!-- cat: retired -->`) resolve via --show but are never indexed:
+# a reviewer or model must not apply a retired principle.
+RETIRED_CAT = "retired"
+
+
+def _live(entries):
+    return [e for e in entries if e.get("cat") != RETIRED_CAT]
 
 
 def _categories(entries):
@@ -249,7 +255,7 @@ def _categories(entries):
     appearance so the table is stable and file-driven."""
     order = []
     groups = {}
-    for e in entries:
+    for e in _live(entries):
         c = e.get("cat", "general")
         if c not in groups:
             groups[c] = []
@@ -264,7 +270,7 @@ def index_entry_count(entries):
     index only ever renders these rows regardless of how large the corpus grows."""
     by_id = {e["id"]: e for e in entries}
     vital = sum(1 for i in VITAL_FEW if i in by_id)
-    cats = len({e.get("cat", "general") for e in entries})
+    cats = len({e.get("cat", "general") for e in _live(entries)})
     return vital + cats
 
 
@@ -288,7 +294,7 @@ def build_index(entries):
         "# Always-loaded = the vital-few one-liners + a category routing table (ids",
         "# only). Full one-liners and bodies load ON DEMAND:",
         "#   --category testing      # tier 2: one-liners for a whole category",
-        "#   --show P-003 P-020      # tier 3: full bodies of specific principles",
+        "#   --show P-019 P-040      # tier 3: full bodies of specific principles",
         "# Scan the table, expand the categories relevant to this task/diff, then apply.",
         "# Cite violations by P-NNN.",
         "",
@@ -321,7 +327,7 @@ def build_index_flat(entries):
     by_id = {e["id"]: e for e in entries}
     vital = [by_id[i] for i in VITAL_FEW if i in by_id]
     vital_ids = {e["id"] for e in vital}
-    rest = [e for e in entries if e["id"] not in vital_ids]
+    rest = [e for e in _live(entries) if e["id"] not in vital_ids]
     out = [
         "# Design principles — flat index (id + title + one-line rule, all principles)",
         "",

@@ -167,3 +167,15 @@ def test_show_category_unknown_is_visible():
     entries = pc.load_entries(plugin_root=PLUGIN_ROOT, project_root=PLUGIN_ROOT)
     out = pc.show_category(entries, "nonexistent-cat")
     assert "no principles" in out
+
+
+def test_retired_stubs_resolve_but_are_not_indexed():
+    entries = pc.load_entries(plugin_root=PLUGIN_ROOT, project_root=PLUGIN_ROOT)
+    stubs = [e for e in entries if e["cat"] == pc.RETIRED_CAT]
+    assert stubs, "expected retired/merged stubs in the seed"
+    for e in stubs:
+        assert e["id"] not in pc.build_index(entries)
+        assert e["id"] not in pc.build_index_flat(entries)
+        assert "Retired" in e["body"] or "Merged into" in e["body"]
+    assert "Merged into P-017" in pc.show_principles(entries, ["P-017a"])
+    assert "retired" not in pc.build_index(entries).split("## Categories")[1]
